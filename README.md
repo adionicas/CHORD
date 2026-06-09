@@ -197,8 +197,8 @@ ComBat references to include:
 > Fortin JP, Parker D, Tunç B, et al. Harmonization of multi-site diffusion tensor imaging data.
 > *NeuroImage*. 2017;161:149–170.
 
-> Onicas AI, Ware AL, Harris AD, et al. Impact of ComBat harmonization on structural connectivity
-> in pediatric concussion. *NeuroImage*. 2022.
+> Onicas AI, Ware AL, Harris AD, et al. Multisite harmonization of structural DTI networks in children: an A-CAP study.
+> *Frontiers in Neurology*. 2022. doi:10.3389/fneur.2022.850642
 
 ---
 

@@ -513,7 +513,7 @@ TEMPLATE = """<!DOCTYPE html>
 <ol class="ref-list">
   <li id="ref1">Johnson WE, Li C, Rabinovic A. Adjusting batch effects in microarray expression data using empirical Bayes methods. <em>Biostatistics</em>. 2007;8(1):118&#8211;127.</li>
   <li id="ref2">Fortin J-P, Parker D, Tun&#231; B, et al. Harmonization of multi-site diffusion tensor imaging data. <em>NeuroImage</em>. 2017;161:149&#8211;170.</li>
-  <li id="ref3">Onicas AI, Ware AL, Harris AD, et al. Impact of ComBat harmonization on structural connectivity in pediatric concussion. <em>NeuroImage</em>. 2022.</li>
+  <li id="ref3">Onicas AI, Ware AL, Harris AD, et al. Multisite harmonization of structural DTI networks in children: an A-CAP study. <em>Frontiers in Neurology</em>. 2022. doi:10.3389/fneur.2022.850642</li>
   <li id="ref4">Cohen J. <em>Statistical Power Analysis for the Behavioral Sciences</em>. 2nd ed. Erlbaum; 1988.</li>
   <li id="ref5">Koo TK, Li MY. A guideline of selecting and reporting intraclass correlation coefficients for reliability research. <em>Journal of Chiropractic Medicine</em>. 2016;15(2):155&#8211;163.</li>
   <li id="ref6">Benjamini Y, Hochberg Y. Controlling the false discovery rate: a practical and powerful approach to multiple testing. <em>Journal of the Royal Statistical Society Series B</em>. 1995;57(1):289&#8211;300.</li>
@@ -561,7 +561,7 @@ TEMPLATE = """<!DOCTYPE html>
     All metrics are reported in the Supplementary Material.
     [1] Johnson et al., <em>Biostatistics</em>, 2007.
     [2] Fortin et al., <em>NeuroImage</em>, 2017.
-    [3] Onicas et al., <em>Brain Informatics</em>, 2025.
+    [3] Onicas et al., <em>Frontiers in Neurology</em>, 2022.
     [4] Cohen, 1988.
     [5] Koo &amp; Li, <em>J Chiropr Med</em>, 2016.
     [6] Benjamini &amp; Hochberg, <em>J R Stat Soc B</em>, 1995.
@@ -595,7 +595,7 @@ def build_methods_paragraph(
         eb_sentence = (
             f"Two ComBat configurations were compared: with Empirical Bayes (EB) estimation, "
             f"which pools information across features to stabilize batch effect parameter estimates (Johnson et al., 2007), "
-            f"and without (EB=FALSE), which applies independent feature-wise location and scale adjustments (Onicas et al., 2025)."
+            f"and without (EB=FALSE), which applies independent feature-wise location and scale adjustments (Onicas et al., 2022)."
         )
     else:
         eb_sentence = (
