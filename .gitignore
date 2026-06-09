@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+*.egg-info/
+dist/
+build/
+.env
+.venv
+venv/
+
+# Streamlit
+.streamlit/
+
+# Uploads (user data — never commit)
+uploads/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs (run logs only, not requirements)
+run_*.txt
+*.log
