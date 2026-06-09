@@ -200,6 +200,11 @@ ComBat references to include:
 > Onicas AI, Ware AL, Harris AD, et al. Multisite harmonization of structural DTI networks in children: an A-CAP study.
 > *Frontiers in Neurology*. 2022. doi:10.3389/fneur.2022.850642
 
+> Onicas AI, Keleher F, Bickart KC, MacDonald CL, Brown A, Cook L, Rivara FP, Gioia GA, Giza CC, Dennis EL.
+> ComBat harmonization with and without empirical Bayes estimation for resting-state functional connectivity
+> in pediatric mild traumatic brain injury: a CARE4Kids study.
+> *ResearchSquare* [Preprint]. 2026. doi:10.21203/rs.3.rs-9418750
+
 ---
 
 ## License
