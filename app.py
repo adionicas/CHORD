@@ -129,16 +129,37 @@ default_site = _guess(all_cols, ["site", "scanner", "batch", "center"])
 default_age  = _guess(all_cols, ["age", "Age"])
 default_sex  = _guess(all_cols, ["sex", "Sex", "gender"])
 
+CUSTOM = "— type custom name below —"
+
+def _col_selector(label, all_cols, default, key):
+    """Selectbox + optional text input for manual override."""
+    opts  = [CUSTOM] + all_cols
+    d_idx = opts.index(default) if default in opts else 1
+    sel   = st.selectbox(label, opts, index=d_idx, key=f"{key}_sel")
+    if sel == CUSTOM:
+        manual = st.text_input(
+            f"Custom name for {label.split('/')[0].strip()}",
+            key=f"{key}_txt",
+            placeholder="Type exact column name from your file",
+        )
+        if manual and manual in all_cols:
+            return manual
+        elif manual:
+            st.warning(f"'{manual}' not found in the uploaded data.")
+            return None
+        return None
+    return sel
+
 c1, c2, c3 = st.columns(3)
 with c1:
-    site_col = st.selectbox("Site / Batch column", all_cols,
-                             index=all_cols.index(default_site) if default_site in all_cols else 0)
+    site_col = _col_selector("Site / Batch column", all_cols, default_site, "site")
 with c2:
-    age_col  = st.selectbox("Age column", all_cols,
-                             index=all_cols.index(default_age) if default_age in all_cols else 0)
+    age_col  = _col_selector("Age column",          all_cols, default_age,  "age")
 with c3:
-    sex_col  = st.selectbox("Sex column", all_cols,
-                             index=all_cols.index(default_sex) if default_sex in all_cols else 0)
+    sex_col  = _col_selector("Sex column",           all_cols, default_sex,  "sex")
+
+if None in (site_col, age_col, sex_col):
+    st.stop()
 
 exclude_meta  = {site_col, age_col, sex_col}
 auto_features = [c for c in num_cols if c not in exclude_meta]
