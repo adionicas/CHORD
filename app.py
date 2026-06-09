@@ -24,14 +24,22 @@ GITHUB_URL = "https://github.com/adionicas/CHORD"
 st.set_page_config(page_title="CHORD", layout="wide", page_icon="🎵")
 
 st.markdown("""
-<div style="background:#2A6EBB;padding:28px 36px;border-radius:8px;margin-bottom:24px">
-  <h1 style="color:white;margin:0 0 4px 0;font-size:1.9rem">🎵 CHORD</h1>
+<div style="background:#2A6EBB;padding:28px 36px;border-radius:8px;margin-bottom:24px;position:relative;overflow:hidden">
+  <div style="position:absolute;top:10px;right:24px;font-size:1.35rem;
+              color:rgba(255,255,255,0.18);letter-spacing:0.25em;user-select:none">
+    ♩ ♪ ♫ ♬ ♩ ♪ ♫
+  </div>
+  <h1 style="color:white;margin:0 0 4px 0;font-size:1.9rem">♩ CHORD</h1>
   <p style="color:rgba(255,255,255,0.70);margin:0 0 3px 0;font-size:0.82rem;letter-spacing:0.04em">
     Comprehensive Harmonization Open-platform with Reporting and Diagnostics
   </p>
   <p style="color:rgba(255,255,255,0.85);margin:0;font-size:0.95rem">
     Transparent and standardized assessment of multisite ComBat harmonization in neuroimaging
   </p>
+  <div style="margin-top:14px;font-size:1.0rem;color:rgba(255,255,255,0.22);
+              letter-spacing:0.30em;user-select:none">
+    ♬ &nbsp; ♪ &nbsp; ♫ &nbsp; ♩ &nbsp; ♬ &nbsp; ♪ &nbsp; ♫ &nbsp; ♩
+  </div>
 </div>
 """, unsafe_allow_html=True)
 
