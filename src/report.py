@@ -468,13 +468,17 @@ TEMPLATE = """<!DOCTYPE html>
   <b>Figure S5.</b> Age associations before versus after harmonization.
   Each point represents one imaging feature. The x-axis shows Pearson <em>r</em>
   between {{ age_col }} and the feature before harmonization; the y-axis shows
-  the same correlation after harmonization. Points above the diagonal indicate
-  a strengthened age association; points below indicate weakening.
-  Filled circles = significant after harmonization (FDR &lt; .05);
-  open circles = significant before harmonization only;
-  grey = not significant in either condition.
-  FDR correction: Benjamini&#8211;Hochberg, applied separately within each
-  harmonization condition. Dashed diagonal = no change; dotted lines at <em>r</em> = 0.
+  the same correlation after harmonization. Pearson <em>r</em> was computed
+  independently for each condition; no formal test of the difference between
+  correlations was applied. Points above the diagonal indicate a strengthened age
+  association after harmonization; points below indicate weakening.
+  Symbol and color encode FDR significance category (Benjamini&#8211;Hochberg;
+  applied separately within each condition):
+  grey circle = not significant in either condition;
+  filled circle = FDR significant after harmonization only (new association);
+  orange diamond = FDR significant before harmonization only (lost association);
+  purple square = FDR significant in both conditions (preserved association).
+  Dashed diagonal = no change; dotted lines at <em>r</em> = 0.
 </p>
 
 <!-- ─────────────────────────────────────── S5 ──────────────────────────── -->

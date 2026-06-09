@@ -382,7 +382,7 @@ if st.session_state.get("results_ready"):
     with t5:
         if st.session_state.get("fig_age"):
             st.plotly_chart(st.session_state["fig_age"], use_container_width=True)
-            st.caption("Each point = one imaging feature. X-axis: Pearson r with Age before harmonization. Y-axis: Pearson r after. Points above the diagonal = stronger age association after harmonization. Color = FDR significance (Benjamini–Hochberg).")
+            st.caption("Each point = one feature. Grey circle = not significant either condition | Filled circle = FDR significant after only | Orange diamond = FDR significant before only | Purple square = FDR significant in both. Pearson r computed independently per condition; no formal test of difference applied.")
 
     with t6:
         st.markdown("#### Methods paragraph for main manuscript")

@@ -239,20 +239,21 @@ def plot_age_correlations(age_df: pd.DataFrame) -> go.Figure:
         color = colors_map.get(cond, BLUE)
         show  = col_i == 1
 
-        # Not significant in either condition
-        ns = merged[~merged["sig_fdr_bef"] & ~merged["sig_fdr_aft"]]
-        # Newly significant after
-        new_sig = merged[~merged["sig_fdr_bef"] & merged["sig_fdr_aft"]]
-        # Significant before, lost after
-        lost_sig = merged[merged["sig_fdr_bef"] & ~merged["sig_fdr_aft"]]
-        # Significant in both
-        both_sig = merged[merged["sig_fdr_bef"] & merged["sig_fdr_aft"]]
+        # Four mutually exclusive categories — each with a distinct color AND shape
+        ns       = merged[~merged["sig_fdr_bef"] & ~merged["sig_fdr_aft"]]   # neither
+        new_sig  = merged[~merged["sig_fdr_bef"] &  merged["sig_fdr_aft"]]   # newly sig after
+        lost_sig = merged[ merged["sig_fdr_bef"] & ~merged["sig_fdr_aft"]]   # lost after
+        both_sig = merged[ merged["sig_fdr_bef"] &  merged["sig_fdr_aft"]]   # sig in both
 
-        for sub, label, mc, sym, op in [
-            (ns,       "Not significant",          GREY,   "circle",         0.45),
-            (new_sig,  "Significant after only",   color,  "circle",         0.85),
-            (lost_sig, "Significant before only",  ORANGE, "circle-open",    0.80),
-            (both_sig, "Significant in both",      color,  "circle",         0.85),
+        # color:  grey | condition color | orange | dark purple
+        # symbol: circle | circle | diamond | square
+        # — every combination is unique on both dimensions
+        PURPLE = "#6A0DAD"
+        for sub, label, mc, sym, sz, op, border in [
+            (ns,       "Not significant (neither)",       GREY,   "circle",  7,  0.40, "rgba(150,150,150,0.3)"),
+            (new_sig,  "FDR significant after only",      color,  "circle",  9,  0.85, "white"),
+            (lost_sig, "FDR significant before only",     ORANGE, "diamond", 9,  0.85, "white"),
+            (both_sig, "FDR significant before and after",PURPLE, "square",  9,  0.85, "white"),
         ]:
             if len(sub) == 0:
                 continue
@@ -260,8 +261,8 @@ def plot_age_correlations(age_df: pd.DataFrame) -> go.Figure:
                 x=sub["r_bef"], y=sub["r_aft"],
                 mode="markers", name=label,
                 legendgroup=label, showlegend=show,
-                marker=dict(color=mc, symbol=sym, size=8, opacity=op,
-                            line=dict(color="white", width=0.5)),
+                marker=dict(color=mc, symbol=sym, size=sz, opacity=op,
+                            line=dict(color=border, width=0.8)),
                 text=sub["feature"],
                 hovertemplate="<b>%{text}</b><br>Before: %{x:.3f}<br>After: %{y:.3f}<extra></extra>",
             ), row=1, col=col_i)
