@@ -163,26 +163,37 @@ if "sel_features" not in st.session_state or set(st.session_state["sel_features"
 
 st.markdown(f"**Feature columns** — {len(auto_features)} numeric columns detected")
 
-# Quick-action buttons
-n_prefixes = len(prefix_groups)
-btn_labels  = ["Select all", "Clear all"] + [f"{p.rstrip('_')}" for p in prefix_groups]
-btn_cols    = st.columns(len(btn_labels))
-
-if btn_cols[0].button("✔ Select all"):
+# ── Row 1: Select all / Clear all ─────────────────────────────────────────
+r1c1, r1c2, _ = st.columns([1, 1, 6])
+if r1c1.button("✔ Select all", use_container_width=True):
     st.session_state["sel_features"] = auto_features
     st.rerun()
-if btn_cols[1].button("✖ Clear all"):
+if r1c2.button("✖ Clear all", use_container_width=True):
     st.session_state["sel_features"] = []
     st.rerun()
-for i, (prefix, cols) in enumerate(prefix_groups.items(), start=2):
-    if btn_cols[i].button(prefix.rstrip("_"), help=f"Toggle all {prefix.rstrip('_')} features"):
-        current = set(st.session_state["sel_features"])
-        if cols[0] in current:           # if any already selected → remove group
-            st.session_state["sel_features"] = [c for c in st.session_state["sel_features"] if c not in cols]
-        else:                            # otherwise add group
-            existing = [c for c in st.session_state["sel_features"] if c not in cols]
-            st.session_state["sel_features"] = existing + cols
-        st.rerun()
+
+# ── Row 2+: One button per detected prefix, max 6 per row ─────────────────
+CHUNK = 6
+prefix_list = list(prefix_groups.items())
+if prefix_list:
+    st.caption("Toggle modality groups:")
+    for chunk_start in range(0, len(prefix_list), CHUNK):
+        chunk = prefix_list[chunk_start:chunk_start + CHUNK]
+        btn_cols = st.columns(len(chunk))
+        for j, (prefix, cols) in enumerate(chunk):
+            label = prefix.rstrip("_")
+            # truncate long names to keep buttons readable
+            display = label if len(label) <= 14 else label[:13] + "…"
+            if btn_cols[j].button(display, key=f"btn_{prefix}",
+                                  help=f"Toggle all {label} features ({len(cols)} columns)",
+                                  use_container_width=True):
+                current = set(st.session_state["sel_features"])
+                if cols[0] in current:
+                    st.session_state["sel_features"] = [c for c in st.session_state["sel_features"] if c not in cols]
+                else:
+                    existing = [c for c in st.session_state["sel_features"] if c not in cols]
+                    st.session_state["sel_features"] = existing + cols
+                st.rerun()
 
 feature_cols = st.multiselect(
     "Selected features (edit manually or use buttons above)",
