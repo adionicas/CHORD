@@ -49,7 +49,7 @@ Download from https://www.docker.com/products/docker-desktop/ and install it.
 **Step 2 — Download CHORD**
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/chord.git
+git clone https://github.com/adionicas/CHORD.git
 cd chord
 ```
 
@@ -84,7 +84,7 @@ docker compose down
 If you have Python 3.11+ installed:
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/chord.git
+git clone https://github.com/adionicas/CHORD.git
 cd chord
 pip install -r requirements.txt
 python3 -m streamlit run app.py
@@ -187,7 +187,7 @@ CHORD requires at least:
 If you use CHORD in your research, please cite:
 
 > Onicas AI, et al. CHORD: Comprehensive Harmonization Open-platform with Reporting
-> and Diagnostics. *[Journal]*, *[Year]*. GitHub: https://github.com/YOUR_USERNAME/chord
+> and Diagnostics. *[Journal]*, *[Year]*. GitHub: https://github.com/adionicas/CHORD
 
 ComBat references to include:
 

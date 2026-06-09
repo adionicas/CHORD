@@ -18,7 +18,7 @@ from src.plots     import (plot_site_deviation, plot_spearman, plot_icc,
 from src.report    import generate_report, build_methods_paragraph
 
 # ── Update this URL once the repo is live ─────────────────────────────────
-GITHUB_URL = "https://github.com/YOUR_USERNAME/CHORD"
+GITHUB_URL = "https://github.com/adionicas/CHORD"
 
 # ─────────────────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="CHORD", layout="wide", page_icon="🎵")
