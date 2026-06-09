@@ -333,9 +333,6 @@ TEMPLATE = """<!DOCTYPE html>
   well preserved after harmonization, which is an important criterion for
   ensuring that harmonization does not inadvertently remove meaningful
   within-site biological variability [<a href="#ref3">3</a>].
-  Second, a Spearman rank correlation (&#961;) was computed between raw and
-  harmonized values for each feature across participants, providing a
-  non-parametric index of rank-order preservation.
 </p>
 
 <h3>S3.3 Preservation of Biological Associations</h3>
@@ -421,14 +418,7 @@ TEMPLATE = """<!DOCTYPE html>
   showed excellent consistency, {{ icc_ebf.n_good }} good,
   {{ icc_ebf.n_moderate }} moderate, and {{ icc_ebf.n_poor }} poor.
   {% endif %}
-  Spearman rank correlation (&#961;) between raw and harmonized values
-  had a median of {{ spm_ebt.median }}
-  (range {{ spm_ebt.min }}&#8211;{{ spm_ebt.max }}) for EB=TRUE
-  {% if run_ebf and spm_ebf.median %}
-  and {{ spm_ebf.median }} (range {{ spm_ebf.min }}&#8211;{{ spm_ebf.max }})
-  for EB=FALSE
-  {% endif %}.
-  The overall ICC distribution (Figure S3) and the per-site breakdown (Figure S4)
+  The overall ICC3 distribution (Figure S3) and the per-site breakdown (Figure S4)
   are shown below.
 </p>
 
@@ -495,7 +485,6 @@ TEMPLATE = """<!DOCTYPE html>
   ICC3 = intraclass correlation coefficient (two-way mixed effects, consistency; Shrout &amp; Fleiss type 3)
   between raw and harmonized values (Koo &amp; Li, 2016):
   &lt; 0.50 poor, 0.50&#8211;0.75 moderate, 0.75&#8211;0.90 good, &#8805; 0.90 excellent.
-  Spearman <em>r</em> = rank correlation between raw and harmonized values across participants.
   Cohen's <em>f</em> = site effect size from ANCOVA (Age + Sex as covariates, Type II SS).
   Cohen's <em>f</em> before = pre-harmonization site effect; Cohen's <em>f</em> after = post-harmonization site effect.
 </p>
@@ -553,10 +542,8 @@ TEMPLATE = """<!DOCTYPE html>
     with site as the grouping factor, quantifying site effect size as Cohen's <em>f</em> [4];
     (3) intraclass correlation coefficient (ICC3, two-way mixed effects, consistency) between
     pre- and post-harmonization values for each feature, interpreted according to Koo and Li [5]:
-    poor (&lt; 0.50), moderate (0.50&#8211;0.75), good (0.75&#8211;0.90), excellent (&#8805; 0.90);
-    (4) Spearman rank correlation between pre- and post-harmonization values as a
-    non-parametric measure of rank-order preservation; and
-    (5) Pearson correlation between {{ age_col }} and each imaging feature before and after
+    poor (&lt; 0.50), moderate (0.50&#8211;0.75), good (0.75&#8211;0.90), excellent (&#8805; 0.90); and
+    (4) Pearson correlation between {{ age_col }} and each imaging feature before and after
     harmonization, with false discovery rate correction (Benjamini&#8211;Hochberg) [6],
     to assess preservation of biologically relevant age-related variability.
     All metrics are reported in the Supplementary Material.
@@ -620,9 +607,7 @@ def build_methods_paragraph(
         f"(3) intraclass correlation coefficient (ICC3, two-way mixed effects, consistency) between "
         f"pre- and post-harmonization values for each feature, interpreted according to Koo and Li (2016): "
         f"poor (< 0.50), moderate (0.50-0.75), good (0.75-0.90), excellent (>= 0.90); "
-        f"(4) Spearman rank correlation between pre- and post-harmonization values as a "
-        f"non-parametric measure of rank-order preservation; and "
-        f"(5) Pearson correlation between {age_col} and each imaging feature before and after "
+        f"(4) Pearson correlation between {age_col} and each imaging feature before and after "
         f"harmonization, with false discovery rate correction (Benjamini & Hochberg, 1995), "
         f"to assess preservation of biologically relevant age-related variability. "
         f"All metrics are reported in the Supplementary Material."

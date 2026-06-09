@@ -237,21 +237,9 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
         dev_ebt    = site_mean_deviation(harm_ebt,    feature_cols, site_col) if harm_ebt is not None else None
         dev_ebf    = site_mean_deviation(harm_ebf,    feature_cols, site_col) if harm_ebf is not None else None
 
-        progress.progress(44, "Computing Spearman r (overall)...")
-        spm_parts = []
-        if harm_ebt is not None:
-            s = spearman_raw_vs_harm(df, harm_ebt, feature_cols); s["harmonization"] = "EB=TRUE";  spm_parts.append(s)
-        if harm_ebf is not None:
-            s = spearman_raw_vs_harm(df, harm_ebf, feature_cols); s["harmonization"] = "EB=FALSE"; spm_parts.append(s)
-        spm_all = pd.concat(spm_parts, ignore_index=True) if spm_parts else pd.DataFrame()
-        spm_ebt = spm_parts[0] if run_ebt and spm_parts else None
-        spm_ebf = spm_parts[-1] if run_ebf and len(spm_parts) > (1 if run_ebt else 0) else (spm_parts[0] if not run_ebt and spm_parts else None)
+        spm_ebt, spm_ebf = None, None  # Spearman removed; ICC3 is sufficient for consistency
 
-        progress.progress(53, "Computing Spearman r (by site)...")
-        spm_site_ebt = compute_spearman_by_site(df, harm_ebt, feature_cols, site_col) if harm_ebt is not None else None
-        spm_site_ebf = compute_spearman_by_site(df, harm_ebf, feature_cols, site_col) if harm_ebf is not None else None
-
-        progress.progress(60, "Computing ICC (overall)...")
+        progress.progress(50, "Computing ICC (overall)...")
         icc_parts = []
         if harm_ebt is not None:
             ic = compute_icc(df, harm_ebt, feature_cols); ic["harmonization"] = "EB=TRUE";  icc_parts.append(ic)
@@ -285,18 +273,12 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
                                    anc_ebt if anc_ebt is not None else pd.DataFrame(),
                                    anc_ebf)
         fig_icc   = plot_icc(icc_all) if len(icc_all) > 0 else None
-        fig_spm   = plot_spearman(spm_all) if len(spm_all) > 0 else None
         fig_age   = plot_age_correlations(age_all)
 
         fig_icc_site = plot_icc_by_site(
             icc_site_ebt if icc_site_ebt is not None else pd.DataFrame(),
             icc_site_ebf,
         ) if (icc_site_ebt is not None and len(icc_site_ebt) > 0) else None
-
-        fig_spm_site = plot_spearman_by_site(
-            spm_site_ebt if spm_site_ebt is not None else pd.DataFrame(),
-            spm_site_ebf,
-        ) if (spm_site_ebt is not None and len(spm_site_ebt) > 0) else None
 
         # ── Report ─────────────────────────────────────────────────────────
         progress.progress(94, "Building report...")
@@ -313,7 +295,7 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
             anc_before=anc_before, anc_ebt=anc_ebt, anc_ebf=anc_ebf,
             age_df=age_all,
             fig_site_dev=fig_site, fig_icc=fig_icc, fig_icc_site=fig_icc_site,
-            fig_spearman=fig_spm, fig_age=fig_age, fig_cohens_f=fig_anc,
+            fig_spearman=None, fig_age=fig_age, fig_cohens_f=fig_anc,
         )
 
         methods_para = build_methods_paragraph(
@@ -327,13 +309,11 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
         st.session_state.update(dict(
             results_ready=True,
             methods_para=methods_para,
-            fig_site=fig_site, fig_spm=fig_spm, fig_icc=fig_icc,
+            fig_site=fig_site, fig_icc=fig_icc,
             fig_age=fig_age,   fig_anc=fig_anc,
             fig_icc_site=fig_icc_site,
-            fig_spm_site=fig_spm_site,
             html_report=html_report,
             icc_ebt=icc_ebt, icc_ebf=icc_ebf,
-            spm_ebt=spm_ebt, spm_ebf=spm_ebf,
             run_ebt=run_ebt, run_ebf=run_ebf,
         ))
 
@@ -352,19 +332,13 @@ if st.session_state.get("results_ready"):
 
     icc_ebt = st.session_state.get("icc_ebt")
     icc_ebf = st.session_state.get("icc_ebf")
-    spm_ebt = st.session_state.get("spm_ebt")
-    spm_ebf = st.session_state.get("spm_ebf")
 
     # Summary metric boxes
     metric_cols = []
     if icc_ebt is not None and len(icc_ebt) > 0:
-        metric_cols += [("Median ICC (EB=TRUE)",      f"{icc_ebt['icc3'].median():.3f}")]
-    if spm_ebt is not None and len(spm_ebt) > 0:
-        metric_cols += [("Median Spearman r (EB=TRUE)", f"{spm_ebt['spearman_r'].median():.3f}")]
+        metric_cols += [("Median ICC3 (EB=TRUE)",  f"{icc_ebt['icc3'].median():.3f}")]
     if icc_ebf is not None and len(icc_ebf) > 0:
-        metric_cols += [("Median ICC (EB=FALSE)",      f"{icc_ebf['icc3'].median():.3f}")]
-    if spm_ebf is not None and len(spm_ebf) > 0:
-        metric_cols += [("Median Spearman r (EB=FALSE)", f"{spm_ebf['spearman_r'].median():.3f}")]
+        metric_cols += [("Median ICC3 (EB=FALSE)", f"{icc_ebf['icc3'].median():.3f}")]
 
     if metric_cols:
         cols = st.columns(len(metric_cols))
@@ -390,29 +364,16 @@ if st.session_state.get("results_ready"):
         st.caption("ANCOVA Type II (Age + Sex as covariates). Points below the diagonal = reduced site effect. Each point = one feature.")
 
     with t3:
-        st.markdown("**ICC(C,1) — overall distribution across all features**")
         if st.session_state.get("fig_icc"):
             st.plotly_chart(st.session_state["fig_icc"], use_container_width=True)
-            st.caption("ICC(C,1) between raw and harmonized values. Colored bands: Poor < 0.50 | Moderate 0.50–0.75 | Good 0.75–0.90 | Excellent ≥ 0.90 (Koo & Li 2016). Each point = one imaging feature.")
-        st.markdown("**Spearman r — overall distribution across all features**")
-        if st.session_state.get("fig_spm"):
-            st.plotly_chart(st.session_state["fig_spm"], use_container_width=True)
-            st.caption("Spearman rank correlation between raw and harmonized values across participants. Each point = one imaging feature.")
+            st.caption("ICC3 between raw and harmonized values. Colored bands: Poor < 0.50 | Moderate 0.50–0.75 | Good 0.75–0.90 | Excellent ≥ 0.90 (Koo & Li 2016). Each point = one imaging feature.")
 
     with t4:
-        st.markdown("**ICC(C,1) per site** — distribution of values across features, computed within each site")
         if st.session_state.get("fig_icc_site"):
             st.plotly_chart(st.session_state["fig_icc_site"], use_container_width=True)
-            st.caption("Each box = distribution of ICC(C,1) across features for that site. Sites with smaller sample sizes may show lower consistency, particularly without EB. Colored bands as in panel above.")
+            st.caption("Each box = distribution of ICC3 across features for that site. Sites with smaller sample sizes may show lower consistency, particularly without EB. Colored bands: Poor/Moderate/Good/Excellent (Koo & Li 2016).")
         else:
             st.info("By-site ICC not available (need at least 6 participants per site).")
-
-        st.markdown("**Spearman r per site** — distribution of values across features, computed within each site")
-        if st.session_state.get("fig_spm_site"):
-            st.plotly_chart(st.session_state["fig_spm_site"], use_container_width=True)
-            st.caption("Each box = distribution of Spearman r across features for that site.")
-        else:
-            st.info("By-site Spearman r not available.")
 
     with t5:
         if st.session_state.get("fig_age"):
