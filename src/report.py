@@ -424,20 +424,22 @@ TEMPLATE = """<!DOCTYPE html>
 
 <div class="fig-wrap">{{ fig_icc }}</div>
 <p class="fig-caption">
-  <b>Figure S3.</b> Within-site consistency (overall): ICC3 (two-way mixed effects, consistency) between raw and harmonized values,
-  pooled across all features. Each point represents one imaging feature.
-  Colored bands denote Koo and Li (2016) [<a href="#ref5">5</a>] thresholds:
+  <b>Figure S3.</b> Distribution of ICC3 values across all features (raw vs harmonized).
+  Each bar represents the density of features falling within that ICC3 range.
+  Colored background bands denote Koo and Li (2016) [<a href="#ref5">5</a>] thresholds:
   poor (&lt; 0.50), moderate (0.50&#8211;0.75), good (0.75&#8211;0.90), excellent (&#8805; 0.90).
+  Dashed vertical lines show the median ICC3 per harmonization condition.
 </p>
 
 {% if fig_icc_site %}
 <div class="fig-wrap">{{ fig_icc_site }}</div>
 <p class="fig-caption">
   <b>Figure S4.</b> Within-site consistency by site: ICC3 (two-way mixed effects, consistency) between raw and harmonized values,
-  computed separately for each site. Each box shows the distribution of ICC values across
-  features within that site. Sites with smaller sample sizes may show lower consistency,
-  particularly when harmonization is performed without Empirical Bayes estimation
-  [<a href="#ref3">3</a>]. Colored bands as in Figure S3 (Koo &amp; Li, 2016).
+  computed separately for each site. Site labels include participant count (n).
+  Each box shows the distribution of ICC3 values across all features within that site.
+  Sites with smaller sample sizes may show lower consistency, particularly when
+  harmonization is performed without Empirical Bayes estimation [<a href="#ref3">3</a>, <a href="#ref8">8</a>].
+  Colored bands denote Koo and Li (2016) [<a href="#ref5">5</a>] thresholds (as in Figure S3).
 </p>
 {% endif %}
 

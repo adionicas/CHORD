@@ -135,69 +135,74 @@ def plot_spearman(spm_df: pd.DataFrame) -> go.Figure:
 
 
 # ---------------------------------------------------------------------------
-# ICC3 — violin
+# ICC3 — distribution (histogram + KDE) across all features
 # ---------------------------------------------------------------------------
 def plot_icc(icc_df: pd.DataFrame) -> go.Figure:
     """
-    Violin + box of ICC3 values. One violin per condition if 'harmonization' column present.
+    Distribution of ICC3 values across all features.
+    Histogram + smoothed density, with Koo & Li (2016) band backgrounds.
+    One trace per harmonization condition.
     """
     if "harmonization" not in icc_df.columns:
         icc_df = icc_df.copy()
         icc_df["harmonization"] = "EB=TRUE"
 
-    conditions = icc_df["harmonization"].unique()
-    colors     = [AFTER_EBT, AFTER_EBF, GREEN]
+    conditions = list(icc_df["harmonization"].unique())
+    colors_map = {"EB=TRUE": AFTER_EBT, "EB=FALSE": AFTER_EBF}
 
     fig = go.Figure()
-    for i, cond in enumerate(conditions):
-        sub = icc_df[icc_df["harmonization"] == cond]["icc3"].dropna()
-        color = colors[i % len(colors)]
-        med   = sub.median()
-        fig.add_trace(go.Violin(
-            y=sub, name=cond, box_visible=True,
-            points="all", jitter=0.3, pointpos=0,
-            marker=dict(size=5, opacity=0.60, color=color),
-            line_color=color, spanmode="hard",
-        ))
-        fig.add_annotation(
-            x=cond, y=med,
-            text=f"Median: {med:.3f}",
-            showarrow=False, yshift=14,
-            font=dict(size=11, color="black", family="Arial"),
-            bgcolor="white", bordercolor="grey", borderwidth=1,
-        )
 
-    # Koo & Li (2016) — colored interval bands + boundary lines
-    fig.add_hrect(y0=0,    y1=0.50, fillcolor="rgba(210,50,50,0.07)",  line_width=0)
-    fig.add_hrect(y0=0.50, y1=0.75, fillcolor="rgba(220,130,30,0.07)", line_width=0)
-    fig.add_hrect(y0=0.75, y1=0.90, fillcolor="rgba(60,160,60,0.07)",  line_width=0)
-    fig.add_hrect(y0=0.90, y1=1.08, fillcolor="rgba(20,100,20,0.07)",  line_width=0)
-
-    for yval, label in [(0.50, "0.50"), (0.75, "0.75"), (0.90, "0.90")]:
-        fig.add_hline(y=yval, line_dash="solid", line_color=GREY,
-                      opacity=0.45, line_width=1.0,
-                      annotation_text=label, annotation_position="right",
-                      annotation_font_size=9, annotation_font_color=GREY)
-
-    # Interval labels in centre of each band
-    for ymid, label, col in [
-        (0.25,  "Poor",      "rgba(180,40,40,0.65)"),
-        (0.625, "Moderate",  "rgba(180,100,20,0.65)"),
-        (0.825, "Good",      "rgba(40,130,40,0.65)"),
-        (0.99,  "Excellent", "rgba(20,80,20,0.65)"),
+    # Colored band backgrounds
+    for x0, x1, fill in [
+        (0,    0.50, "rgba(210,50,50,0.07)"),
+        (0.50, 0.75, "rgba(220,130,30,0.07)"),
+        (0.75, 0.90, "rgba(60,160,60,0.07)"),
+        (0.90, 1.01, "rgba(20,100,20,0.07)"),
     ]:
+        fig.add_vrect(x0=x0, x1=x1, fillcolor=fill, line_width=0, layer="below")
+
+    for cond in conditions:
+        sub   = icc_df[icc_df["harmonization"] == cond]["icc3"].dropna()
+        color = colors_map.get(cond, BLUE)
+        med   = sub.median()
+        fig.add_trace(go.Histogram(
+            x=sub, name=cond,
+            histnorm="probability density",
+            marker_color=color, opacity=0.35,
+            xbins=dict(size=0.05),
+            showlegend=True,
+        ))
+        fig.add_vline(x=med, line_dash="dash", line_color=color, opacity=0.80,
+                      line_width=1.8,
+                      annotation_text=f"Median {cond}: {med:.3f}",
+                      annotation_position="top right",
+                      annotation_font_size=10, annotation_font_color=color)
+
+    # Boundary lines with labels
+    for xval, label, col in [
+        (0.50, "Poor / Moderate",  "rgba(180,40,40,0.75)"),
+        (0.75, "Moderate / Good",  "rgba(170,100,20,0.75)"),
+        (0.90, "Good / Excellent", "rgba(30,110,30,0.75)"),
+    ]:
+        fig.add_vline(x=xval, line_dash="solid", line_color=GREY,
+                      opacity=0.45, line_width=1.0)
         fig.add_annotation(
-            x=1.01, y=ymid, xref="paper", yref="y",
-            text=f"<b>{label}</b>", showarrow=False,
-            xanchor="left", font=dict(size=9, color=col, family="Arial"),
+            x=xval, y=1.02, xref="x", yref="paper",
+            text=f"<b>{xval}</b><br><span style='font-size:8px'>{label}</span>",
+            showarrow=False, xanchor="center",
+            font=dict(size=9, color="grey", family="Arial"),
         )
 
     fig.update_layout(
-        title="Within-site consistency: ICC3 (raw vs harmonized) — Koo & Li (2016)",
-        yaxis_title="ICC3",
-        yaxis_range=[0, 1.08],
-        height=480, **WHITE_BG,
-        margin=dict(r=90),
+        barmode="overlay",
+        title="Within-site consistency: ICC3 distribution across all features — Koo & Li (2016)",
+        xaxis_title="ICC3",
+        yaxis_title="Density",
+        xaxis_range=[0, 1.02],
+        height=420, **WHITE_BG,
+        legend=dict(orientation="h", yanchor="top", y=-0.18,
+                    xanchor="center", x=0.5),
+        margin=dict(b=80),
     )
     return fig
 
@@ -380,7 +385,11 @@ def _icc_band_shapes():
 def plot_icc_by_site(
     icc_by_site_ebt: pd.DataFrame,
     icc_by_site_ebf: pd.DataFrame | None = None,
+    site_n: dict | None = None,
 ) -> go.Figure:
+    """
+    site_n: dict mapping site name -> participant count, used for x-axis labels.
+    """
     datasets = [(icc_by_site_ebt, "EB=TRUE", AFTER_EBT)]
     if icc_by_site_ebf is not None and len(icc_by_site_ebf) > 0:
         datasets.append((icc_by_site_ebf, "EB=FALSE", AFTER_EBF))
@@ -393,14 +402,18 @@ def plot_icc_by_site(
     site_palette_local = px.colors.qualitative.Safe[:len(sites)]
     site_color = dict(zip(sites, site_palette_local))
 
+    def _site_label(s):
+        if site_n and s in site_n:
+            return f"{s}<br>(n={site_n[s]})"
+        return s
+
     for col_i, (df_s, label, _) in enumerate(datasets, start=1):
         for site in sites:
             sub = df_s[df_s["site"] == site]["icc3"].dropna()
             if len(sub) == 0:
                 continue
-            n_site = int(df_s[df_s["site"] == site]["n"].iloc[0]) if "n" in df_s.columns else ""
             fig.add_trace(go.Box(
-                y=sub, name=site, legendgroup=site,
+                y=sub, name=_site_label(site), legendgroup=site,
                 showlegend=(col_i == 1),
                 marker_color=site_color.get(site, "#888"),
                 line_color=site_color.get(site, "#888"),

@@ -275,9 +275,13 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
         fig_icc   = plot_icc(icc_all) if len(icc_all) > 0 else None
         fig_age   = plot_age_correlations(age_all)
 
+        site_n = df.groupby(site_col)[site_col].count().to_dict()
+        site_n = {str(k): int(v) for k, v in site_n.items()}
+
         fig_icc_site = plot_icc_by_site(
             icc_site_ebt if icc_site_ebt is not None else pd.DataFrame(),
             icc_site_ebf,
+            site_n=site_n,
         ) if (icc_site_ebt is not None and len(icc_site_ebt) > 0) else None
 
         # ── Report ─────────────────────────────────────────────────────────
@@ -366,7 +370,7 @@ if st.session_state.get("results_ready"):
     with t3:
         if st.session_state.get("fig_icc"):
             st.plotly_chart(st.session_state["fig_icc"], use_container_width=True)
-            st.caption("ICC3 between raw and harmonized values. Colored bands: Poor < 0.50 | Moderate 0.50–0.75 | Good 0.75–0.90 | Excellent ≥ 0.90 (Koo & Li 2016). Each point = one imaging feature.")
+            st.caption("Distribution of ICC3 values across all features. Colored bands: Poor < 0.50 | Moderate 0.50–0.75 | Good 0.75–0.90 | Excellent ≥ 0.90 (Koo & Li 2016). Dashed lines = median per condition.")
 
     with t4:
         if st.session_state.get("fig_icc_site"):
