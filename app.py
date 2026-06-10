@@ -223,6 +223,31 @@ feature_cols = st.multiselect(
     label_visibility="collapsed",
 )
 
+# ── Column range selector ──────────────────────────────────────────────────
+with st.expander("Select features by column position (e.g. columns 5 to 20)"):
+    all_df_cols = df.columns.tolist()
+    st.caption(f"Your file has {len(all_df_cols)} columns total. Position 1 = first column.")
+    rng_c1, rng_c2, rng_c3 = st.columns([2, 2, 2])
+    with rng_c1:
+        from_col = st.number_input("From column (position)", min_value=1,
+                                    max_value=len(all_df_cols), value=1, step=1)
+    with rng_c2:
+        to_col   = st.number_input("To column (position, inclusive)",  min_value=1,
+                                    max_value=len(all_df_cols), value=len(all_df_cols), step=1)
+    with rng_c3:
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("Apply range", use_container_width=True):
+            lo, hi = min(from_col, to_col), max(from_col, to_col)
+            range_cols = [c for c in all_df_cols[lo-1:hi] if c in auto_features]
+            if range_cols:
+                st.session_state["sel_features"] = range_cols
+                st.rerun()
+            else:
+                st.warning("No numeric feature columns found in that range.")
+    # preview what the range covers
+    preview = all_df_cols[from_col-1:to_col]
+    st.caption(f"Range covers: {', '.join(preview[:6])}{'…' if len(preview) > 6 else ''} ({len(preview)} columns)")
+
 if not feature_cols:
     st.warning("Please select at least one feature column.")
     st.stop()
@@ -342,6 +367,10 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
 
         progress.progress(100, "Done.")
 
+        # build harmonized CSVs for download
+        harm_csv_ebt = harm_ebt.to_csv(index=False).encode() if harm_ebt is not None else None
+        harm_csv_ebf = harm_ebf.to_csv(index=False).encode() if harm_ebf is not None else None
+
         st.session_state.update(dict(
             results_ready=True,
             methods_para=methods_para,
@@ -351,6 +380,8 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
             html_report=html_report,
             icc_ebt=icc_ebt, icc_ebf=icc_ebf,
             run_ebt=run_ebt, run_ebf=run_ebf,
+            harm_csv_ebt=harm_csv_ebt,
+            harm_csv_ebf=harm_csv_ebf,
         ))
 
     except Exception as e:
@@ -429,12 +460,32 @@ if st.session_state.get("results_ready"):
         st.caption("This paragraph is also included at the end of the downloaded HTML report.")
 
     st.divider()
-    st.download_button(
-        label="⬇  Download Full Report (HTML)",
-        data=st.session_state["html_report"],
-        file_name="harmonization_report.html",
-        mime="text/html",
-        type="primary",
-        use_container_width=True,
-    )
-    st.caption("Self-contained HTML file suitable for supplementary material. Open in any browser.")
+    dl1, dl2, dl3 = st.columns(3)
+    with dl1:
+        st.download_button(
+            label="⬇  Download Report (HTML)",
+            data=st.session_state["html_report"],
+            file_name="harmonization_report.html",
+            mime="text/html",
+            type="primary",
+            use_container_width=True,
+        )
+        st.caption("Supplementary material report")
+    with dl2:
+        if st.session_state.get("harm_csv_ebt"):
+            st.download_button(
+                label="⬇  Harmonized data — EB=TRUE",
+                data=st.session_state["harm_csv_ebt"],
+                file_name="harmonized_EBT.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
+    with dl3:
+        if st.session_state.get("harm_csv_ebf"):
+            st.download_button(
+                label="⬇  Harmonized data — EB=FALSE",
+                data=st.session_state["harm_csv_ebf"],
+                file_name="harmonized_EBF.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )

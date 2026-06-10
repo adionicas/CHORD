@@ -135,13 +135,12 @@ def plot_spearman(spm_df: pd.DataFrame) -> go.Figure:
 
 
 # ---------------------------------------------------------------------------
-# ICC3 — distribution (histogram + KDE) across all features
+# ICC3 — category count bar chart
 # ---------------------------------------------------------------------------
 def plot_icc(icc_df: pd.DataFrame) -> go.Figure:
     """
-    Distribution of ICC3 values across all features.
-    Histogram + smoothed density, with Koo & Li (2016) band backgrounds.
-    One trace per harmonization condition.
+    Grouped bar chart: number of features in each Koo & Li (2016) ICC3 category.
+    One group per harmonization condition. Clear and direct.
     """
     if "harmonization" not in icc_df.columns:
         icc_df = icc_df.copy()
@@ -150,55 +149,36 @@ def plot_icc(icc_df: pd.DataFrame) -> go.Figure:
     conditions = list(icc_df["harmonization"].unique())
     colors_map = {"EB=TRUE": AFTER_EBT, "EB=FALSE": AFTER_EBF}
 
+    categories  = ["Poor\n(< 0.50)", "Moderate\n(0.50–0.75)",
+                   "Good\n(0.75–0.90)", "Excellent\n(≥ 0.90)"]
+    cat_colors  = ["rgba(210,50,50,0.75)", "rgba(220,130,30,0.75)",
+                   "rgba(60,160,60,0.75)",  "rgba(20,100,20,0.75)"]
+
     fig = go.Figure()
-
-    # Colored band backgrounds
-    for x0, x1, fill in [
-        (0,    0.50, "rgba(210,50,50,0.07)"),
-        (0.50, 0.75, "rgba(220,130,30,0.07)"),
-        (0.75, 0.90, "rgba(60,160,60,0.07)"),
-        (0.90, 1.01, "rgba(20,100,20,0.07)"),
-    ]:
-        fig.add_vrect(x0=x0, x1=x1, fillcolor=fill, line_width=0, layer="below")
-
     for cond in conditions:
-        sub   = icc_df[icc_df["harmonization"] == cond]["icc3"].dropna()
+        sub = icc_df[icc_df["harmonization"] == cond]["icc3"].dropna()
+        counts = [
+            int((sub < 0.50).sum()),
+            int(((sub >= 0.50) & (sub < 0.75)).sum()),
+            int(((sub >= 0.75) & (sub < 0.90)).sum()),
+            int((sub >= 0.90).sum()),
+        ]
         color = colors_map.get(cond, BLUE)
-        med   = sub.median()
-        fig.add_trace(go.Histogram(
-            x=sub, name=cond,
-            histnorm="probability density",
-            marker_color=color, opacity=0.35,
-            xbins=dict(size=0.05),
-            showlegend=True,
+        fig.add_trace(go.Bar(
+            name=cond,
+            x=categories,
+            y=counts,
+            marker_color=color,
+            opacity=0.80,
+            text=counts,
+            textposition="outside",
         ))
-        fig.add_vline(x=med, line_dash="dash", line_color=color, opacity=0.80,
-                      line_width=1.8,
-                      annotation_text=f"Median {cond}: {med:.3f}",
-                      annotation_position="top right",
-                      annotation_font_size=10, annotation_font_color=color)
-
-    # Boundary lines with labels
-    for xval, label, col in [
-        (0.50, "Poor / Moderate",  "rgba(180,40,40,0.75)"),
-        (0.75, "Moderate / Good",  "rgba(170,100,20,0.75)"),
-        (0.90, "Good / Excellent", "rgba(30,110,30,0.75)"),
-    ]:
-        fig.add_vline(x=xval, line_dash="solid", line_color=GREY,
-                      opacity=0.45, line_width=1.0)
-        fig.add_annotation(
-            x=xval, y=1.02, xref="x", yref="paper",
-            text=f"<b>{xval}</b><br><span style='font-size:8px'>{label}</span>",
-            showarrow=False, xanchor="center",
-            font=dict(size=9, color="grey", family="Arial"),
-        )
 
     fig.update_layout(
-        barmode="overlay",
-        title="Within-site consistency: ICC3 distribution across all features — Koo & Li (2016)",
-        xaxis_title="ICC3",
-        yaxis_title="Density",
-        xaxis_range=[0, 1.02],
+        barmode="group",
+        title="Within-site consistency: ICC3 feature counts by category — Koo & Li (2016)",
+        xaxis_title="ICC3 category",
+        yaxis_title="Number of features",
         height=420, **WHITE_BG,
         legend=dict(orientation="h", yanchor="top", y=-0.18,
                     xanchor="center", x=0.5),

@@ -394,6 +394,8 @@ TEMPLATE = """<!DOCTYPE html>
   large &#8805; 0.40 (Cohen, 1988), allowing direct reading of effect size category
   both before (x-axis) and after (y-axis) harmonization.
   ANCOVA models included age and sex as covariates (Type II sums of squares).
+  Axis range is determined by the maximum Cohen's <em>f</em> value observed in the data (no ceiling imposed);
+  large site effects may produce values substantially above 1.0.
 </p>
 
 <h3>S4.2 Within-Site Consistency</h3>
@@ -424,11 +426,10 @@ TEMPLATE = """<!DOCTYPE html>
 
 <div class="fig-wrap">{{ fig_icc }}</div>
 <p class="fig-caption">
-  <b>Figure S3.</b> Distribution of ICC3 values across all features (raw vs harmonized).
-  Each bar represents the density of features falling within that ICC3 range.
-  Colored background bands denote Koo and Li (2016) [<a href="#ref5">5</a>] thresholds:
-  poor (&lt; 0.50), moderate (0.50&#8211;0.75), good (0.75&#8211;0.90), excellent (&#8805; 0.90).
-  Dashed vertical lines show the median ICC3 per harmonization condition.
+  <b>Figure S3.</b> Number of features falling in each ICC3 consistency category (Koo &amp; Li, 2016 [<a href="#ref5">5</a>]).
+  Categories: poor (&lt; 0.50), moderate (0.50&#8211;0.75), good (0.75&#8211;0.90), excellent (&#8805; 0.90).
+  Each bar shows the count of features per category; counts are shown above each bar.
+  One bar group per harmonization condition.
 </p>
 
 {% if fig_icc_site %}
