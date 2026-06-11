@@ -8,24 +8,50 @@
   Multisite · ComBat · Neuroimaging
 ```
 
-CHORD is an open-source, browser-based tool for evaluating multisite ComBat harmonization
-in neuroimaging datasets. Upload a table of imaging features, configure a few columns,
-click Run — and receive a fully formatted supplementary report ready for manuscript submission.
+**CHORD runs ComBat harmonization on your multisite neuroimaging data and delivers the
+harmonized dataset alongside a comprehensive, publication-ready evaluation report.**
+
+Upload a table of imaging features with site, age, and sex columns — CHORD applies
+ComBat batch effect correction, outputs the harmonized data as a downloadable CSV,
+and generates a fully formatted supplementary report documenting how well harmonization
+worked across all standard evaluation metrics.
+
+No coding required. Runs entirely on your machine — data never leaves your computer.
 
 ---
 
-## What CHORD reports
+## What CHORD does
+
+### 1. Runs ComBat harmonization and outputs harmonized data
+
+CHORD applies [ComBat](https://github.com/Jfortin1/neuroCombat) (Johnson et al., 2007;
+Fortin et al., 2017) to remove scanner- and site-related batch effects from your imaging
+features while preserving biological variability associated with age and sex.
+
+Two configurations are available and can be compared side by side:
+
+| Configuration | Description |
+|---|---|
+| **EB=TRUE** (default) | Empirical Bayes estimation — pools information across features to stabilize batch effect parameter estimates. Recommended when sites have small or unequal sample sizes. |
+| **EB=FALSE** | Feature-wise estimation — applies location and scale adjustments independently per feature, without pooling. |
+
+**The harmonized dataset is available for direct download as a CSV file after processing.**
+
+### 2. Evaluates harmonization effectiveness
 
 | Metric | What it measures |
 |---|---|
 | Site mean z-score deviation | Residual site-related variability before and after harmonization |
-| ANCOVA Cohen's f | Site effect size controlling for age and sex (Type II SS) |
-| ICC3 (overall + by site) | Within-site consistency: how well participant rank ordering is preserved |
-| Spearman r (overall + by site) | Non-parametric rank-order preservation per site |
-| Age associations | Whether biologically motivated age–feature correlations are maintained |
+| ANCOVA Cohen's f | Site effect size controlling for age and sex (Type II sums of squares) |
+| ICC3 overall | Within-site consistency across all features: how well participant rank ordering is preserved after harmonization |
+| ICC3 by site | Same metric broken down per site — reveals which sites show lower consistency |
+| Age associations | Whether biologically motivated age–feature correlations are preserved after harmonization |
 
-CHORD compares **EB=TRUE** (Empirical Bayes, default) and **EB=FALSE** (feature-wise)
-configurations of ComBat side by side.
+### 3. Generates a publication-ready report
+
+The downloadable HTML report is formatted as a supplementary material section and includes
+all figures, metric tables, a pre-written methods paragraph for direct insertion into a
+manuscript, and a full reference list.
 
 ---
 

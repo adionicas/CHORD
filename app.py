@@ -34,7 +34,7 @@ st.markdown("""
     Comprehensive Harmonization Open-platform with Reporting and Diagnostics
   </p>
   <p style="color:rgba(255,255,255,0.85);margin:0;font-size:0.95rem">
-    Transparent and standardized assessment of multisite ComBat harmonization in neuroimaging
+    Run ComBat harmonization on your multisite neuroimaging data — download the harmonized dataset and a publication-ready evaluation report
   </p>
   <div style="margin-top:14px;font-size:1.0rem;color:rgba(255,255,255,0.22);
               letter-spacing:0.30em;user-select:none">
@@ -46,7 +46,9 @@ st.markdown("""
 with st.sidebar:
     st.header("About")
     st.markdown("""
-**CHORD** evaluates ComBat harmonization effectiveness in multisite neuroimaging datasets.
+**CHORD** runs ComBat harmonization on your multisite neuroimaging data and evaluates its effectiveness.
+
+Upload your data → get harmonized data + evaluation report.
 
 **Metrics:**
 - Site mean deviation (z-score)
