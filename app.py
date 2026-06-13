@@ -373,12 +373,14 @@ if st.button("Generate data matrix preview", use_container_width=False):
     ytick_vals.append((start + len(sites_ordered) - 1) / 2)
     ytick_text.append(prev)
 
-    # discrete colorscale for site strip
-    n_sites  = len(sites_unique)
-    site_cs  = []
+    # discrete colorscale for site strip — each site occupies 1/n_sites of [0,1]
+    n_sites = len(sites_unique)
+    site_cs = []
     for i, s in enumerate(sites_unique):
-        site_cs.append([i / max(n_sites - 1, 1),       site_color_map[s]])
-        site_cs.append([(i + 1) / max(n_sites - 1, 1), site_color_map[s]])
+        lo = round(i / n_sites, 8)
+        hi = round(min((i + 1) / n_sites, 1.0), 8)
+        site_cs.append([lo, site_color_map[s]])
+        site_cs.append([hi, site_color_map[s]])
 
     # subplots: thin site strip | main heatmap
     fig_carpet = make_subplots(
