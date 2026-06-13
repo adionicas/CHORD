@@ -371,12 +371,25 @@ if st.button("Generate data matrix preview", use_container_width=False):
     from plotly.subplots import make_subplots
     import numpy as np
 
-    # sort participants by site
-    plot_df = df[[site_col] + feature_cols].copy()
+    # columns to display: covariates first, then imaging features
+    # categorical variables are label-encoded so they can be z-scored
+    covariate_cols = [c for c in [age_col, sex_col] + extra_continuous + extra_categorical
+                      if c in df.columns]
+    all_plot_cols  = covariate_cols + feature_cols
+
+    plot_df = df[[site_col] + all_plot_cols].copy()
+
+    # encode any categorical / string columns to numeric
+    for col in all_plot_cols:
+        if not pd.api.types.is_numeric_dtype(plot_df[col]):
+            uniq = sorted(plot_df[col].dropna().astype(str).unique())
+            mapping = {v: i for i, v in enumerate(uniq)}
+            plot_df[col] = plot_df[col].astype(str).map(mapping)
+
     plot_df = plot_df.sort_values(site_col).reset_index(drop=True)
 
-    # z-score each feature
-    mat      = plot_df[feature_cols].values.astype(float)
+    # z-score every column
+    mat      = plot_df[all_plot_cols].values.astype(float)
     col_means = np.nanmean(mat, axis=0)
     col_sds   = np.nanstd(mat, axis=0)
     col_sds[col_sds == 0] = 1
@@ -439,19 +452,25 @@ if st.button("Generate data matrix preview", use_container_width=False):
     # ── Main data heatmap (right) ──
     fig_carpet.add_trace(go.Heatmap(
         z=z,
-        x=feature_cols,
+        x=all_plot_cols,
         colorscale="RdBu_r",
         zmid=0, zmin=-3, zmax=3,
         colorbar=dict(title="z-score", thickness=12, x=1.01),
         hoverongaps=False,
-        hovertemplate="Feature: %{x}<br>z: %{z:.2f}<extra></extra>",
+        hovertemplate="Column: %{x}<br>z: %{z:.2f}<extra></extra>",
     ), row=1, col=2)
+
+    # vertical separator between covariate columns and imaging features
+    if covariate_cols:
+        sep_x = len(covariate_cols) - 0.5
+        fig_carpet.add_vline(x=sep_x, line_color="black",
+                             line_width=2, opacity=0.7, row=1, col=2)
 
     # grey squares for missing values
     nan_rows, nan_cols_idx = np.where(np.isnan(z))
     if len(nan_rows) > 0:
         fig_carpet.add_trace(go.Scatter(
-            x=[feature_cols[c] for c in nan_cols_idx],
+            x=[all_plot_cols[c] for c in nan_cols_idx],
             y=nan_rows.tolist(),
             mode="markers",
             marker=dict(color="lightgrey", size=2, symbol="square"),
@@ -466,11 +485,12 @@ if st.button("Generate data matrix preview", use_container_width=False):
             fig_carpet.add_hline(y=by, line_color="black",
                                   line_width=1.0, opacity=0.6, row=1, col=col_i)
 
-    n_feat  = len(feature_cols)
+    n_feat  = len(all_plot_cols)
     height  = max(400, min(len(plot_df) * 4, 900))
+    covar_label = f" | first {len(covariate_cols)} columns = covariates (Age, Sex, ...)" if covariate_cols else ""
     fig_carpet.update_layout(
-        title=f"Raw data matrix — {len(plot_df)} participants × {n_feat} features "
-              f"(sorted by {site_col}; z-scored per feature)",
+        title=f"Raw data matrix — {len(plot_df)} participants × {n_feat} columns "
+              f"(sorted by {site_col}; z-scored){covar_label}",
         xaxis=dict(showticklabels=False, showgrid=False),
         xaxis2=dict(showticklabels=n_feat <= 80, tickangle=45,
                     tickfont=dict(size=7)),
