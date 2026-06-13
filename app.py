@@ -226,29 +226,30 @@ feature_cols = st.multiselect(
 )
 
 # ── Column range selector ──────────────────────────────────────────────────
-with st.expander("Select features by column position (e.g. columns 5 to 20)"):
-    all_df_cols = df.columns.tolist()
-    st.caption(f"Your file has {len(all_df_cols)} columns total. Position 1 = first column.")
-    rng_c1, rng_c2, rng_c3 = st.columns([2, 2, 2])
-    with rng_c1:
-        from_col = st.number_input("From column (position)", min_value=1,
-                                    max_value=len(all_df_cols), value=1, step=1)
-    with rng_c2:
-        to_col   = st.number_input("To column (position, inclusive)",  min_value=1,
-                                    max_value=len(all_df_cols), value=len(all_df_cols), step=1)
-    with rng_c3:
-        st.markdown("<br>", unsafe_allow_html=True)
-        if st.button("Apply range", use_container_width=True):
-            lo, hi = min(from_col, to_col), max(from_col, to_col)
-            range_cols = [c for c in all_df_cols[lo-1:hi] if c in auto_features]
-            if range_cols:
-                st.session_state["sel_features"] = range_cols
-                st.rerun()
-            else:
-                st.warning("No numeric feature columns found in that range.")
-    # preview what the range covers
+st.markdown("**Or select by column position** in your file:")
+all_df_cols = df.columns.tolist()
+rng_c1, rng_c2, rng_c3, rng_c4 = st.columns([2, 2, 2, 2])
+with rng_c1:
+    from_col = st.number_input("From column №", min_value=1,
+                                max_value=len(all_df_cols), value=1, step=1,
+                                help="Position of the first feature column (1 = leftmost column in your file)")
+with rng_c2:
+    to_col = st.number_input("To column №", min_value=1,
+                              max_value=len(all_df_cols), value=len(all_df_cols), step=1,
+                              help="Position of the last feature column (inclusive)")
+with rng_c3:
+    st.markdown("<br>", unsafe_allow_html=True)
+    if st.button("Apply range", use_container_width=True):
+        lo, hi = min(from_col, to_col), max(from_col, to_col)
+        range_cols = [c for c in all_df_cols[lo-1:hi] if c in auto_features]
+        if range_cols:
+            st.session_state["sel_features"] = range_cols
+            st.rerun()
+        else:
+            st.warning("No numeric feature columns in that range.")
+with rng_c4:
     preview = all_df_cols[from_col-1:to_col]
-    st.caption(f"Range covers: {', '.join(preview[:6])}{'…' if len(preview) > 6 else ''} ({len(preview)} columns)")
+    st.caption(f"Covers {len(preview)} columns: {', '.join(preview[:4])}{'…' if len(preview) > 4 else ''}")
 
 if not feature_cols:
     st.warning("Please select at least one feature column.")
