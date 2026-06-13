@@ -263,6 +263,36 @@ if prefix_list:
                     st.session_state["sel_features"] = existing + cols
                 st.rerun()
 
+# ── Option 4: Exclude by keyword ──────────────────────────────────────────
+st.markdown("**Option 4 — Exclude columns whose name contains a keyword**")
+ex_c1, ex_c2 = st.columns([4, 2])
+with ex_c1:
+    excl_input = st.text_input(
+        "Exclude keyword(s)",
+        placeholder='e.g.  unassigned   or   unassigned, reward, LIM',
+        label_visibility="collapsed",
+    )
+with ex_c2:
+    st.markdown("<br>", unsafe_allow_html=True)
+    if st.button("Exclude matching", use_container_width=True):
+        if excl_input.strip():
+            keywords = [k.strip().lower() for k in excl_input.split(",") if k.strip()]
+            before   = st.session_state.get("sel_features", [])
+            kept     = [c for c in before
+                        if not any(kw in c.lower() for kw in keywords)]
+            removed  = len(before) - len(kept)
+            st.session_state["sel_features"] = kept
+            st.rerun()
+if excl_input.strip():
+    keywords = [k.strip().lower() for k in excl_input.split(",") if k.strip()]
+    would_remove = [c for c in st.session_state.get("sel_features", [])
+                    if any(kw in c.lower() for kw in keywords)]
+    if would_remove:
+        st.caption(f"Would remove {len(would_remove)} columns: "
+                   f"{', '.join(would_remove[:6])}{'…' if len(would_remove) > 6 else ''}")
+    else:
+        st.caption("No currently selected columns match that keyword.")
+
 # ── Final review multiselect ───────────────────────────────────────────────
 n_sel = len(st.session_state.get("sel_features", []))
 st.markdown(f"**Currently selected: {n_sel} features** — review or edit below")
