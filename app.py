@@ -165,50 +165,95 @@ if None in (site_col, age_col, sex_col):
 
 exclude_meta  = {site_col, age_col, sex_col}
 auto_features = [c for c in num_cols if c not in exclude_meta]
+all_df_cols   = df.columns.tolist()
 
-# ── Feature selection with quick-select controls ──────────────────────────
 import re as _re
-
-# Detect modality prefixes (e.g. FA_, MD_, fMRI_)
 def _prefix(col):
     m = _re.match(r'^([A-Za-z]+_)', col)
     return m.group(1) if m else None
-
 prefix_groups = {}
 for c in auto_features:
     p = _prefix(c)
     if p:
         prefix_groups.setdefault(p, []).append(c)
 
-# Initialise session state for feature selection
-if "sel_features" not in st.session_state or set(st.session_state["sel_features"]) - set(auto_features):
-    st.session_state["sel_features"] = auto_features
+# Start empty — user must actively select
+if "sel_features" not in st.session_state or \
+        not set(st.session_state["sel_features"]).issubset(set(auto_features)):
+    st.session_state["sel_features"] = []
 
-st.markdown(f"**Feature columns** — {len(auto_features)} numeric columns detected")
+st.markdown(f"**Step 2b — Select feature columns to harmonize** ({len(auto_features)} numeric columns available)")
 
-# ── Row 1: Select all / Clear all ─────────────────────────────────────────
-r1c1, r1c2, _ = st.columns([1, 1, 6])
-if r1c1.button("✔ Select all", use_container_width=True):
+# ── Option 1: Range by column name (primary) ──────────────────────────────
+st.markdown("**Option 1 — Select a range by column name**")
+na_c1, na_c2, na_c3 = st.columns([3, 3, 2])
+with na_c1:
+    from_name = st.selectbox("From column", ["— select —"] + auto_features, key="range_from_name")
+with na_c2:
+    to_name   = st.selectbox("To column",   ["— select —"] + auto_features, key="range_to_name")
+with na_c3:
+    st.markdown("<br>", unsafe_allow_html=True)
+    if st.button("Apply name range", use_container_width=True):
+        if from_name != "— select —" and to_name != "— select —":
+            i1 = auto_features.index(from_name)
+            i2 = auto_features.index(to_name)
+            lo, hi = min(i1, i2), max(i1, i2)
+            st.session_state["sel_features"] = auto_features[lo:hi + 1]
+            st.rerun()
+        else:
+            st.warning("Select both a From and a To column.")
+if from_name != "— select —" and to_name != "— select —":
+    i1, i2 = auto_features.index(from_name), auto_features.index(to_name)
+    lo, hi = min(i1, i2), max(i1, i2)
+    preview = auto_features[lo:hi + 1]
+    st.caption(f"Range covers {len(preview)} columns: "
+               f"{', '.join(preview[:5])}{'…' if len(preview) > 5 else ''}")
+
+# ── Option 2: Range by column number ──────────────────────────────────────
+st.markdown("**Option 2 — Select a range by column number** (position in file)")
+nb_c1, nb_c2, nb_c3 = st.columns([3, 3, 2])
+with nb_c1:
+    from_num = st.number_input("From column №", min_value=1,
+                                max_value=len(all_df_cols), value=1, step=1)
+with nb_c2:
+    to_num   = st.number_input("To column №",   min_value=1,
+                                max_value=len(all_df_cols), value=len(all_df_cols), step=1)
+with nb_c3:
+    st.markdown("<br>", unsafe_allow_html=True)
+    if st.button("Apply number range", use_container_width=True):
+        lo2, hi2 = min(from_num, to_num), max(from_num, to_num)
+        range_cols = [c for c in all_df_cols[lo2-1:hi2] if c in auto_features]
+        if range_cols:
+            st.session_state["sel_features"] = range_cols
+            st.rerun()
+        else:
+            st.warning("No numeric feature columns in that position range.")
+num_preview = all_df_cols[from_num-1:to_num]
+st.caption(f"Columns {from_num}–{to_num}: "
+           f"{', '.join(num_preview[:5])}{'…' if len(num_preview) > 5 else ''}")
+
+# ── Option 3: Quick-select buttons ────────────────────────────────────────
+st.markdown("**Option 3 — Quick-select**")
+qs_c1, qs_c2, _ = st.columns([1, 1, 6])
+if qs_c1.button("✔ Select all", use_container_width=True):
     st.session_state["sel_features"] = auto_features
     st.rerun()
-if r1c2.button("✖ Clear all", use_container_width=True):
+if qs_c2.button("✖ Clear all", use_container_width=True):
     st.session_state["sel_features"] = []
     st.rerun()
 
-# ── Row 2+: One button per detected prefix, max 6 per row ─────────────────
 CHUNK = 6
 prefix_list = list(prefix_groups.items())
 if prefix_list:
-    st.caption("Toggle modality groups:")
+    st.caption("Toggle by modality group:")
     for chunk_start in range(0, len(prefix_list), CHUNK):
-        chunk = prefix_list[chunk_start:chunk_start + CHUNK]
+        chunk    = prefix_list[chunk_start:chunk_start + CHUNK]
         btn_cols = st.columns(len(chunk))
         for j, (prefix, cols) in enumerate(chunk):
-            label = prefix.rstrip("_")
-            # truncate long names to keep buttons readable
+            label   = prefix.rstrip("_")
             display = label if len(label) <= 14 else label[:13] + "…"
             if btn_cols[j].button(display, key=f"btn_{prefix}",
-                                  help=f"Toggle all {label} features ({len(cols)} columns)",
+                                  help=f"Toggle {label} ({len(cols)} columns)",
                                   use_container_width=True):
                 current = set(st.session_state["sel_features"])
                 if cols[0] in current:
@@ -218,41 +263,18 @@ if prefix_list:
                     st.session_state["sel_features"] = existing + cols
                 st.rerun()
 
+# ── Final review multiselect ───────────────────────────────────────────────
+n_sel = len(st.session_state.get("sel_features", []))
+st.markdown(f"**Currently selected: {n_sel} features** — review or edit below")
 feature_cols = st.multiselect(
-    "Selected features (edit manually or use buttons above)",
+    "Selected features",
     options=auto_features,
     key="sel_features",
     label_visibility="collapsed",
 )
 
-# ── Column range selector ──────────────────────────────────────────────────
-st.markdown("**Or select by column position** in your file:")
-all_df_cols = df.columns.tolist()
-rng_c1, rng_c2, rng_c3, rng_c4 = st.columns([2, 2, 2, 2])
-with rng_c1:
-    from_col = st.number_input("From column №", min_value=1,
-                                max_value=len(all_df_cols), value=1, step=1,
-                                help="Position of the first feature column (1 = leftmost column in your file)")
-with rng_c2:
-    to_col = st.number_input("To column №", min_value=1,
-                              max_value=len(all_df_cols), value=len(all_df_cols), step=1,
-                              help="Position of the last feature column (inclusive)")
-with rng_c3:
-    st.markdown("<br>", unsafe_allow_html=True)
-    if st.button("Apply range", use_container_width=True):
-        lo, hi = min(from_col, to_col), max(from_col, to_col)
-        range_cols = [c for c in all_df_cols[lo-1:hi] if c in auto_features]
-        if range_cols:
-            st.session_state["sel_features"] = range_cols
-            st.rerun()
-        else:
-            st.warning("No numeric feature columns in that range.")
-with rng_c4:
-    preview = all_df_cols[from_col-1:to_col]
-    st.caption(f"Covers {len(preview)} columns: {', '.join(preview[:4])}{'…' if len(preview) > 4 else ''}")
-
 if not feature_cols:
-    st.warning("Please select at least one feature column.")
+    st.info("No features selected yet. Use one of the options above to select features.")
     st.stop()
 
 sites = df[site_col].dropna().unique()
