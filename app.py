@@ -264,12 +264,17 @@ with ex_c2:
             st.session_state["sel_features"] = kept
             st.rerun()
 if excl_input.strip():
-    keywords = [k.strip().lower() for k in excl_input.split(",") if k.strip()]
+    keywords     = [k.strip().lower() for k in excl_input.split(",") if k.strip()]
     would_remove = [c for c in st.session_state.get("sel_features", [])
                     if any(kw in c.lower() for kw in keywords)]
     if would_remove:
-        st.caption(f"Would remove {len(would_remove)} columns: "
-                   f"{', '.join(would_remove[:6])}{'…' if len(would_remove) > 6 else ''}")
+        st.warning(f"**{len(would_remove)} column{'s' if len(would_remove) > 1 else ''} "
+                   f"match{'es' if len(would_remove) == 1 else ''} and would be removed:**")
+        rm_rows = [would_remove[i:i+3] for i in range(0, len(would_remove), 3)]
+        for row in rm_rows:
+            grid = st.columns(3)
+            for j, name in enumerate(row):
+                grid[j].markdown(f"`{name}`")
     else:
         st.caption("No currently selected columns match that keyword.")
 
