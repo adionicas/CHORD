@@ -351,7 +351,7 @@ if st.button("Generate data matrix preview", use_container_width=False):
     z = (mat - col_means) / col_sds
 
     # site color mapping — same palette as ICC by-site plot
-    sites_ordered  = plot_df[site_col].astype(str).values
+    sites_ordered  = np.array(plot_df[site_col].astype(str))
     sites_unique   = sorted(set(sites_ordered))
     palette        = px.colors.qualitative.Safe
     site_color_map = {s: palette[i % len(palette)] for i, s in enumerate(sites_unique)}
