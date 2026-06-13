@@ -185,52 +185,53 @@ if "sel_features" not in st.session_state or \
 st.markdown(f"**Step 2b — Select feature columns to harmonize** ({len(auto_features)} numeric columns available)")
 
 # ── Option 1: Range by column name (primary) ──────────────────────────────
-st.markdown("**Option 1 — Select a range by column name**")
-na_c1, na_c2, na_c3 = st.columns([3, 3, 2])
-with na_c1:
-    from_name = st.selectbox("From column", ["— select —"] + auto_features, key="range_from_name")
-with na_c2:
-    to_name   = st.selectbox("To column",   ["— select —"] + auto_features, key="range_to_name")
-with na_c3:
-    st.markdown("<br>", unsafe_allow_html=True)
-    if st.button("Apply name range", use_container_width=True):
-        if from_name != "— select —" and to_name != "— select —":
-            i1 = auto_features.index(from_name)
-            i2 = auto_features.index(to_name)
-            lo, hi = min(i1, i2), max(i1, i2)
-            st.session_state["sel_features"] = auto_features[lo:hi + 1]
-            st.rerun()
-        else:
-            st.warning("Select both a From and a To column.")
-if from_name != "— select —" and to_name != "— select —":
-    i1, i2 = auto_features.index(from_name), auto_features.index(to_name)
-    lo, hi = min(i1, i2), max(i1, i2)
-    preview = auto_features[lo:hi + 1]
-    st.caption(f"Range covers {len(preview)} columns: "
-               f"{', '.join(preview[:5])}{'…' if len(preview) > 5 else ''}")
+st.markdown("**Option 1 — Select a range**")
+use_col_num = st.checkbox("Use column numbers instead of names", value=False,
+                          help="Check this if column names are not informative enough to use as range boundaries")
 
-# ── Option 2: Range by column number ──────────────────────────────────────
-st.markdown("**Option 2 — Select a range by column number** (position in file)")
-nb_c1, nb_c2, nb_c3 = st.columns([3, 3, 2])
-with nb_c1:
-    from_num = st.number_input("From column №", min_value=1,
-                                max_value=len(all_df_cols), value=1, step=1)
-with nb_c2:
-    to_num   = st.number_input("To column №",   min_value=1,
-                                max_value=len(all_df_cols), value=len(all_df_cols), step=1)
-with nb_c3:
-    st.markdown("<br>", unsafe_allow_html=True)
-    if st.button("Apply number range", use_container_width=True):
-        lo2, hi2 = min(from_num, to_num), max(from_num, to_num)
-        range_cols = [c for c in all_df_cols[lo2-1:hi2] if c in auto_features]
-        if range_cols:
-            st.session_state["sel_features"] = range_cols
-            st.rerun()
-        else:
-            st.warning("No numeric feature columns in that position range.")
-num_preview = all_df_cols[from_num-1:to_num]
-st.caption(f"Columns {from_num}–{to_num}: "
-           f"{', '.join(num_preview[:5])}{'…' if len(num_preview) > 5 else ''}")
+if not use_col_num:
+    na_c1, na_c2, na_c3 = st.columns([3, 3, 2])
+    with na_c1:
+        from_name = st.selectbox("From column", ["— select —"] + auto_features, key="range_from_name")
+    with na_c2:
+        to_name   = st.selectbox("To column",   ["— select —"] + auto_features, key="range_to_name")
+    with na_c3:
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("Apply range", use_container_width=True, key="apply_name"):
+            if from_name != "— select —" and to_name != "— select —":
+                i1 = auto_features.index(from_name)
+                i2 = auto_features.index(to_name)
+                lo, hi = min(i1, i2), max(i1, i2)
+                st.session_state["sel_features"] = auto_features[lo:hi + 1]
+                st.rerun()
+            else:
+                st.warning("Select both a From and a To column.")
+    if from_name != "— select —" and to_name != "— select —":
+        i1, i2 = auto_features.index(from_name), auto_features.index(to_name)
+        preview = auto_features[min(i1,i2):max(i1,i2) + 1]
+        st.caption(f"Range covers {len(preview)} columns: "
+                   f"{', '.join(preview[:5])}{'…' if len(preview) > 5 else ''}")
+else:
+    nb_c1, nb_c2, nb_c3 = st.columns([3, 3, 2])
+    with nb_c1:
+        from_num = st.number_input("From column №", min_value=1,
+                                    max_value=len(all_df_cols), value=1, step=1)
+    with nb_c2:
+        to_num   = st.number_input("To column №",   min_value=1,
+                                    max_value=len(all_df_cols), value=len(all_df_cols), step=1)
+    with nb_c3:
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("Apply range", use_container_width=True, key="apply_num"):
+            lo2, hi2 = min(from_num, to_num), max(from_num, to_num)
+            range_cols = [c for c in all_df_cols[lo2-1:hi2] if c in auto_features]
+            if range_cols:
+                st.session_state["sel_features"] = range_cols
+                st.rerun()
+            else:
+                st.warning("No numeric feature columns in that position range.")
+    num_preview = all_df_cols[from_num-1:to_num]
+    st.caption(f"Columns {from_num}–{to_num}: "
+               f"{', '.join(num_preview[:5])}{'…' if len(num_preview) > 5 else ''}")
 
 # ── Option 3: Quick-select buttons ────────────────────────────────────────
 st.markdown("**Option 3 — Quick-select**")
