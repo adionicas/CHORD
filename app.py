@@ -334,6 +334,7 @@ st.caption("Visual overview of the selected features before harmonization. "
            "Participants sorted by site so site effects are visible.")
 
 if st.button("Generate data matrix preview", use_container_width=False):
+  try:
     import plotly.graph_objects as go
     import plotly.express as px
     from plotly.subplots import make_subplots
@@ -462,6 +463,8 @@ if st.button("Generate data matrix preview", use_container_width=False):
                f"Main panel = z-scored feature values (red = high, blue = low, grey = missing). "
                f"Missing: {np.isnan(mat).sum():,} cells ({pct_missing:.1f}%). "
                f"Horizontal lines = site boundaries.")
+  except Exception as _preview_err:
+    st.error(f"Preview could not be generated: {_preview_err}")
 
 st.divider()
 st.subheader("Step 3 — ComBat configuration and run")
