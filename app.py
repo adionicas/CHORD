@@ -364,15 +364,18 @@ if st.button("Generate data matrix preview", use_container_width=False):
     boundary_y = [i - 0.5 for i in range(1, len(sites_ordered))
                   if sites_ordered[i] != sites_ordered[i-1]]
 
-    # y-tick labels: site name at midpoint of each block
+    # sample size per site
+    site_n_map = plot_df.groupby(site_col).size().to_dict()
+
+    # y-tick labels: site name + n at midpoint of each block
     ytick_vals, ytick_text, prev, start = [], [], sites_ordered[0], 0
     for i, s in enumerate(sites_ordered):
         if s != prev:
             ytick_vals.append((start + i - 1) / 2)
-            ytick_text.append(prev)
+            ytick_text.append(f"{prev} (n={site_n_map.get(prev, '?')})")
             prev, start = s, i
     ytick_vals.append((start + len(sites_ordered) - 1) / 2)
-    ytick_text.append(prev)
+    ytick_text.append(f"{prev} (n={site_n_map.get(prev, '?')})")
 
     # discrete colorscale for site strip — each site occupies 1/n_sites of [0,1]
     n_sites = len(sites_unique)
@@ -392,13 +395,14 @@ if st.button("Generate data matrix preview", use_container_width=False):
     )
 
     # ── Site color strip (left) ──
+    site_n_col = np.array([site_n_map.get(s, '?') for s in sites_ordered])
     fig_carpet.add_trace(go.Heatmap(
         z=site_idx,
         colorscale=site_cs,
         zmin=0, zmax=n_sites - 1,
         showscale=False,
-        hovertemplate="Site: %{customdata}<extra></extra>",
-        customdata=sites_ordered.reshape(-1, 1),
+        hovertemplate="Site: %{customdata[0]}<br>n = %{customdata[1]}<extra></extra>",
+        customdata=np.column_stack([sites_ordered, site_n_col]),
     ), row=1, col=1)
 
     # ── Main data heatmap (right) ──
@@ -431,30 +435,21 @@ if st.button("Generate data matrix preview", use_container_width=False):
             fig_carpet.add_hline(y=by, line_color="black",
                                   line_width=1.0, opacity=0.6, row=1, col=col_i)
 
-    # legend: one scatter dot per site
-    for s in sites_unique:
-        fig_carpet.add_trace(go.Scatter(
-            x=[None], y=[None], mode="markers",
-            marker=dict(color=site_color_map[s], size=10, symbol="square"),
-            name=s, showlegend=True,
-        ))
-
     n_feat  = len(feature_cols)
     height  = max(400, min(len(plot_df) * 4, 900))
     fig_carpet.update_layout(
         title=f"Raw data matrix — {len(plot_df)} participants × {n_feat} features "
               f"(sorted by {site_col}; z-scored per feature)",
-        xaxis=dict(showticklabels=False, showgrid=False),   # site strip x — no labels
+        xaxis=dict(showticklabels=False, showgrid=False),
         xaxis2=dict(showticklabels=n_feat <= 80, tickangle=45,
                     tickfont=dict(size=7)),
         yaxis=dict(tickmode="array", tickvals=ytick_vals, ticktext=ytick_text,
                    tickfont=dict(size=9), autorange="reversed"),
         height=height,
+        showlegend=False,
         plot_bgcolor="white", paper_bgcolor="white",
         font=dict(color="black", family="Arial"),
-        margin=dict(l=80, b=110, r=60),
-        legend=dict(orientation="h", yanchor="top", y=-0.12,
-                    xanchor="center", x=0.5, title="Site"),
+        margin=dict(l=110, b=90, r=60),
     )
 
     pct_missing = 100 * np.isnan(mat).sum() / mat.size
