@@ -335,6 +335,8 @@ st.caption("Visual overview of the selected features before harmonization. "
 
 if st.button("Generate data matrix preview", use_container_width=False):
     import plotly.graph_objects as go
+    import plotly.express as px
+    from plotly.subplots import make_subplots
     import numpy as np
 
     # sort participants by site
@@ -342,75 +344,121 @@ if st.button("Generate data matrix preview", use_container_width=False):
     plot_df = plot_df.sort_values(site_col).reset_index(drop=True)
 
     # z-score each feature
-    mat = plot_df[feature_cols].values.astype(float)
+    mat      = plot_df[feature_cols].values.astype(float)
     col_means = np.nanmean(mat, axis=0)
     col_sds   = np.nanstd(mat, axis=0)
     col_sds[col_sds == 0] = 1
     z = (mat - col_means) / col_sds
 
-    # site boundary lines
-    sites_ordered = plot_df[site_col].values
-    boundary_y = []
-    for i in range(1, len(sites_ordered)):
-        if sites_ordered[i] != sites_ordered[i-1]:
-            boundary_y.append(i - 0.5)
+    # site color mapping — same palette as ICC by-site plot
+    sites_ordered  = plot_df[site_col].astype(str).values
+    sites_unique   = sorted(set(sites_ordered))
+    palette        = px.colors.qualitative.Safe
+    site_color_map = {s: palette[i % len(palette)] for i, s in enumerate(sites_unique)}
 
-    # y-axis labels: show site name at midpoint of each block
-    ytick_vals, ytick_text = [], []
-    prev, start = sites_ordered[0], 0
+    # site strip: numeric index per participant row
+    site_idx = np.array([[sites_unique.index(s)] for s in sites_ordered], dtype=float)
+
+    # site boundaries for horizontal lines
+    boundary_y = [i - 0.5 for i in range(1, len(sites_ordered))
+                  if sites_ordered[i] != sites_ordered[i-1]]
+
+    # y-tick labels: site name at midpoint of each block
+    ytick_vals, ytick_text, prev, start = [], [], sites_ordered[0], 0
     for i, s in enumerate(sites_ordered):
-        if s != prev or i == len(sites_ordered) - 1:
-            end = i if s != prev else i + 1
-            mid = (start + end - 1) / 2
-            ytick_vals.append(mid)
-            ytick_text.append(str(prev))
+        if s != prev:
+            ytick_vals.append((start + i - 1) / 2)
+            ytick_text.append(prev)
             prev, start = s, i
-    # last block
-    if sites_ordered[-1] == prev:
-        pass  # already captured above
+    ytick_vals.append((start + len(sites_ordered) - 1) / 2)
+    ytick_text.append(prev)
 
-    fig_carpet = go.Figure(go.Heatmap(
+    # discrete colorscale for site strip
+    n_sites  = len(sites_unique)
+    site_cs  = []
+    for i, s in enumerate(sites_unique):
+        site_cs.append([i / max(n_sites - 1, 1),       site_color_map[s]])
+        site_cs.append([(i + 1) / max(n_sites - 1, 1), site_color_map[s]])
+
+    # subplots: thin site strip | main heatmap
+    fig_carpet = make_subplots(
+        rows=1, cols=2,
+        column_widths=[0.025, 0.975],
+        shared_yaxes=True,
+        horizontal_spacing=0.003,
+    )
+
+    # ── Site color strip (left) ──
+    fig_carpet.add_trace(go.Heatmap(
+        z=site_idx,
+        colorscale=site_cs,
+        zmin=0, zmax=n_sites - 1,
+        showscale=False,
+        hovertemplate="Site: %{customdata}<extra></extra>",
+        customdata=sites_ordered.reshape(-1, 1),
+    ), row=1, col=1)
+
+    # ── Main data heatmap (right) ──
+    fig_carpet.add_trace(go.Heatmap(
         z=z,
         x=feature_cols,
         colorscale="RdBu_r",
-        zmid=0,
-        zmin=-3, zmax=3,
-        colorbar=dict(title="z-score", thickness=14),
+        zmid=0, zmin=-3, zmax=3,
+        colorbar=dict(title="z-score", thickness=12, x=1.01),
         hoverongaps=False,
-        hovertemplate="Feature: %{x}<br>Participant: %{y}<br>z: %{z:.2f}<extra></extra>",
-    ))
+        hovertemplate="Feature: %{x}<br>z: %{z:.2f}<extra></extra>",
+    ), row=1, col=2)
 
-    # site boundary lines
-    for by in boundary_y:
-        fig_carpet.add_hline(y=by, line_color="black", line_width=1.2, opacity=0.7)
-
-    n_feat = len(feature_cols)
-    height = max(400, min(len(plot_df) * 4, 900))
-    fig_carpet.update_layout(
-        title=f"Raw data matrix — {len(plot_df)} participants × {n_feat} features (sorted by {site_col})",
-        xaxis=dict(showticklabels=n_feat <= 60,
-                   tickangle=45, tickfont=dict(size=8)),
-        yaxis=dict(tickmode="array", tickvals=ytick_vals, ticktext=ytick_text,
-                   tickfont=dict(size=9)),
-        height=height,
-        plot_bgcolor="white", paper_bgcolor="white",
-        font=dict(color="black", family="Arial"),
-        margin=dict(l=80, b=100),
-    )
-    # grey for NaN — add a trace for missing cells
+    # grey squares for missing values
     nan_rows, nan_cols_idx = np.where(np.isnan(z))
     if len(nan_rows) > 0:
         fig_carpet.add_trace(go.Scatter(
             x=[feature_cols[c] for c in nan_cols_idx],
             y=nan_rows.tolist(),
             mode="markers",
-            marker=dict(color="lightgrey", size=3, symbol="square"),
+            marker=dict(color="lightgrey", size=2, symbol="square"),
             name="Missing",
-            hovertemplate="Missing: %{x}, participant %{y}<extra></extra>",
+            showlegend=True,
+            xaxis="x2", yaxis="y",
+        ), row=1, col=2)
+
+    # site boundary lines on both panels
+    for by in boundary_y:
+        for col_i in [1, 2]:
+            fig_carpet.add_hline(y=by, line_color="black",
+                                  line_width=1.0, opacity=0.6, row=1, col=col_i)
+
+    # legend: one scatter dot per site
+    for s in sites_unique:
+        fig_carpet.add_trace(go.Scatter(
+            x=[None], y=[None], mode="markers",
+            marker=dict(color=site_color_map[s], size=10, symbol="square"),
+            name=s, showlegend=True,
         ))
+
+    n_feat  = len(feature_cols)
+    height  = max(400, min(len(plot_df) * 4, 900))
+    fig_carpet.update_layout(
+        title=f"Raw data matrix — {len(plot_df)} participants × {n_feat} features "
+              f"(sorted by {site_col}; z-scored per feature)",
+        xaxis=dict(showticklabels=False, showgrid=False),   # site strip x — no labels
+        xaxis2=dict(showticklabels=n_feat <= 80, tickangle=45,
+                    tickfont=dict(size=7)),
+        yaxis=dict(tickmode="array", tickvals=ytick_vals, ticktext=ytick_text,
+                   tickfont=dict(size=9), autorange="reversed"),
+        height=height,
+        plot_bgcolor="white", paper_bgcolor="white",
+        font=dict(color="black", family="Arial"),
+        margin=dict(l=80, b=110, r=60),
+        legend=dict(orientation="h", yanchor="top", y=-0.12,
+                    xanchor="center", x=0.5, title="Site"),
+    )
+
     pct_missing = 100 * np.isnan(mat).sum() / mat.size
     st.plotly_chart(fig_carpet, use_container_width=True)
-    st.caption(f"Missing values: {np.isnan(mat).sum():,} cells ({pct_missing:.1f}% of matrix) shown in grey. "
+    st.caption(f"Left strip = site identity (colored). "
+               f"Main panel = z-scored feature values (red = high, blue = low, grey = missing). "
+               f"Missing: {np.isnan(mat).sum():,} cells ({pct_missing:.1f}%). "
                f"Horizontal lines = site boundaries.")
 
 st.divider()
