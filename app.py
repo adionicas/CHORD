@@ -305,6 +305,92 @@ st.info(f"Sites: **{', '.join(sorted(sites.astype(str)))}** ({len(sites)} sites)
 # STEP 3 — Run
 # ─────────────────────────────────────────────────────────────────────────────
 st.divider()
+st.subheader("Data preview (optional)")
+st.caption("Visual overview of the selected features before harmonization. "
+           "Values are z-scored per feature; missing data shown in grey. "
+           "Participants sorted by site so site effects are visible.")
+
+if st.button("Generate data matrix preview", use_container_width=False):
+    import plotly.graph_objects as go
+    import numpy as np
+
+    # sort participants by site
+    plot_df = df[[site_col] + feature_cols].copy()
+    plot_df = plot_df.sort_values(site_col).reset_index(drop=True)
+
+    # z-score each feature
+    mat = plot_df[feature_cols].values.astype(float)
+    col_means = np.nanmean(mat, axis=0)
+    col_sds   = np.nanstd(mat, axis=0)
+    col_sds[col_sds == 0] = 1
+    z = (mat - col_means) / col_sds
+
+    # site boundary lines
+    sites_ordered = plot_df[site_col].values
+    boundary_y = []
+    for i in range(1, len(sites_ordered)):
+        if sites_ordered[i] != sites_ordered[i-1]:
+            boundary_y.append(i - 0.5)
+
+    # y-axis labels: show site name at midpoint of each block
+    ytick_vals, ytick_text = [], []
+    prev, start = sites_ordered[0], 0
+    for i, s in enumerate(sites_ordered):
+        if s != prev or i == len(sites_ordered) - 1:
+            end = i if s != prev else i + 1
+            mid = (start + end - 1) / 2
+            ytick_vals.append(mid)
+            ytick_text.append(str(prev))
+            prev, start = s, i
+    # last block
+    if sites_ordered[-1] == prev:
+        pass  # already captured above
+
+    fig_carpet = go.Figure(go.Heatmap(
+        z=z,
+        x=feature_cols,
+        colorscale="RdBu_r",
+        zmid=0,
+        zmin=-3, zmax=3,
+        colorbar=dict(title="z-score", thickness=14),
+        hoverongaps=False,
+        hovertemplate="Feature: %{x}<br>Participant: %{y}<br>z: %{z:.2f}<extra></extra>",
+    ))
+
+    # site boundary lines
+    for by in boundary_y:
+        fig_carpet.add_hline(y=by, line_color="black", line_width=1.2, opacity=0.7)
+
+    n_feat = len(feature_cols)
+    height = max(400, min(len(plot_df) * 4, 900))
+    fig_carpet.update_layout(
+        title=f"Raw data matrix — {len(plot_df)} participants × {n_feat} features (sorted by {site_col})",
+        xaxis=dict(showticklabels=n_feat <= 60,
+                   tickangle=45, tickfont=dict(size=8)),
+        yaxis=dict(tickmode="array", tickvals=ytick_vals, ticktext=ytick_text,
+                   tickfont=dict(size=9)),
+        height=height,
+        plot_bgcolor="white", paper_bgcolor="white",
+        font=dict(color="black", family="Arial"),
+        margin=dict(l=80, b=100),
+    )
+    # grey for NaN — add a trace for missing cells
+    nan_rows, nan_cols_idx = np.where(np.isnan(z))
+    if len(nan_rows) > 0:
+        fig_carpet.add_trace(go.Scatter(
+            x=[feature_cols[c] for c in nan_cols_idx],
+            y=nan_rows.tolist(),
+            mode="markers",
+            marker=dict(color="lightgrey", size=3, symbol="square"),
+            name="Missing",
+            hovertemplate="Missing: %{x}, participant %{y}<extra></extra>",
+        ))
+    pct_missing = 100 * np.isnan(mat).sum() / mat.size
+    st.plotly_chart(fig_carpet, use_container_width=True)
+    st.caption(f"Missing values: {np.isnan(mat).sum():,} cells ({pct_missing:.1f}% of matrix) shown in grey. "
+               f"Horizontal lines = site boundaries.")
+
+st.divider()
 st.subheader("Step 3 — ComBat configuration and run")
 
 eb_options = {
