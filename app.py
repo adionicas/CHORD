@@ -264,9 +264,23 @@ with ex_c2:
             st.session_state["sel_features"] = kept
             st.rerun()
 if excl_input.strip():
+    import re as _re2
     keywords     = [k.strip().lower() for k in excl_input.split(",") if k.strip()]
     would_remove = [c for c in st.session_state.get("sel_features", [])
                     if any(kw in c.lower() for kw in keywords)]
+
+    def _highlight(name, kws):
+        """Wrap each matching keyword in the column name with a yellow highlight."""
+        result = name
+        for kw in kws:
+            pattern = _re2.compile(_re2.escape(kw), _re2.IGNORECASE)
+            result  = pattern.sub(
+                lambda m: f'<mark style="background:#FFD700;padding:0 2px;'
+                          f'border-radius:2px;font-weight:bold">{m.group()}</mark>',
+                result,
+            )
+        return result
+
     if would_remove:
         st.warning(f"**{len(would_remove)} column{'s' if len(would_remove) > 1 else ''} "
                    f"match{'es' if len(would_remove) == 1 else ''} and would be removed:**")
@@ -274,7 +288,11 @@ if excl_input.strip():
         for row in rm_rows:
             grid = st.columns(3)
             for j, name in enumerate(row):
-                grid[j].markdown(f"`{name}`")
+                highlighted = _highlight(name, keywords)
+                grid[j].markdown(
+                    f'<span style="font-family:monospace;font-size:0.88em">{highlighted}</span>',
+                    unsafe_allow_html=True,
+                )
     else:
         st.caption("No currently selected columns match that keyword.")
 
