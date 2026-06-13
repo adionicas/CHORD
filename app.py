@@ -163,7 +163,38 @@ with c3:
 if None in (site_col, age_col, sex_col):
     st.stop()
 
-exclude_meta  = {site_col, age_col, sex_col}
+# ── Additional covariates to preserve ─────────────────────────────────────
+extra_continuous, extra_categorical = [], []
+covar_candidates = [c for c in all_cols if c not in {site_col, age_col, sex_col}]
+
+with st.expander("Additional covariates to preserve in the model (optional)"):
+    st.caption(
+        "Any variable listed here is added to the ComBat model matrix so its "
+        "variability is preserved after harmonization. "
+        "Examples: diagnostic group, days post-injury, handedness. "
+        "Specify whether each is continuous (numeric) or categorical (group labels)."
+    )
+    cov_c1, cov_c2 = st.columns(2)
+    with cov_c1:
+        extra_continuous = st.multiselect(
+            "Continuous (numeric) covariates",
+            options=[c for c in covar_candidates if c in num_cols],
+            key="extra_cont",
+        )
+    with cov_c2:
+        extra_categorical = st.multiselect(
+            "Categorical (group) covariates",
+            options=covar_candidates,
+            key="extra_cat",
+        )
+    if extra_continuous or extra_categorical:
+        st.info(
+            "ComBat model will preserve: **Age** (continuous), **Sex** (categorical)"
+            + (f", **{', '.join(extra_continuous)}** (continuous)" if extra_continuous else "")
+            + (f", **{', '.join(extra_categorical)}** (categorical)" if extra_categorical else "")
+        )
+
+exclude_meta  = {site_col, age_col, sex_col} | set(extra_continuous) | set(extra_categorical)
 auto_features = [c for c in num_cols if c not in exclude_meta]
 all_df_cols   = df.columns.tolist()
 
@@ -539,11 +570,15 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
 
         if run_ebt:
             progress.progress(5, "Running ComBat (EB=TRUE)...")
-            harm_ebt = run_combat(df, feature_cols, site_col, age_col, sex_col, eb=True)
+            harm_ebt = run_combat(df, feature_cols, site_col, age_col, sex_col, eb=True,
+                                   extra_continuous=extra_continuous,
+                                   extra_categorical=extra_categorical)
 
         if run_ebf:
             progress.progress(20, "Running ComBat (EB=FALSE)...")
-            harm_ebf = run_combat(df, feature_cols, site_col, age_col, sex_col, eb=False)
+            harm_ebf = run_combat(df, feature_cols, site_col, age_col, sex_col, eb=False,
+                                   extra_continuous=extra_continuous,
+                                   extra_categorical=extra_categorical)
 
         # primary result for site deviation (before panel always uses raw)
         harm_primary = harm_ebt if harm_ebt is not None else harm_ebf
@@ -617,12 +652,16 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
             age_df=age_all,
             fig_site_dev=fig_site, fig_icc=fig_icc, fig_icc_site=fig_icc_site,
             fig_spearman=None, fig_age=fig_age, fig_cohens_f=fig_anc,
+            extra_continuous=extra_continuous,
+            extra_categorical=extra_categorical,
         )
 
         methods_para = build_methods_paragraph(
             site_col=site_col, age_col=age_col, sex_col=sex_col,
             run_ebf=(run_ebf and harm_ebf is not None),
             github_url=GITHUB_URL,
+            extra_continuous=extra_continuous,
+            extra_categorical=extra_categorical,
         )
 
         progress.progress(100, "Done.")

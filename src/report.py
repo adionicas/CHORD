@@ -234,7 +234,7 @@ TEMPLATE = """<!DOCTYPE html>
   <b>{{ n_retained }}</b> participants were retained for harmonization.
   {% endif %}
   The batch variable was <em>{{ site_col }}</em>; covariates preserved during
-  harmonization were <em>{{ age_col }}</em> (continuous) and <em>{{ sex_col }}</em> (categorical).
+  harmonization were <em>{{ age_col }}</em> (continuous) and <em>{{ sex_col }}</em> (categorical){% if extra_continuous %}, {{ extra_continuous | join(", ") }} (continuous){% endif %}{% if extra_categorical %}, {{ extra_categorical | join(", ") }} (categorical){% endif %}.
 </p>
 
 <p class="table-title">Table S1. Sample characteristics by site.</p>
@@ -584,6 +584,8 @@ def build_methods_paragraph(
     sex_col: str,
     run_ebf: bool,
     github_url: str = "[GitHub URL]",
+    extra_continuous: list | None = None,
+    extra_categorical: list | None = None,
 ) -> str:
     """Return a plain-text methods paragraph for copy-paste into a manuscript."""
     if run_ebf:
@@ -603,8 +605,10 @@ def build_methods_paragraph(
         f"(Comprehensive Harmonization Open-platform with Reporting and Diagnostics; {github_url}). "
         f"ComBat harmonization (Johnson et al., 2007; Fortin et al., 2017) was applied using the "
         f"neuroCombat Python package (v0.2.12), with {site_col} as the batch variable and "
-        f"{age_col} (continuous) and {sex_col} (categorical) included as biological covariates "
-        f"to preserve their associated variability. "
+        f"{age_col} (continuous) and {sex_col} (categorical)"
+        + (f", {', '.join(extra_continuous)} (continuous)" if extra_continuous else "")
+        + (f", and {', '.join(extra_categorical)} (categorical)" if extra_categorical else "")
+        + f" included as biological covariates to preserve their associated variability. "
         f"{eb_sentence} "
         f"Harmonization effectiveness was evaluated using five complementary metrics: "
         f"(1) site mean z-score deviation from the grand mean before and after harmonization, "
@@ -637,6 +641,8 @@ def generate_report(
     anc_before, anc_ebt, anc_ebf,
     age_df,
     fig_site_dev, fig_icc, fig_icc_site, fig_spearman, fig_age, fig_cohens_f,
+    extra_continuous=None,
+    extra_categorical=None,
 ) -> str:
 
     sites = sorted(df_raw[site_col].dropna().unique().astype(str))
@@ -665,10 +671,12 @@ def generate_report(
         site_list       = ", ".join(sites),
         n_features      = len(feature_cols),
         n_retained      = n_retained,
-        site_col        = site_col,
-        age_col         = age_col,
-        sex_col         = sex_col,
-        run_ebf         = run_ebf,
+        site_col           = site_col,
+        age_col            = age_col,
+        sex_col            = sex_col,
+        run_ebf            = run_ebf,
+        extra_continuous   = extra_continuous or [],
+        extra_categorical  = extra_categorical or [],
         feature_list    = _format_feature_list(feature_cols),
         demo_table      = _demo_table(demo_df),
         anc_before      = anc_b,
