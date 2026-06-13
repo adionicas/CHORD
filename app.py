@@ -464,8 +464,9 @@ if st.button("Generate data matrix preview", use_container_width=False):
 # ── Data summary table ────────────────────────────────────────────────────
 st.markdown("---")
 st.markdown("**Sample summary table (optional)**")
-st.caption("Per-site descriptive statistics for variables of your choice. "
-           "Continuous variables show mean (SD); categorical show n (%) per category.")
+st.caption("One row per site. Numbers show mean (SD) for numeric variables "
+           "and counts for text/category variables. Add any column from your file — "
+           "age, sex, days since injury, scanner, etc.")
 
 # Variable candidates: everything that is not a selected imaging feature
 summary_candidates = [c for c in df.columns if c not in set(feature_cols)]
