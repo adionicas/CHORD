@@ -308,6 +308,17 @@ if not feature_cols:
     st.info("No features selected yet. Use one of the options above to select features.")
     st.stop()
 
+# ── Full name preview ──────────────────────────────────────────────────────
+with st.expander(f"View all {len(feature_cols)} selected feature names in full"):
+    # show as a compact numbered list in 3 columns
+    cols_per_row = 3
+    rows = [feature_cols[i:i+cols_per_row] for i in range(0, len(feature_cols), cols_per_row)]
+    for i, row in enumerate(rows):
+        grid = st.columns(cols_per_row)
+        for j, name in enumerate(row):
+            idx = i * cols_per_row + j + 1
+            grid[j].markdown(f"`{idx}.` {name}")
+
 sites = df[site_col].dropna().unique()
 st.info(f"Sites: **{', '.join(sorted(sites.astype(str)))}** ({len(sites)} sites) | Features: **{len(feature_cols)}**")
 
