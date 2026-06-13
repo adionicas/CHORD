@@ -461,6 +461,62 @@ if st.button("Generate data matrix preview", use_container_width=False):
   except Exception as _preview_err:
     st.error(f"Preview could not be generated: {_preview_err}")
 
+# ── Data summary table ────────────────────────────────────────────────────
+st.markdown("---")
+st.markdown("**Sample summary table (optional)**")
+st.caption("Per-site descriptive statistics for variables of your choice. "
+           "Continuous variables show mean (SD); categorical show n (%) per category.")
+
+# Variable candidates: everything that is not a selected imaging feature
+summary_candidates = [c for c in df.columns if c not in set(feature_cols)]
+default_summary_vars = [c for c in [age_col, sex_col] if c in summary_candidates]
+
+sum_c1, sum_c2 = st.columns([4, 1])
+with sum_c1:
+    summary_vars = st.multiselect(
+        "Variables to include",
+        options=summary_candidates,
+        default=default_summary_vars,
+        key="summary_vars",
+    )
+with sum_c2:
+    st.markdown("<br>", unsafe_allow_html=True)
+    gen_summary = st.button("Generate summary", use_container_width=True)
+
+if gen_summary and summary_vars:
+    try:
+        sites_list = sorted(df[site_col].dropna().unique().astype(str))
+        rows = []
+        for grp_label in sites_list + ["Overall"]:
+            sub = df if grp_label == "Overall" else df[df[site_col].astype(str) == grp_label]
+            row = {"Site": grp_label, "N": len(sub)}
+            for var in summary_vars:
+                col_data = sub[var].dropna()
+                if len(col_data) == 0:
+                    row[var] = "—"
+                elif pd.api.types.is_numeric_dtype(df[var]):
+                    row[var] = f"{col_data.mean():.2f} ({col_data.std():.2f})"
+                else:
+                    vc = col_data.astype(str).value_counts()
+                    total = len(col_data)
+                    parts = [f"{v}: {n} ({100*n/total:.0f}%)"
+                             for v, n in vc.head(6).items()]
+                    row[var] = "  |  ".join(parts)
+            rows.append(row)
+
+        summary_df = pd.DataFrame(rows)
+        # bold the Total row
+        st.dataframe(
+            summary_df.style.apply(
+                lambda r: ["font-weight:bold" if r["Site"] == "Overall" else "" for _ in r],
+                axis=1,
+            ),
+            use_container_width=True, hide_index=True,
+        )
+        st.caption("Continuous: mean (SD).  Categorical: n (%) per category.")
+    except Exception as _sum_err:
+        st.error(f"Summary could not be generated: {_sum_err}")
+
 st.divider()
 st.subheader("Step 3 — ComBat configuration and run")
 
