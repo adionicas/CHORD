@@ -243,27 +243,6 @@ if qs_c2.button("✖ Clear all", use_container_width=True):
     st.session_state["sel_features"] = []
     st.rerun()
 
-CHUNK = 6
-prefix_list = list(prefix_groups.items())
-if prefix_list:
-    st.caption("Toggle by modality group:")
-    for chunk_start in range(0, len(prefix_list), CHUNK):
-        chunk    = prefix_list[chunk_start:chunk_start + CHUNK]
-        btn_cols = st.columns(len(chunk))
-        for j, (prefix, cols) in enumerate(chunk):
-            label   = prefix.rstrip("_")
-            display = label if len(label) <= 14 else label[:13] + "…"
-            if btn_cols[j].button(display, key=f"btn_{prefix}",
-                                  help=f"Toggle {label} ({len(cols)} columns)",
-                                  use_container_width=True):
-                current = set(st.session_state["sel_features"])
-                if cols[0] in current:
-                    st.session_state["sel_features"] = [c for c in st.session_state["sel_features"] if c not in cols]
-                else:
-                    existing = [c for c in st.session_state["sel_features"] if c not in cols]
-                    st.session_state["sel_features"] = existing + cols
-                st.rerun()
-
 # ── Option 4: Exclude by keyword ──────────────────────────────────────────
 st.markdown("**Option 4 — Exclude columns whose name contains a keyword**")
 ex_c1, ex_c2 = st.columns([4, 2])
