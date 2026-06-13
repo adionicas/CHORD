@@ -163,38 +163,69 @@ with c3:
 if None in (site_col, age_col, sex_col):
     st.stop()
 
-# ── Additional covariates to preserve ─────────────────────────────────────
-extra_continuous, extra_categorical = [], []
-covar_candidates = [c for c in all_cols if c not in {site_col, age_col, sex_col}]
+# ── Covariates to preserve in the ComBat model ────────────────────────────
+st.markdown("**Covariates to preserve in the ComBat model**")
+st.caption(
+    "ComBat harmonization can preserve the biological variability of key variables "
+    "of interest — for example Age and Sex — while removing site-related variance. "
+    "Only the Site/Batch column is strictly required. Everything else is optional."
+)
 
-with st.expander("Additional covariates to preserve in the model (optional)"):
-    st.caption(
-        "Any variable listed here is added to the ComBat model matrix so its "
-        "variability is preserved after harmonization. "
-        "Examples: diagnostic group, days post-injury, handedness. "
-        "Specify whether each is continuous (numeric) or categorical (group labels)."
+other_candidates = [c for c in all_cols if c not in {site_col, age_col, sex_col}]
+
+cov_c1, cov_c2 = st.columns(2)
+with cov_c1:
+    st.markdown("**Continuous covariates** *(numeric values — e.g. Age, days since injury)*")
+    inc_age = st.checkbox(
+        f"Include **{age_col}** (auto-detected)",
+        value=True, key="inc_age",
     )
-    cov_c1, cov_c2 = st.columns(2)
-    with cov_c1:
-        extra_continuous = st.multiselect(
-            "Continuous (numeric) covariates",
-            options=[c for c in covar_candidates if c in num_cols],
-            key="extra_cont",
-        )
-    with cov_c2:
-        extra_categorical = st.multiselect(
-            "Categorical (group) covariates",
-            options=covar_candidates,
-            key="extra_cat",
-        )
-    if extra_continuous or extra_categorical:
-        st.info(
-            "ComBat model will preserve: **Age** (continuous), **Sex** (categorical)"
-            + (f", **{', '.join(extra_continuous)}** (continuous)" if extra_continuous else "")
-            + (f", **{', '.join(extra_categorical)}** (categorical)" if extra_categorical else "")
-        )
+    extra_cont_add = st.multiselect(
+        "Add more continuous covariates",
+        options=[c for c in other_candidates if c in num_cols],
+        key="extra_cont",
+        placeholder="e.g. days since injury, TSI …",
+    )
+with cov_c2:
+    st.markdown("**Categorical covariates** *(group labels — e.g. Sex, diagnosis, group)*")
+    inc_sex = st.checkbox(
+        f"Include **{sex_col}** (auto-detected)",
+        value=True, key="inc_sex",
+    )
+    extra_cat_add = st.multiselect(
+        "Add more categorical covariates",
+        options=other_candidates,
+        key="extra_cat",
+        placeholder="e.g. Group, Diagnosis, Handedness …",
+    )
 
-exclude_meta  = {site_col, age_col, sex_col} | set(extra_continuous) | set(extra_categorical)
+# Final covariate lists passed to ComBat
+continuous_covariates = ([age_col] if inc_age else []) + extra_cont_add
+categorical_covariates = ([sex_col] if inc_sex else []) + extra_cat_add
+
+# Also expose for downstream use (diagnostics always use age/sex if present)
+extra_continuous  = extra_cont_add
+extra_categorical = extra_cat_add
+
+# Summary box
+all_covars_display = (
+    [f"{age_col} (continuous)" for _ in [1] if inc_age]
+    + [f"{c} (continuous)" for c in extra_cont_add]
+    + [f"{sex_col} (categorical)" for _ in [1] if inc_sex]
+    + [f"{c} (categorical)" for c in extra_cat_add]
+)
+if all_covars_display:
+    st.info(
+        f"ComBat model: batch = **{site_col}**  |  covariates = "
+        + ", ".join(f"**{c}**" for c in all_covars_display)
+    )
+else:
+    st.warning(
+        f"ComBat model: batch = **{site_col}** only — no covariates. "
+        "Site effects will be removed but no biological variability is explicitly preserved."
+    )
+
+exclude_meta  = {site_col, age_col, sex_col} | set(extra_cont_add) | set(extra_cat_add)
 auto_features = [c for c in num_cols if c not in exclude_meta]
 all_df_cols   = df.columns.tolist()
 
@@ -590,15 +621,17 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
 
         if run_ebt:
             progress.progress(5, "Running ComBat (EB=TRUE)...")
-            harm_ebt = run_combat(df, feature_cols, site_col, age_col, sex_col, eb=True,
-                                   extra_continuous=extra_continuous,
-                                   extra_categorical=extra_categorical)
+            harm_ebt = run_combat(df, feature_cols, site_col,
+                                   continuous_covariates=continuous_covariates,
+                                   categorical_covariates=categorical_covariates,
+                                   eb=True)
 
         if run_ebf:
             progress.progress(20, "Running ComBat (EB=FALSE)...")
-            harm_ebf = run_combat(df, feature_cols, site_col, age_col, sex_col, eb=False,
-                                   extra_continuous=extra_continuous,
-                                   extra_categorical=extra_categorical)
+            harm_ebf = run_combat(df, feature_cols, site_col,
+                                   continuous_covariates=continuous_covariates,
+                                   categorical_covariates=categorical_covariates,
+                                   eb=False)
 
         # primary result for site deviation (before panel always uses raw)
         harm_primary = harm_ebt if harm_ebt is not None else harm_ebf
@@ -672,16 +705,16 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
             age_df=age_all,
             fig_site_dev=fig_site, fig_icc=fig_icc, fig_icc_site=fig_icc_site,
             fig_spearman=None, fig_age=fig_age, fig_cohens_f=fig_anc,
-            extra_continuous=extra_continuous,
-            extra_categorical=extra_categorical,
+            extra_continuous=continuous_covariates,
+            extra_categorical=categorical_covariates,
         )
 
         methods_para = build_methods_paragraph(
             site_col=site_col, age_col=age_col, sex_col=sex_col,
             run_ebf=(run_ebf and harm_ebf is not None),
             github_url=GITHUB_URL,
-            extra_continuous=extra_continuous,
-            extra_categorical=extra_categorical,
+            extra_continuous=continuous_covariates,
+            extra_categorical=categorical_covariates,
         )
 
         progress.progress(100, "Done.")
