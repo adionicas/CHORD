@@ -8,15 +8,12 @@
   Multisite · ComBat · Neuroimaging
 ```
 
-**CHORD runs ComBat harmonization on your multisite neuroimaging data and delivers the
-harmonized dataset alongside a comprehensive, publication-ready evaluation report.**
+**CHORD is a browser interface that runs ComBat harmonization on multisite neuroimaging data and delivers the
+harmonized dataset with a comprehensive evaluation report.**
 
 Upload a table of imaging features with site, age, and sex columns — CHORD applies
 ComBat batch effect correction, outputs the harmonized data as a downloadable CSV,
-and generates a fully formatted supplementary report documenting how well harmonization
-worked across all standard evaluation metrics.
-
-No coding required. Runs entirely on your machine — data never leaves your computer.
+and generates a full supplementary report documenting harmonization process.
 
 ---
 
@@ -207,13 +204,6 @@ CHORD requires at least:
 - **10 participants per feature** for Spearman and ICC overall
 
 ---
-
-## Citing CHORD
-
-If you use CHORD in your research, please cite:
-
-> Onicas AI, et al. CHORD: Comprehensive Harmonization Open-platform with Reporting
-> and Diagnostics. *[Journal]*, *[Year]*. GitHub: https://github.com/adionicas/CHORD
 
 ComBat references to include:
 
