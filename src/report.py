@@ -392,6 +392,12 @@ TEMPLATE = """<!DOCTYPE html>
   large &#8805; 0.40 (Cohen, 1988), allowing direct reading of effect size category
   both before (x-axis) and after (y-axis) harmonization.
   ANCOVA models included age and sex as covariates (Type II sums of squares).
+  Statistical significance of the site effect is the uncorrected ANCOVA
+  <em>p</em>-value (<em>p</em> &lt; 0.05), not corrected for multiple comparisons.
+  Marker fill encodes the before-harmonization status (filled = <em>p</em> &lt; 0.05,
+  open = <em>p</em> &#8805; 0.05) and marker colour encodes the after-harmonization
+  status (red = <em>p</em> &lt; 0.05, green = <em>p</em> &#8805; 0.05), as summarised
+  in the 2&#160;&#215;&#160;2 legend (before harmonization in rows, after harmonization in columns).
   Axis range is determined by the maximum Cohen's <em>f</em> value observed in the data (no ceiling imposed);
   large site effects may produce values substantially above 1.0.
 </p>

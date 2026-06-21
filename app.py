@@ -295,18 +295,8 @@ else:
     st.caption(f"Columns {from_num}–{to_num}: "
                f"{', '.join(num_preview[:5])}{'…' if len(num_preview) > 5 else ''}")
 
-# ── Option 3: Quick-select buttons ────────────────────────────────────────
-st.markdown("**Option 3 — Quick-select**")
-qs_c1, qs_c2, _ = st.columns([1, 1, 6])
-if qs_c1.button("✔ Select all", use_container_width=True):
-    st.session_state["sel_features"] = auto_features
-    st.rerun()
-if qs_c2.button("✖ Clear all", use_container_width=True):
-    st.session_state["sel_features"] = []
-    st.rerun()
-
-# ── Option 4: Exclude by keyword ──────────────────────────────────────────
-st.markdown("**Option 4 — Exclude columns whose name contains a keyword**")
+# ── Option 2: Exclude by keyword ──────────────────────────────────────────
+st.markdown("**Option 2 — Exclude columns whose name contains a keyword**")
 ex_c1, ex_c2 = st.columns([4, 2])
 with ex_c1:
     excl_input = st.text_input(
@@ -791,7 +781,7 @@ if st.session_state.get("results_ready"):
 
     with t2:
         st.plotly_chart(st.session_state["fig_anc"], use_container_width=True)
-        st.caption("ANCOVA Type II (Age + Sex as covariates). Points below the diagonal = reduced site effect. Each point = one feature.")
+        st.caption("Each point = one feature. Site effect from ANCOVA Type II (Age + Sex as covariates); significance is the uncorrected p-value (p < 0.05), not corrected for multiple comparisons. Colour encodes the after-harmonization status (red = p < 0.05, green = p >= 0.05) and fill encodes the before-harmonization status (filled = p < 0.05, open = p >= 0.05), as summarised in the 2 x 2 legend. Points below the diagonal = reduced site effect size.")
 
     with t3:
         if st.session_state.get("fig_icc_site"):

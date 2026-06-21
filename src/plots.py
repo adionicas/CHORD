@@ -281,74 +281,128 @@ def plot_age_correlations(age_df: pd.DataFrame) -> go.Figure:
 def plot_cohens_f(anc_before: pd.DataFrame, anc_ebt: pd.DataFrame,
                   anc_ebf: pd.DataFrame | None = None) -> go.Figure:
     """
-    Scatter plot: Cohen's f before harmonization (x) vs after (y).
-    Points below diagonal = site effect reduced.
+    Scatter: Cohen's f before (x) vs after (y) harmonization.
+    Each point = one feature. Significance of the site effect (uncorrected
+    ANCOVA p < 0.05) is encoded on two axes:
+      colour  = after-harmonization status (red = p < 0.05, green = p >= 0.05)
+      fill    = before-harmonization status (filled = p < 0.05, open = p >= 0.05)
+    The legend is drawn as a 2 x 2 grid (before vs after).
     """
-    fig = go.Figure()
+    RED   = "#E74C3C"
+    GREEN = "#27AE60"
+    P     = 0.05
 
-    merged_ebt = anc_before[["feature", "cohens_f"]].merge(
-        anc_ebt[["feature", "cohens_f"]], on="feature", suffixes=("_before", "_after")
-    )
-
-    max_val = max(merged_ebt[["cohens_f_before", "cohens_f_after"]].max().max(), 0.5) * 1.05
-
-    fig.add_trace(go.Scatter(
-        x=merged_ebt["cohens_f_before"],
-        y=merged_ebt["cohens_f_after"],
-        mode="markers", name="EB=TRUE",
-        marker=dict(color=AFTER_EBT, size=7, opacity=0.65,
-                    line=dict(color="white", width=0.5)),
-        text=merged_ebt["feature"],
-        hovertemplate="<b>%{text}</b><br>Before: %{x:.3f}<br>After EB=T: %{y:.3f}<extra></extra>",
-    ))
-
-    if anc_ebf is not None:
-        merged_ebf = anc_before[["feature", "cohens_f"]].merge(
-            anc_ebf[["feature", "cohens_f"]], on="feature", suffixes=("_before", "_after")
+    def _merge(df_before, df_after):
+        cols = ["feature", "cohens_f", "p_value"]
+        return df_before[cols].merge(
+            df_after[cols], on="feature", suffixes=("_before", "_after")
         )
-        fig.add_trace(go.Scatter(
-            x=merged_ebf["cohens_f_before"],
-            y=merged_ebf["cohens_f_after"],
-            mode="markers", name="EB=FALSE",
-            marker=dict(color=AFTER_EBF, size=7, opacity=0.65,
-                        symbol="diamond",
-                        line=dict(color="white", width=0.5)),
-            text=merged_ebf["feature"],
-            hovertemplate="<b>%{text}</b><br>Before: %{x:.3f}<br>After EB=F: %{y:.3f}<extra></extra>",
-        ))
 
-    # Identity line
+    def _add_condition(fig, merged, base_symbol, eb_label):
+        sig_b = merged["p_value_before"] < P
+        sig_a = merged["p_value_after"]  < P
+        # (mask, after-colour, filled?)  -> 2 x 2 = 4 groups
+        groups = [
+            (sig_b  & sig_a,  RED,   True),    # sig before, sig after   (persists)
+            (sig_b  & ~sig_a, GREEN, True),    # sig before, ns after     (removed)
+            (~sig_b & sig_a,  RED,   False),   # ns before, sig after     (introduced)
+            (~sig_b & ~sig_a, GREEN, False),   # ns before, ns after      (neither)
+        ]
+        for mask, color, filled in groups:
+            sub = merged[mask]
+            if len(sub) == 0:
+                continue
+            symbol = base_symbol if filled else base_symbol + "-open"
+            fig.add_trace(go.Scatter(
+                x=sub["cohens_f_before"], y=sub["cohens_f_after"],
+                mode="markers", showlegend=False,
+                marker=dict(color=color, symbol=symbol, size=9, opacity=0.85,
+                            line=dict(color="rgba(0,0,0,0.35)", width=0.7)),
+                text=sub["feature"],
+                hovertemplate=(
+                    f"<b>%{{text}}</b> ({eb_label})<br>"
+                    f"Before: f = %{{x:.3f}}<br>After: f = %{{y:.3f}}<extra></extra>"
+                ),
+            ))
+
+    fig = go.Figure()
+    merged_ebt = _merge(anc_before, anc_ebt)
+    all_vals   = merged_ebt[["cohens_f_before", "cohens_f_after"]].values.ravel()
+    _add_condition(fig, merged_ebt, "circle", "EB=TRUE")
+
+    has_ebf = anc_ebf is not None and len(anc_ebf) > 0
+    if has_ebf:
+        merged_ebf = _merge(anc_before, anc_ebf)
+        all_vals   = np.concatenate([all_vals,
+                                     merged_ebf[["cohens_f_before", "cohens_f_after"]].values.ravel()])
+        _add_condition(fig, merged_ebf, "diamond", "EB=FALSE")
+
+    max_val = max(float(np.nanmax(all_vals)) * 1.05, 0.5)
+
     fig.add_trace(go.Scatter(
         x=[0, max_val], y=[0, max_val],
-        mode="lines", name="No change",
-        line=dict(color=GREY, dash="dash", width=1.2),
-        showlegend=True,
+        mode="lines", line=dict(color=GREY, dash="dash", width=1.2),
+        showlegend=False, hoverinfo="skip",
     ))
 
-    # Cohen's f reference lines on both axes
-    thresholds = [(0.10, "small"), (0.25, "medium"), (0.40, "large")]
-    for val, label in thresholds:
-        # vertical — before harmonization axis
-        fig.add_vline(x=val, line_dash="dot", line_color=GREY, opacity=0.50,
-                      line_width=1.2,
-                      annotation_text=label, annotation_position="top right",
-                      annotation_font_size=9, annotation_font_color=GREY)
-        # horizontal — after harmonization axis
-        fig.add_hline(y=val, line_dash="dot", line_color=GREY, opacity=0.50,
-                      line_width=1.2,
-                      annotation_text=label, annotation_position="right",
-                      annotation_font_size=9, annotation_font_color=GREY)
+    for val, lbl in [(0.10, "small"), (0.25, "medium"), (0.40, "large")]:
+        for add_line in [fig.add_vline, fig.add_hline]:
+            add_line(val, line_dash="dot", line_color=GREY, opacity=0.45, line_width=1.1,
+                     annotation_text=lbl,
+                     annotation_position="top right" if add_line == fig.add_vline else "right",
+                     annotation_font_size=9, annotation_font_color=GREY)
+
+    _add_cohens_f_grid_legend(fig, RED, GREEN, has_ebf)
 
     fig.update_layout(
         title="Site effect size: Cohen's f before vs after harmonization",
         xaxis_title="Cohen's f (before harmonization)",
         yaxis_title="Cohen's f (after harmonization)",
-        height=480, **WHITE_BG,
+        height=560, **WHITE_BG,
+        showlegend=False,
         xaxis_range=[0, max_val],
         yaxis_range=[0, max_val],
-        margin=dict(r=70),
+        margin=dict(r=70, b=190),
     )
     return fig
+
+
+def _add_cohens_f_grid_legend(fig, red, green, has_ebf=False):
+    """
+    Draw a 2 x 2 contingency legend below the plot. Each cell holds the actual
+    marker a feature of that type carries, so a point can be read directly:
+      rows    = before harmonization (p < 0.05 / p >= 0.05)  -> fill
+      columns = after  harmonization (p < 0.05 / p >= 0.05)  -> colour
+    """
+    def ann(x, y, text, size=10, color="#333", xanchor="center"):
+        fig.add_annotation(x=x, y=y, xref="paper", yref="paper", text=text,
+                           showarrow=False, font=dict(size=size, color=color,
+                                                      family="Arial"),
+                           xanchor=xanchor, yanchor="middle")
+
+    cx1, cx2 = 0.55, 0.74           # column x-positions (after p<0.05 / p>=0.05)
+    r1, r2   = -0.30, -0.38          # row y-positions   (before p<0.05 / p>=0.05)
+
+    # column header (after harmonization)
+    ann((cx1 + cx2) / 2, -0.20, "<b>After harmonization</b>", size=11, color="#111")
+    ann(cx1, -0.245, "p &lt; 0.05",   size=10, color="#444")
+    ann(cx2, -0.245, "p &#8805; 0.05", size=10, color="#444")
+
+    # row header (before harmonization)
+    ann(0.30, (r1 + r2) / 2, "<b>Before<br>harmonization</b>", size=11,
+        color="#111", xanchor="right")
+    ann(0.42, r1, "p &lt; 0.05",   size=10, color="#444", xanchor="right")
+    ann(0.42, r2, "p &#8805; 0.05", size=10, color="#444", xanchor="right")
+
+    # cells: exactly the marker a feature of that type carries
+    ann(cx1, r1, "&#9679;", size=22, color=red)     # filled red   = sig before & after
+    ann(cx2, r1, "&#9679;", size=22, color=green)   # filled green = sig before, ns after
+    ann(cx1, r2, "&#9675;", size=22, color=red)     # open red     = ns before, sig after
+    ann(cx2, r2, "&#9675;", size=22, color=green)   # open green   = ns before & after
+
+    if has_ebf:
+        ann(0.52, r2 - 0.055, "Circles = EB=TRUE  |  diamonds = EB=FALSE",
+            size=9, color="#777")
 
 
 # ---------------------------------------------------------------------------

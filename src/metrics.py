@@ -238,16 +238,23 @@ def ancova_site_effect(
             ss_total = aov["sum_sq"].sum()
             eta_sq   = ss_site / ss_total
             cohens_f = float(np.sqrt(eta_sq / max(1 - eta_sq, 1e-10)))
+            p_val    = float(aov.loc[site_key, "PR(>F)"])
             rows.append({
                 "feature":       f,
                 "eta_sq":        float(eta_sq),
                 "cohens_f":      cohens_f,
+                "p_value":       p_val,
                 "harmonization": label,
                 "n":             len(d),
             })
         except Exception:
             continue
-    return pd.DataFrame(rows)
+    res = pd.DataFrame(rows)
+    if len(res) > 0 and "p_value" in res.columns:
+        _, p_fdr, _, _ = multipletests(res["p_value"], method="fdr_bh")
+        res["p_fdr"]   = p_fdr
+        res["sig_fdr"] = p_fdr < 0.05
+    return res
 
 
 # ---------------------------------------------------------------------------
