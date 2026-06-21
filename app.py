@@ -697,11 +697,13 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
         site_n = df.groupby(site_col)[site_col].count().to_dict()
         site_n = {str(k): int(v) for k, v in site_n.items()}
 
+        _have_site_icc = ((icc_site_ebt is not None and len(icc_site_ebt) > 0)
+                          or (icc_site_ebf is not None and len(icc_site_ebf) > 0))
         fig_icc_site = plot_icc_by_site(
             icc_site_ebt if icc_site_ebt is not None else pd.DataFrame(),
             icc_site_ebf,
             site_n=site_n,
-        ) if (icc_site_ebt is not None and len(icc_site_ebt) > 0) else None
+        ) if _have_site_icc else None
 
         # ── Report ─────────────────────────────────────────────────────────
         progress.progress(94, "Building report...")

@@ -39,11 +39,10 @@ def plot_site_deviation(
     Box + jitter of site mean z-scores per site.
     One panel per harmonization condition.
     """
-    datasets = [
-        (dev_before,    "Before harmonization", BEFORE_COLOR),
-        (dev_after_ebt, "After (EB=TRUE)",       AFTER_EBT),
-    ]
-    if dev_after_ebf is not None:
+    datasets = [(dev_before, "Before harmonization", BEFORE_COLOR)]
+    if dev_after_ebt is not None and len(dev_after_ebt) > 0:
+        datasets.append((dev_after_ebt, "After (EB=TRUE)", AFTER_EBT))
+    if dev_after_ebf is not None and len(dev_after_ebf) > 0:
         datasets.append((dev_after_ebf, "After (EB=FALSE)", AFTER_EBF))
 
     n_panels = len(datasets)
@@ -326,17 +325,21 @@ def plot_cohens_f(anc_before: pd.DataFrame, anc_ebt: pd.DataFrame,
             ))
 
     fig = go.Figure()
-    merged_ebt = _merge(anc_before, anc_ebt)
-    all_vals   = merged_ebt[["cohens_f_before", "cohens_f_after"]].values.ravel()
-    _add_condition(fig, merged_ebt, "circle", "EB=TRUE")
+    conditions = []
+    if anc_ebt is not None and len(anc_ebt) > 0:
+        conditions.append((anc_ebt, "EB=TRUE"))
+    if anc_ebf is not None and len(anc_ebf) > 0:
+        conditions.append((anc_ebf, "EB=FALSE"))
 
-    has_ebf = anc_ebf is not None and len(anc_ebf) > 0
-    if has_ebf:
-        merged_ebf = _merge(anc_before, anc_ebf)
-        all_vals   = np.concatenate([all_vals,
-                                     merged_ebf[["cohens_f_before", "cohens_f_after"]].values.ravel()])
-        _add_condition(fig, merged_ebf, "diamond", "EB=FALSE")
+    all_vals = anc_before["cohens_f"].to_numpy(dtype=float)
+    for i, (anc_after, eb_label) in enumerate(conditions):
+        merged   = _merge(anc_before, anc_after)
+        all_vals = np.concatenate([all_vals,
+                                   merged[["cohens_f_before", "cohens_f_after"]].values.ravel()])
+        base_symbol = "diamond" if (len(conditions) > 1 and i == 1) else "circle"
+        _add_condition(fig, merged, base_symbol, eb_label)
 
+    has_ebf = len(conditions) > 1
     max_val = max(float(np.nanmax(all_vals)) * 1.05, 0.5)
 
     fig.add_trace(go.Scatter(
@@ -430,7 +433,9 @@ def plot_icc_by_site(
     """
     site_n: dict mapping site name -> participant count, used for x-axis labels.
     """
-    datasets = [(icc_by_site_ebt, "EB=TRUE", AFTER_EBT)]
+    datasets = []
+    if icc_by_site_ebt is not None and len(icc_by_site_ebt) > 0:
+        datasets.append((icc_by_site_ebt, "EB=TRUE", AFTER_EBT))
     if icc_by_site_ebf is not None and len(icc_by_site_ebf) > 0:
         datasets.append((icc_by_site_ebf, "EB=FALSE", AFTER_EBF))
 
