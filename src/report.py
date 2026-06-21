@@ -97,7 +97,7 @@ def _format_feature_list(features):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Plotly → HTML snippet
+# Plotly → HTML snippet (interactive) or PNG img tag (for PDF)
 # ─────────────────────────────────────────────────────────────────────────────
 def _fig_html(fig):
     return pio.to_html(fig, full_html=False, include_plotlyjs=False,
@@ -180,8 +180,6 @@ TEMPLATE = """<!DOCTYPE html>
                         border: 1px solid #bbb; }
   table.data-table td { padding: 4px 10px; border: 1px solid #d0d0d0; }
   table.data-table tr:nth-child(even) td { background: #f7f9fb; }
-  table.data-table tr:last-child td { font-weight: bold;
-                                       background: #eef2f6; }
   .table-note { font-size: 9pt; font-family: Arial, sans-serif;
                 color: #555; margin-top: -12px; margin-bottom: 20px; }
   .table-title { font-size: 10pt; font-weight: bold;
@@ -420,27 +418,18 @@ TEMPLATE = """<!DOCTYPE html>
   showed excellent consistency, {{ icc_ebf.n_good }} good,
   {{ icc_ebf.n_moderate }} moderate, and {{ icc_ebf.n_poor }} poor.
   {% endif %}
-  The overall ICC3 distribution (Figure S3) and the per-site breakdown (Figure S4)
-  are shown below.
-</p>
-
-<div class="fig-wrap">{{ fig_icc }}</div>
-<p class="fig-caption">
-  <b>Figure S3.</b> Number of features falling in each ICC3 consistency category (Koo &amp; Li, 2016 [<a href="#ref5">5</a>]).
-  Categories: poor (&lt; 0.50), moderate (0.50&#8211;0.75), good (0.75&#8211;0.90), excellent (&#8805; 0.90).
-  Each bar shows the count of features per category; counts are shown above each bar.
-  One bar group per harmonization condition.
+  The per-site breakdown is shown below.
 </p>
 
 {% if fig_icc_site %}
 <div class="fig-wrap">{{ fig_icc_site }}</div>
 <p class="fig-caption">
-  <b>Figure S4.</b> Within-site consistency by site: ICC3 (two-way mixed effects, consistency) between raw and harmonized values,
+  <b>Figure S3.</b> Within-site consistency by site: ICC3 (two-way mixed effects, consistency) between raw and harmonized values,
   computed separately for each site. Site labels include participant count (n).
   Each box shows the distribution of ICC3 values across all features within that site.
   Sites with smaller sample sizes may show lower consistency, particularly when
   harmonization is performed without Empirical Bayes estimation [<a href="#ref3">3</a>, <a href="#ref8">8</a>].
-  Colored bands denote Koo and Li (2016) [<a href="#ref5">5</a>] thresholds (as in Figure S3).
+  Colored bands denote Koo and Li (2016) [<a href="#ref5">5</a>] thresholds.
 </p>
 {% endif %}
 
@@ -456,7 +445,7 @@ TEMPLATE = """<!DOCTYPE html>
   ({{ age_ebf.pct_sig }}%) showed significant age associations.
   {% endif %}
   The relationship between age associations before and after harmonization is
-  shown in Figure S5. Each point represents one imaging feature; its position
+  shown in Figure S4. Each point represents one imaging feature; its position
   on the x-axis indicates its Pearson <em>r</em> with {{ age_col }} before
   harmonization and on the y-axis after harmonization. Points above the diagonal
   indicate features whose association with age strengthened after harmonization;
@@ -466,7 +455,7 @@ TEMPLATE = """<!DOCTYPE html>
 
 <div class="fig-wrap">{{ fig_age }}</div>
 <p class="fig-caption">
-  <b>Figure S5.</b> Age associations before versus after harmonization.
+  <b>Figure S4.</b> Age associations before versus after harmonization.
   Each point represents one imaging feature. The x-axis shows Pearson <em>r</em>
   between {{ age_col }} and the feature before harmonization; the y-axis shows
   the same correlation after harmonization. Pearson <em>r</em> was computed
@@ -691,12 +680,14 @@ def generate_report(
         age_ebf         = age_f,
         fig_site_dev    = _fig_html(fig_site_dev),
         fig_cohens_f    = _fig_html(fig_cohens_f),
-        fig_icc         = _fig_html(fig_icc) if fig_icc is not None else "",
-        fig_icc_site    = _fig_html(fig_icc_site) if fig_icc_site is not None else None,
-        fig_spearman    = _fig_html(fig_spearman) if fig_spearman is not None else "",
+        fig_icc         = (_fig_html(fig_icc) if fig_icc is not None else ""),
+        fig_icc_site    = (_fig_html(fig_icc_site) if fig_icc_site is not None else None),
+        fig_spearman    = (_fig_html(fig_spearman) if fig_spearman is not None else ""),
         fig_age         = _fig_html(fig_age),
         table_ebt       = _summary_table(icc_ebt, spm_ebt, anc_before, anc_ebt, "EB=TRUE"),
         table_ebf       = _summary_table(icc_ebf, spm_ebf, anc_before, anc_ebf, "EB=FALSE") if run_ebf else "",
         pct             = pct,
     )
     return html
+
+

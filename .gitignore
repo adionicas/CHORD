@@ -10,8 +10,8 @@ build/
 .venv
 venv/
 
-# Streamlit
-.streamlit/
+# Streamlit (secrets only — config.toml is tracked)
+.streamlit/secrets.toml
 
 # Uploads (user data — never commit)
 uploads/

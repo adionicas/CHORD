@@ -33,6 +33,7 @@ def plot_site_deviation(
     dev_before: pd.DataFrame,
     dev_after_ebt: pd.DataFrame,
     dev_after_ebf: pd.DataFrame | None = None,
+    site_n: dict | None = None,
 ) -> go.Figure:
     """
     Box + jitter of site mean z-scores per site.
@@ -51,15 +52,19 @@ def plot_site_deviation(
 
     sites = sorted(dev_before["site"].unique())
 
+    def site_label(s):
+        if site_n and s in site_n:
+            return f"{s} (n={site_n[s]})"
+        return str(s)
+
     for col_idx, (df_dev, label, color) in enumerate(datasets, start=1):
         for site in sites:
             sub = df_dev[df_dev["site"] == site]["site_mean_z"].values
             if len(sub) == 0:
                 continue
-            # jitter
             fig.add_trace(go.Box(
-                y=sub, name=site, legendgroup=site,
-                showlegend=(col_idx == 1),
+                y=sub, name=site_label(site), legendgroup=site,
+                showlegend=False,
                 marker_color=color, line_color=color,
                 boxpoints="all", jitter=0.4, pointpos=0,
                 marker=dict(size=5, opacity=0.55),
@@ -73,7 +78,7 @@ def plot_site_deviation(
     fig.update_layout(
         title="Site mean deviation from grand mean (z-scored per feature)",
         height=480, **WHITE_BG,
-        legend_title="Site",
+        showlegend=False,
     )
     return fig
 

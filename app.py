@@ -588,17 +588,33 @@ if gen_summary and summary_vars:
             rows.append(row)
 
         summary_df = pd.DataFrame(rows)
-        # bold the Total row
-        st.dataframe(
-            summary_df.style.apply(
-                lambda r: ["font-weight:bold" if r["Site"] == "Overall" else "" for _ in r],
-                axis=1,
-            ),
-            use_container_width=True, hide_index=True,
-        )
+        st.dataframe(summary_df, use_container_width=True, hide_index=True)
         st.caption("Continuous: mean (SD).  Categorical: n (%) per category.")
     except Exception as _sum_err:
         st.error(f"Summary could not be generated: {_sum_err}")
+
+st.divider()
+st.subheader("Site exclusion (optional)")
+st.caption(
+    "Exclude sites before harmonization — for example sites that are too small "
+    "or whose distribution differs substantially from the rest."
+)
+all_sites_n = df[site_col].value_counts().sort_index()
+site_options = [f"{s}  (n={all_sites_n[s]})" for s in all_sites_n.index]
+site_label_to_name = {f"{s}  (n={all_sites_n[s]})": s for s in all_sites_n.index}
+excluded_labels = st.multiselect(
+    "Sites to exclude",
+    options=site_options,
+    default=[],
+    key="excluded_sites",
+    placeholder="None — all sites included",
+)
+excluded_sites = [site_label_to_name[l] for l in excluded_labels]
+if excluded_sites:
+    st.warning(
+        f"Excluding {len(excluded_sites)} site(s): {', '.join(str(s) for s in excluded_sites)}. "
+        f"Remaining participants: {int((~df[site_col].isin(excluded_sites)).sum())}."
+    )
 
 st.divider()
 st.subheader("Step 3 — ComBat configuration and run")
@@ -616,19 +632,25 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
 
     progress = st.progress(0, "Starting...")
     try:
+        # ── Apply site exclusion ────────────────────────────────────────────
+        if excluded_sites:
+            df_harm = df[~df[site_col].isin(excluded_sites)].copy().reset_index(drop=True)
+        else:
+            df_harm = df
+
         # ── Harmonize ──────────────────────────────────────────────────────
         harm_ebt, harm_ebf = None, None
 
         if run_ebt:
             progress.progress(5, "Running ComBat (EB=TRUE)...")
-            harm_ebt = run_combat(df, feature_cols, site_col,
+            harm_ebt = run_combat(df_harm, feature_cols, site_col,
                                    continuous_covariates=continuous_covariates,
                                    categorical_covariates=categorical_covariates,
                                    eb=True)
 
         if run_ebf:
             progress.progress(20, "Running ComBat (EB=FALSE)...")
-            harm_ebf = run_combat(df, feature_cols, site_col,
+            harm_ebf = run_combat(df_harm, feature_cols, site_col,
                                    continuous_covariates=continuous_covariates,
                                    categorical_covariates=categorical_covariates,
                                    eb=False)
@@ -638,7 +660,7 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
 
         # ── Metrics ────────────────────────────────────────────────────────
         progress.progress(33, "Computing site deviation...")
-        dev_before = site_mean_deviation(df,          feature_cols, site_col)
+        dev_before = site_mean_deviation(df_harm,     feature_cols, site_col)
         dev_ebt    = site_mean_deviation(harm_ebt,    feature_cols, site_col) if harm_ebt is not None else None
         dev_ebf    = site_mean_deviation(harm_ebf,    feature_cols, site_col) if harm_ebf is not None else None
 
@@ -647,33 +669,35 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
         progress.progress(50, "Computing ICC (overall)...")
         icc_parts = []
         if harm_ebt is not None:
-            ic = compute_icc(df, harm_ebt, feature_cols); ic["harmonization"] = "EB=TRUE";  icc_parts.append(ic)
+            ic = compute_icc(df_harm, harm_ebt, feature_cols); ic["harmonization"] = "EB=TRUE";  icc_parts.append(ic)
         if harm_ebf is not None:
-            ic = compute_icc(df, harm_ebf, feature_cols); ic["harmonization"] = "EB=FALSE"; icc_parts.append(ic)
+            ic = compute_icc(df_harm, harm_ebf, feature_cols); ic["harmonization"] = "EB=FALSE"; icc_parts.append(ic)
         icc_all = pd.concat(icc_parts, ignore_index=True) if icc_parts else pd.DataFrame()
         icc_ebt = icc_parts[0] if run_ebt and icc_parts else None
         icc_ebf = icc_parts[-1] if run_ebf and len(icc_parts) > (1 if run_ebt else 0) else (icc_parts[0] if not run_ebt and icc_parts else None)
 
         progress.progress(67, "Computing ICC (by site)...")
-        icc_site_ebt = compute_icc_by_site(df, harm_ebt, feature_cols, site_col) if harm_ebt is not None else None
-        icc_site_ebf = compute_icc_by_site(df, harm_ebf, feature_cols, site_col) if harm_ebf is not None else None
+        icc_site_ebt = compute_icc_by_site(df_harm, harm_ebt, feature_cols, site_col) if harm_ebt is not None else None
+        icc_site_ebf = compute_icc_by_site(df_harm, harm_ebf, feature_cols, site_col) if harm_ebf is not None else None
 
         progress.progress(74, "Computing age correlations...")
-        age_parts = [age_correlations(df, feature_cols, age_col, "Before harmonization")]
+        age_parts = [age_correlations(df_harm, feature_cols, age_col, "Before harmonization")]
         if harm_ebt is not None: age_parts.append(age_correlations(harm_ebt, feature_cols, age_col, "After (EB=TRUE)"))
         if harm_ebf is not None: age_parts.append(age_correlations(harm_ebf, feature_cols, age_col, "After (EB=FALSE)"))
         age_all = pd.concat(age_parts, ignore_index=True)
 
         progress.progress(80, "Computing ANCOVA site effects...")
-        anc_before = ancova_site_effect(df, feature_cols, site_col, age_col, sex_col, "Before")
+        anc_before = ancova_site_effect(df_harm, feature_cols, site_col, age_col, sex_col, "Before")
         anc_ebt    = ancova_site_effect(harm_ebt, feature_cols, site_col, age_col, sex_col, "EB=TRUE")  if harm_ebt is not None else None
         anc_ebf    = ancova_site_effect(harm_ebf, feature_cols, site_col, age_col, sex_col, "EB=FALSE") if harm_ebf is not None else None
 
         # ── Figures ────────────────────────────────────────────────────────
         progress.progress(87, "Generating figures...")
+        site_n = df_harm[site_col].value_counts().to_dict()
         fig_site  = plot_site_deviation(dev_before,
                                         dev_ebt if dev_ebt is not None else pd.DataFrame(),
-                                        dev_ebf)
+                                        dev_ebf,
+                                        site_n=site_n)
         fig_anc   = plot_cohens_f(anc_before,
                                    anc_ebt if anc_ebt is not None else pd.DataFrame(),
                                    anc_ebf)
@@ -691,7 +715,7 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
 
         # ── Report ─────────────────────────────────────────────────────────
         progress.progress(94, "Building report...")
-        demo_df    = demographic_summary(df, site_col, age_col, sex_col)
+        demo_df    = demographic_summary(df_harm, site_col, age_col, sex_col)
         n_retained = len(harm_primary) if harm_primary is not None else 0
         html_report = generate_report(
             df_raw=df, site_col=site_col, age_col=age_col, sex_col=sex_col,
@@ -752,23 +776,10 @@ if st.session_state.get("results_ready"):
     icc_ebt = st.session_state.get("icc_ebt")
     icc_ebf = st.session_state.get("icc_ebf")
 
-    # Summary metric boxes
-    metric_cols = []
-    if icc_ebt is not None and len(icc_ebt) > 0:
-        metric_cols += [("Median ICC3 (EB=TRUE)",  f"{icc_ebt['icc3'].median():.3f}")]
-    if icc_ebf is not None and len(icc_ebf) > 0:
-        metric_cols += [("Median ICC3 (EB=FALSE)", f"{icc_ebf['icc3'].median():.3f}")]
-
-    if metric_cols:
-        cols = st.columns(len(metric_cols))
-        for col, (label, val) in zip(cols, metric_cols):
-            col.metric(label, val)
-
     # Tabs
-    t1, t2, t3, t4, t5, t6 = st.tabs([
+    t1, t2, t3, t4, t5 = st.tabs([
         "Site Deviation",
         "Site Effect Size (Cohen's f)",
-        "Within-Site Consistency — Overall",
         "Within-Site Consistency — By Site",
         "Age Associations",
         "Methods paragraph",
@@ -783,23 +794,18 @@ if st.session_state.get("results_ready"):
         st.caption("ANCOVA Type II (Age + Sex as covariates). Points below the diagonal = reduced site effect. Each point = one feature.")
 
     with t3:
-        if st.session_state.get("fig_icc"):
-            st.plotly_chart(st.session_state["fig_icc"], use_container_width=True)
-            st.caption("Distribution of ICC3 values across all features. Colored bands: Poor < 0.50 | Moderate 0.50–0.75 | Good 0.75–0.90 | Excellent ≥ 0.90 (Koo & Li 2016). Dashed lines = median per condition.")
-
-    with t4:
         if st.session_state.get("fig_icc_site"):
             st.plotly_chart(st.session_state["fig_icc_site"], use_container_width=True)
             st.caption("Each box = distribution of ICC3 across features for that site. Sites with smaller sample sizes may show lower consistency, particularly without EB. Colored bands: Poor/Moderate/Good/Excellent (Koo & Li 2016).")
         else:
             st.info("By-site ICC not available (need at least 6 participants per site).")
 
-    with t5:
+    with t4:
         if st.session_state.get("fig_age"):
             st.plotly_chart(st.session_state["fig_age"], use_container_width=True)
             st.caption("Each point = one feature. Grey circle = not significant either condition | Filled circle = FDR significant after only | Orange diamond = FDR significant before only | Purple square = FDR significant in both. Pearson r computed independently per condition; no formal test of difference applied.")
 
-    with t6:
+    with t5:
         st.markdown("#### Methods paragraph for main manuscript")
         st.caption("Copy the text below and paste it directly into your manuscript Methods section. Adapt bracketed placeholders and citation numbers to match your reference style.")
         para = st.session_state.get("methods_para", "")
@@ -815,14 +821,14 @@ if st.session_state.get("results_ready"):
     dl1, dl2, dl3 = st.columns(3)
     with dl1:
         st.download_button(
-            label="⬇  Download Report (HTML)",
+            label="⬇  Report (HTML)",
             data=st.session_state["html_report"],
             file_name="harmonization_report.html",
             mime="text/html",
             type="primary",
             use_container_width=True,
         )
-        st.caption("Supplementary material report")
+        st.caption("Interactive figures")
     with dl2:
         if st.session_state.get("harm_csv_ebt"):
             st.download_button(
