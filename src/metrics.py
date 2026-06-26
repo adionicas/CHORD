@@ -150,13 +150,13 @@ def compute_icc(
             subj_ids  = merged[id_col].values
         else:
             idx = df_raw[f].dropna().index.intersection(df_harm[f].dropna().index)
-            if len(idx) < 10:
+            if len(idx) < 3:
                 continue
             raw_vals  = df_raw.loc[idx, f].values
             harm_vals = df_harm.loc[idx, f].values
             subj_ids  = idx.values
 
-        if len(raw_vals) < 10:
+        if len(raw_vals) < 3:
             continue
 
         long = pd.DataFrame({
@@ -268,7 +268,7 @@ def compute_icc_by_site(df_raw, df_harm, features, site_col):
         raw_site  = df_raw[df_raw[site_col].astype(str) == site] if site_col in df_raw.columns else df_raw
         harm_site = df_harm[df_harm[site_col].astype(str) == site]
         common_idx = raw_site.index.intersection(harm_site.index)
-        if len(common_idx) < 6:
+        if len(common_idx) < 3:
             continue
         for f in features:
             if f not in raw_site.columns or f not in harm_site.columns:
@@ -276,7 +276,7 @@ def compute_icc_by_site(df_raw, df_harm, features, site_col):
             rv = raw_site.loc[common_idx, f].dropna()
             hv = harm_site.loc[common_idx, f].dropna()
             idx2 = rv.index.intersection(hv.index)
-            if len(idx2) < 6:
+            if len(idx2) < 3:
                 continue
             long = pd.DataFrame({
                 "subject": list(idx2) * 2,
@@ -303,7 +303,7 @@ def compute_spearman_by_site(df_raw, df_harm, features, site_col):
         raw_site  = df_raw[df_raw[site_col].astype(str) == site] if site_col in df_raw.columns else df_raw
         harm_site = df_harm[df_harm[site_col].astype(str) == site]
         common_idx = raw_site.index.intersection(harm_site.index)
-        if len(common_idx) < 6:
+        if len(common_idx) < 3:
             continue
         for f in features:
             if f not in raw_site.columns or f not in harm_site.columns:
@@ -311,7 +311,7 @@ def compute_spearman_by_site(df_raw, df_harm, features, site_col):
             rv = raw_site.loc[common_idx, f].dropna()
             hv = harm_site.loc[common_idx, f].dropna()
             idx2 = rv.index.intersection(hv.index)
-            if len(idx2) < 6:
+            if len(idx2) < 3:
                 continue
             r, _ = spearmanr(rv[idx2].values, hv[idx2].values)
             rows.append({"site": site, "feature": f, "spearman_r": float(r), "n": len(idx2)})
