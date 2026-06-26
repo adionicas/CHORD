@@ -200,8 +200,8 @@ The report is a self-contained HTML file that:
 
 CHORD requires at least:
 - **2 sites** in the batch variable
-- **6 participants per site** for by-site ICC and Spearman calculations
-- **10 participants per feature** for Spearman and ICC overall
+- **3 participants per site** for by-site ICC and Spearman calculations (the underlying `pingouin.intraclass_corr` function requires at least 6 values in long format, which corresponds to 3 subjects x 2 conditions; sites with fewer than 3 participants are excluded from by-site metrics)
+- **10 participants** for the overall Spearman r calculation across all subjects
 
 ---
 
