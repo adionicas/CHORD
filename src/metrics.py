@@ -295,6 +295,114 @@ def compute_icc_by_site(df_raw, df_harm, features, site_col):
 # ---------------------------------------------------------------------------
 # 7. Spearman by site
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# 8. Extra variable associations — OLS per feature
+#    For each extra variable (continuous or categorical), fits:
+#      feature ~ var + [other covariates from ComBat model]
+#    Continuous: Pearson r + regression t / p.
+#    Categorical: partial eta-squared, Cohen's f, F p-value.
+#    FDR (Benjamini-Hochberg) across features per variable.
+# ---------------------------------------------------------------------------
+def compute_extra_associations(
+    df: pd.DataFrame,
+    features: list,
+    extra_continuous: list,
+    extra_categorical: list,
+    continuous_covariates: list,
+    categorical_covariates: list,
+    label: str = "",
+) -> pd.DataFrame:
+    def _safe(s):
+        return s.replace(" ", "_").replace("-", "_").replace(".", "_").replace("/", "_")
+
+    rows = []
+
+    for var in (extra_continuous or []):
+        if var not in df.columns:
+            continue
+        cont_covs = [c for c in (continuous_covariates or []) if c != var and c in df.columns]
+        cat_covs  = [c for c in (categorical_covariates or []) if c != var and c in df.columns]
+        for f in features:
+            needed = list({f, var} | set(cont_covs) | set(cat_covs))
+            d = df[needed].dropna()
+            if len(d) < 10:
+                continue
+            try:
+                rename = {col: _safe(col) for col in needed}
+                d2 = d.rename(columns=rename)
+                sf, sv = _safe(f), _safe(var)
+                rhs = [sv] + [_safe(c) for c in cont_covs] + [f"C({_safe(c)})" for c in cat_covs]
+                model = smf.ols(f"{sf} ~ " + " + ".join(rhs), data=d2).fit()
+                if sv not in model.params.index:
+                    continue
+                r, _ = pearsonr(d[var].values, d[f].values)
+                rows.append({
+                    "feature":       f,
+                    "variable":      var,
+                    "var_type":      "continuous",
+                    "effect_size":   float(r),
+                    "pearson_r":     float(r),
+                    "beta":          float(model.params[sv]),
+                    "t_stat":        float(model.tvalues[sv]),
+                    "p_value":       float(model.pvalues[sv]),
+                    "n":             len(d),
+                    "harmonization": label,
+                })
+            except Exception:
+                continue
+
+    for var in (extra_categorical or []):
+        if var not in df.columns:
+            continue
+        cont_covs = [c for c in (continuous_covariates or []) if c != var and c in df.columns]
+        cat_covs  = [c for c in (categorical_covariates or []) if c != var and c in df.columns]
+        for f in features:
+            needed = list({f, var} | set(cont_covs) | set(cat_covs))
+            d = df[needed].dropna()
+            if len(d) < 10 or d[var].nunique() < 2:
+                continue
+            try:
+                rename = {col: _safe(col) for col in needed}
+                d2 = d.rename(columns=rename)
+                sf, sv = _safe(f), _safe(var)
+                rhs = [f"C({sv})"] + [_safe(c) for c in cont_covs] + [f"C({_safe(c)})" for c in cat_covs]
+                model = smf.ols(f"{sf} ~ " + " + ".join(rhs), data=d2).fit()
+                aov = sm.stats.anova_lm(model, typ=2)
+                key = f"C({sv})"
+                if key not in aov.index:
+                    continue
+                ss_var   = aov.loc[key, "sum_sq"]
+                ss_total = aov["sum_sq"].sum()
+                eta_sq   = float(ss_var / ss_total)
+                cf       = float(np.sqrt(eta_sq / max(1 - eta_sq, 1e-10)))
+                rows.append({
+                    "feature":       f,
+                    "variable":      var,
+                    "var_type":      "categorical",
+                    "effect_size":   cf,
+                    "eta_sq":        eta_sq,
+                    "cohens_f":      cf,
+                    "p_value":       float(aov.loc[key, "PR(>F)"]),
+                    "n":             len(d),
+                    "harmonization": label,
+                })
+            except Exception:
+                continue
+
+    res = pd.DataFrame(rows)
+    if len(res) == 0:
+        return res
+
+    parts = []
+    for var in res["variable"].unique():
+        sub = res[res["variable"] == var].copy()
+        _, p_fdr, _, _ = multipletests(sub["p_value"], method="fdr_bh")
+        sub["p_fdr"]   = p_fdr
+        sub["sig_fdr"] = p_fdr < 0.05
+        parts.append(sub)
+    return pd.concat(parts, ignore_index=True)
+
+
 def compute_spearman_by_site(df_raw, df_harm, features, site_col):
     if site_col not in df_harm.columns:
         return pd.DataFrame()

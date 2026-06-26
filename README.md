@@ -36,13 +36,15 @@ Two configurations are available and can be compared side by side:
 
 ### 2. Evaluates harmonization effectiveness
 
-| Metric | What it measures |
-|---|---|
-| Site mean z-score deviation | Residual site-related variability before and after harmonization |
-| ANCOVA Cohen's f | Site effect size controlling for age and sex (Type II sums of squares) |
-| ICC3 overall | Within-site consistency across all features: how well participant rank ordering is preserved after harmonization |
-| ICC3 by site | Same metric broken down per site — reveals which sites show lower consistency |
-| Age associations | Whether biologically motivated age–feature correlations are preserved after harmonization |
+Users choose which metrics to compute and include in the report. Two are recommended defaults; the rest are optional:
+
+| Metric | Default | What it measures |
+|---|---|---|
+| Site mean z-score deviation | Always | Residual site-related variability before and after harmonization |
+| **ICC3 by site** | **ON (recommended)** | Within-site consistency: whether the rank ordering of participants is preserved after harmonization, evaluated separately per site. This is the primary metric because it directly assesses whether harmonization preserved within-site biological variability without distorting individual differences. Minimum 3 participants per site (pingouin constraint). |
+| **ANCOVA Cohen's f** | **ON (recommended)** | Site effect size controlling for age and sex (Type II sums of squares) |
+| Age associations | OFF (optional) | Whether age–feature correlations are preserved. Optional because age correlations may be confounded by head motion in pediatric fMRI, may not be meaningful for all modalities, and can be unstable in restricted developmental age ranges. |
+| Additional variable associations | OFF (optional) | Associations between user-specified variables (e.g., injury severity, time since injury) and imaging features before and after harmonization. Continuous variables: OLS regression (Pearson r). Categorical variables: OLS ANOVA (Cohen's f, partial eta-squared). All models control for the same covariates used in ComBat. |
 
 ### 3. Generates a publication-ready report
 

@@ -11,10 +11,12 @@ from src.harmonize import run_combat
 from src.metrics   import (site_mean_deviation, spearman_raw_vs_harm,
                             compute_icc, age_correlations, ancova_site_effect,
                             demographic_summary,
-                            compute_icc_by_site, compute_spearman_by_site)
+                            compute_icc_by_site, compute_spearman_by_site,
+                            compute_extra_associations)
 from src.plots     import (plot_site_deviation, plot_spearman, plot_icc,
                            plot_age_correlations, plot_cohens_f,
-                           plot_icc_by_site, plot_spearman_by_site)
+                           plot_icc_by_site, plot_spearman_by_site,
+                           plot_extra_associations)
 from src.report    import generate_report, build_methods_paragraph
 
 # ── Update this URL once the repo is live ─────────────────────────────────
@@ -50,12 +52,17 @@ with st.sidebar:
 
 Upload your data → get harmonized data + evaluation report.
 
-**Metrics:**
-- Site mean deviation (z-score)
+**Recommended metrics (default ON):**
+- Site mean deviation (z-score) — always included
+- Within-site consistency by site (ICC3) — primary recommended metric
 - Site effect size (ANCOVA, Cohen's f)
-- Within-site consistency: ICC3 overall and by site
-- Within-site consistency: Spearman r overall and by site
-- Age association preservation (Pearson r, FDR)
+
+**Optional metrics:**
+- Age associations (Pearson r, FDR) — not always meaningful; can be confounded by motion or unstable in restricted age ranges
+- Additional variable associations (OLS) — e.g. injury severity, time since injury
+
+**Why ICC by site is the primary metric:**
+Within-site ICC measures whether harmonization preserved the internal variability of each site's data. A high ICC means the rank ordering of participants is intact after batch correction — i.e., changing site means and scales did not distort within-site biological variability.
 
 **ICC thresholds** — Koo & Li (2016):
 - < 0.50: Poor
@@ -607,6 +614,75 @@ if excluded_sites:
     )
 
 st.divider()
+st.subheader("Evaluation and report options")
+st.caption(
+    "Select which metrics to compute and include in the supplementary report. "
+    "Within-site consistency by site (ICC3) is the primary recommended metric: it directly measures "
+    "whether harmonization preserved the internal variability of each site's data (i.e., that changing "
+    "site means and scales did not distort within-site biological signal). "
+    "Age correlations are optional because they may be confounded by motion in pediatric fMRI samples, "
+    "or may be unstable in restricted age ranges where developmental trajectories are non-linear."
+)
+
+eval_c1, eval_c2 = st.columns(2)
+with eval_c1:
+    include_icc_by_site = st.checkbox(
+        "Within-site consistency by site (ICC3) — recommended",
+        value=True, key="inc_icc_site",
+        help=(
+            "ICC(C,1) between raw and harmonized values computed within each site. "
+            "This is the primary metric for assessing whether harmonization preserved within-site "
+            "biological variability. Minimum 3 participants per site required (pingouin constraint)."
+        ),
+    )
+    include_cohens_f = st.checkbox(
+        "Site effect size (ANOVA Cohen's f) — recommended",
+        value=True, key="inc_cohens_f",
+        help=(
+            "ANCOVA with site as grouping factor and age + sex as covariates (Type II sums of squares). "
+            "Quantifies the magnitude of residual site-related variance before and after harmonization."
+        ),
+    )
+with eval_c2:
+    include_age_corr = st.checkbox(
+        "Age correlations (Pearson r, FDR corrected)",
+        value=False, key="inc_age",
+        help=(
+            "Pearson correlation between the age variable and each imaging feature, before and after "
+            "harmonization. Optional: not all datasets have a meaningful age variable, and age "
+            "correlations can be confounded by motion or unstable in restricted age ranges."
+        ),
+    )
+    include_extra_assoc = st.checkbox(
+        "Additional variable associations",
+        value=False, key="inc_extra_assoc",
+        help=(
+            "Evaluate associations between additional clinical or demographic variables and imaging "
+            "features before and after harmonization. Uses OLS regression controlling for the "
+            "same covariates passed to ComBat. Continuous variables: Pearson r + regression "
+            "t-statistic. Categorical variables: partial eta-squared and Cohen's f."
+        ),
+    )
+
+assoc_cont_vars, assoc_cat_vars = [], []
+if include_extra_assoc:
+    ea_c1, ea_c2 = st.columns(2)
+    with ea_c1:
+        assoc_cont_vars = st.multiselect(
+            "Continuous variables to evaluate",
+            options=[c for c in num_cols if c not in set(feature_cols) | {site_col}],
+            key="assoc_cont",
+            placeholder="e.g. days since injury, TSI, GCS score ...",
+        )
+    with ea_c2:
+        assoc_cat_vars = st.multiselect(
+            "Categorical variables to evaluate",
+            options=[c for c in all_cols if c not in set(feature_cols) | {site_col}],
+            key="assoc_cat",
+            placeholder="e.g. Group, Diagnosis, Injury severity ...",
+        )
+
+st.divider()
 st.subheader("Step 3 — ComBat configuration and run")
 
 eb_options = {
@@ -666,33 +742,63 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
         icc_ebt = icc_parts[0] if run_ebt and icc_parts else None
         icc_ebf = icc_parts[-1] if run_ebf and len(icc_parts) > (1 if run_ebt else 0) else (icc_parts[0] if not run_ebt and icc_parts else None)
 
-        progress.progress(67, "Computing ICC (by site)...")
-        icc_site_ebt = compute_icc_by_site(df_harm, harm_ebt, feature_cols, site_col) if harm_ebt is not None else None
-        icc_site_ebf = compute_icc_by_site(df_harm, harm_ebf, feature_cols, site_col) if harm_ebf is not None else None
+        icc_site_ebt = icc_site_ebf = None
+        if include_icc_by_site:
+            progress.progress(67, "Computing ICC (by site)...")
+            icc_site_ebt = compute_icc_by_site(df_harm, harm_ebt, feature_cols, site_col) if harm_ebt is not None else None
+            icc_site_ebf = compute_icc_by_site(df_harm, harm_ebf, feature_cols, site_col) if harm_ebf is not None else None
 
-        progress.progress(74, "Computing age correlations...")
-        age_parts = [age_correlations(df_harm, feature_cols, age_col, "Before harmonization")]
-        if harm_ebt is not None: age_parts.append(age_correlations(harm_ebt, feature_cols, age_col, "After (EB=TRUE)"))
-        if harm_ebf is not None: age_parts.append(age_correlations(harm_ebf, feature_cols, age_col, "After (EB=FALSE)"))
-        age_all = pd.concat(age_parts, ignore_index=True)
+        age_all = pd.DataFrame()
+        if include_age_corr:
+            progress.progress(74, "Computing age correlations...")
+            age_parts = [age_correlations(df_harm, feature_cols, age_col, "Before harmonization")]
+            if harm_ebt is not None: age_parts.append(age_correlations(harm_ebt, feature_cols, age_col, "After (EB=TRUE)"))
+            if harm_ebf is not None: age_parts.append(age_correlations(harm_ebf, feature_cols, age_col, "After (EB=FALSE)"))
+            age_all = pd.concat(age_parts, ignore_index=True)
 
-        progress.progress(80, "Computing ANCOVA site effects...")
-        anc_before = ancova_site_effect(df_harm, feature_cols, site_col, age_col, sex_col, "Before")
-        anc_ebt    = ancova_site_effect(harm_ebt, feature_cols, site_col, age_col, sex_col, "EB=TRUE")  if harm_ebt is not None else None
-        anc_ebf    = ancova_site_effect(harm_ebf, feature_cols, site_col, age_col, sex_col, "EB=FALSE") if harm_ebf is not None else None
+        anc_before = anc_ebt = anc_ebf = None
+        if include_cohens_f:
+            progress.progress(80, "Computing ANCOVA site effects...")
+            anc_before = ancova_site_effect(df_harm, feature_cols, site_col, age_col, sex_col, "Before")
+            anc_ebt    = ancova_site_effect(harm_ebt, feature_cols, site_col, age_col, sex_col, "EB=TRUE")  if harm_ebt is not None else None
+            anc_ebf    = ancova_site_effect(harm_ebf, feature_cols, site_col, age_col, sex_col, "EB=FALSE") if harm_ebf is not None else None
+
+        extra_assoc_df = pd.DataFrame()
+        if include_extra_assoc and (assoc_cont_vars or assoc_cat_vars):
+            progress.progress(82, "Computing additional variable associations...")
+            assoc_parts = [compute_extra_associations(
+                df_harm, feature_cols, assoc_cont_vars, assoc_cat_vars,
+                continuous_covariates, categorical_covariates, "Before harmonization")]
+            if harm_ebt is not None:
+                assoc_parts.append(compute_extra_associations(
+                    harm_ebt, feature_cols, assoc_cont_vars, assoc_cat_vars,
+                    continuous_covariates, categorical_covariates, "After (EB=TRUE)"))
+            if harm_ebf is not None:
+                assoc_parts.append(compute_extra_associations(
+                    harm_ebf, feature_cols, assoc_cont_vars, assoc_cat_vars,
+                    continuous_covariates, categorical_covariates, "After (EB=FALSE)"))
+            non_empty = [p for p in assoc_parts if len(p) > 0]
+            extra_assoc_df = pd.concat(non_empty, ignore_index=True) if non_empty else pd.DataFrame()
 
         # ── Figures ────────────────────────────────────────────────────────
         progress.progress(87, "Generating figures...")
         site_n = df_harm[site_col].value_counts().to_dict()
-        fig_site  = plot_site_deviation(dev_before,
-                                        dev_ebt if dev_ebt is not None else pd.DataFrame(),
-                                        dev_ebf,
-                                        site_n=site_n)
-        fig_anc   = plot_cohens_f(anc_before,
-                                   anc_ebt if anc_ebt is not None else pd.DataFrame(),
-                                   anc_ebf)
-        fig_icc   = plot_icc(icc_all) if len(icc_all) > 0 else None
-        fig_age   = plot_age_correlations(age_all)
+        fig_site = plot_site_deviation(dev_before,
+                                       dev_ebt if dev_ebt is not None else pd.DataFrame(),
+                                       dev_ebf,
+                                       site_n=site_n)
+
+        fig_anc = None
+        if include_cohens_f and anc_before is not None:
+            fig_anc = plot_cohens_f(anc_before,
+                                    anc_ebt if anc_ebt is not None else pd.DataFrame(),
+                                    anc_ebf)
+
+        fig_icc = plot_icc(icc_all) if len(icc_all) > 0 else None
+
+        fig_age = None
+        if include_age_corr and len(age_all) > 0:
+            fig_age = plot_age_correlations(age_all)
 
         site_n = df.groupby(site_col)[site_col].count().to_dict()
         site_n = {str(k): int(v) for k, v in site_n.items()}
@@ -704,6 +810,10 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
             icc_site_ebf,
             site_n=site_n,
         ) if _have_site_icc else None
+
+        fig_extra_assoc = None
+        if include_extra_assoc and len(extra_assoc_df) > 0:
+            fig_extra_assoc = plot_extra_associations(extra_assoc_df)
 
         # ── Report ─────────────────────────────────────────────────────────
         progress.progress(94, "Building report...")
@@ -723,6 +833,14 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
             fig_spearman=None, fig_age=fig_age, fig_cohens_f=fig_anc,
             extra_continuous=continuous_covariates,
             extra_categorical=categorical_covariates,
+            include_age=include_age_corr,
+            include_cohens_f=include_cohens_f,
+            include_icc_by_site=include_icc_by_site,
+            include_extra_assoc=(include_extra_assoc and len(extra_assoc_df) > 0),
+            extra_assoc_df=extra_assoc_df if len(extra_assoc_df) > 0 else None,
+            fig_extra_assoc=fig_extra_assoc,
+            assoc_cont_vars=assoc_cont_vars,
+            assoc_cat_vars=assoc_cat_vars,
         )
 
         methods_para = build_methods_paragraph(
@@ -731,6 +849,12 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
             github_url=GITHUB_URL,
             extra_continuous=continuous_covariates,
             extra_categorical=categorical_covariates,
+            include_age=include_age_corr,
+            include_cohens_f=include_cohens_f,
+            include_icc_by_site=include_icc_by_site,
+            include_extra_assoc=(include_extra_assoc and len(extra_assoc_df) > 0),
+            assoc_cont_vars=assoc_cont_vars,
+            assoc_cat_vars=assoc_cat_vars,
         )
 
         progress.progress(100, "Done.")
@@ -745,11 +869,17 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
             fig_site=fig_site, fig_icc=fig_icc,
             fig_age=fig_age,   fig_anc=fig_anc,
             fig_icc_site=fig_icc_site,
+            fig_extra_assoc=fig_extra_assoc,
             html_report=html_report,
             icc_ebt=icc_ebt, icc_ebf=icc_ebf,
             run_ebt=run_ebt, run_ebf=run_ebf,
             harm_csv_ebt=harm_csv_ebt,
             harm_csv_ebf=harm_csv_ebf,
+            include_cohens_f=include_cohens_f,
+            include_icc_by_site=include_icc_by_site,
+            include_age_corr=include_age_corr,
+            include_extra_assoc=include_extra_assoc,
+            extra_assoc_df=extra_assoc_df,
         ))
 
     except Exception as e:
@@ -767,37 +897,82 @@ if st.session_state.get("results_ready"):
 
     icc_ebt = st.session_state.get("icc_ebt")
     icc_ebf = st.session_state.get("icc_ebf")
+    _inc_cohens_f   = st.session_state.get("include_cohens_f",   True)
+    _inc_icc_site   = st.session_state.get("include_icc_by_site", True)
+    _inc_age        = st.session_state.get("include_age_corr",    False)
+    _inc_extra      = st.session_state.get("include_extra_assoc", False)
+    _extra_assoc_df = st.session_state.get("extra_assoc_df", pd.DataFrame())
 
-    # Tabs
-    t1, t2, t3, t4, t5 = st.tabs([
-        "Site Deviation",
-        "Site Effect Size (Cohen's f)",
-        "Within-Site Consistency — By Site",
-        "Age Associations",
-        "Methods paragraph",
-    ])
+    # Build tab list dynamically based on selected metrics
+    tab_names = ["Site Deviation"]
+    if _inc_cohens_f:
+        tab_names.append("Site Effect Size (Cohen's f)")
+    if _inc_icc_site:
+        tab_names.append("Within-Site Consistency — By Site")
+    if _inc_age:
+        tab_names.append("Age Associations")
+    if _inc_extra and isinstance(_extra_assoc_df, pd.DataFrame) and len(_extra_assoc_df) > 0:
+        tab_names.append("Variable Associations")
+    tab_names.append("Methods paragraph")
 
-    with t1:
+    tabs = st.tabs(tab_names)
+    tab_idx = 0
+
+    with tabs[tab_idx]:
         st.plotly_chart(st.session_state["fig_site"], use_container_width=True)
         st.caption("Each point = one (site, feature) pair. Site means should cluster near zero after harmonization.")
+    tab_idx += 1
 
-    with t2:
-        st.plotly_chart(st.session_state["fig_anc"], use_container_width=True)
-        st.caption("Each point = one feature. Site effect from ANCOVA Type II (Age + Sex as covariates); significance is the uncorrected p-value (p < 0.05), not corrected for multiple comparisons. Colour encodes the after-harmonization status (red = p < 0.05, green = p >= 0.05) and fill encodes the before-harmonization status (filled = p < 0.05, open = p >= 0.05), as summarised in the 2 x 2 legend. Points below the diagonal = reduced site effect size.")
+    if _inc_cohens_f:
+        with tabs[tab_idx]:
+            if st.session_state.get("fig_anc"):
+                st.plotly_chart(st.session_state["fig_anc"], use_container_width=True)
+                st.caption("Each point = one feature. Site effect from ANCOVA Type II (Age + Sex as covariates); significance is the uncorrected p-value (p < 0.05), not corrected for multiple comparisons. Colour encodes the after-harmonization status (red = p < 0.05, green = p >= 0.05) and fill encodes the before-harmonization status (filled = p < 0.05, open = p >= 0.05), as summarised in the 2 x 2 legend. Points below the diagonal = reduced site effect size.")
+            else:
+                st.info("Cohen's f not computed for this run.")
+        tab_idx += 1
 
-    with t3:
-        if st.session_state.get("fig_icc_site"):
-            st.plotly_chart(st.session_state["fig_icc_site"], use_container_width=True)
-            st.caption("Each box = distribution of ICC3 across features for that site. Sites with smaller sample sizes may show lower consistency, particularly without EB. Colored bands: Poor/Moderate/Good/Excellent (Koo & Li 2016).")
-        else:
-            st.info("By-site ICC not available (need at least 6 participants per site).")
+    if _inc_icc_site:
+        with tabs[tab_idx]:
+            if st.session_state.get("fig_icc_site"):
+                st.plotly_chart(st.session_state["fig_icc_site"], use_container_width=True)
+                st.caption(
+                    "Each box = distribution of ICC3 across features for that site. "
+                    "Within-site ICC is the primary recommended metric: it measures whether harmonization "
+                    "preserved the rank ordering of participants within each site, indicating that "
+                    "within-site biological variability was not distorted by batch correction. "
+                    "Sites with fewer participants may show lower consistency, particularly without EB. "
+                    "Minimum 3 participants per site required. "
+                    "Colored bands: Poor / Moderate / Good / Excellent (Koo & Li, 2016)."
+                )
+            else:
+                st.info("By-site ICC not available (need at least 3 participants per site).")
+        tab_idx += 1
 
-    with t4:
-        if st.session_state.get("fig_age"):
-            st.plotly_chart(st.session_state["fig_age"], use_container_width=True)
-            st.caption("Each point = one feature. Grey circle = not significant either condition | Filled circle = FDR significant after only | Orange diamond = FDR significant before only | Purple square = FDR significant in both. Pearson r computed independently per condition; no formal test of difference applied.")
+    if _inc_age:
+        with tabs[tab_idx]:
+            if st.session_state.get("fig_age"):
+                st.plotly_chart(st.session_state["fig_age"], use_container_width=True)
+                st.caption("Each point = one feature. Grey circle = not significant either condition | Filled circle = FDR significant after only | Orange diamond = FDR significant before only | Purple square = FDR significant in both. Pearson r computed independently per condition; no formal test of difference applied.")
+            else:
+                st.info("Age correlations not available.")
+        tab_idx += 1
 
-    with t5:
+    if _inc_extra and isinstance(_extra_assoc_df, pd.DataFrame) and len(_extra_assoc_df) > 0:
+        with tabs[tab_idx]:
+            if st.session_state.get("fig_extra_assoc"):
+                st.plotly_chart(st.session_state["fig_extra_assoc"], use_container_width=True)
+                st.caption(
+                    "Each point = one feature. Effect size before (x-axis) vs after (y-axis) harmonization. "
+                    "Continuous variables: Pearson r. Categorical variables: Cohen's f (from OLS ANOVA Type II). "
+                    "All models control for the same covariates passed to ComBat (excluding the variable itself). "
+                    "FDR correction (Benjamini-Hochberg) applied per variable across features."
+                )
+            else:
+                st.info("No extra variable associations computed.")
+        tab_idx += 1
+
+    with tabs[tab_idx]:
         st.markdown("#### Methods paragraph for main manuscript")
         st.caption("Copy the text below and paste it directly into your manuscript Methods section. Adapt bracketed placeholders and citation numbers to match your reference style.")
         para = st.session_state.get("methods_para", "")

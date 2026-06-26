@@ -559,3 +559,100 @@ def plot_spearman_by_site(
         ),
     )
     return fig
+
+
+# ---------------------------------------------------------------------------
+# Extra variable associations — effect size before vs after harmonization
+# ---------------------------------------------------------------------------
+def plot_extra_associations(assoc_df: pd.DataFrame) -> go.Figure | None:
+    """
+    Scatter of effect size (Pearson r for continuous, Cohen's f for categorical)
+    before vs after harmonization. One panel per variable x EB condition.
+    Points colored by FDR significance category (same scheme as age correlations).
+    """
+    if assoc_df is None or len(assoc_df) == 0:
+        return None
+
+    before_df   = assoc_df[assoc_df["harmonization"] == "Before harmonization"]
+    after_conds = [c for c in assoc_df["harmonization"].unique() if c != "Before harmonization"]
+    variables   = sorted(assoc_df["variable"].unique())
+
+    if len(before_df) == 0 or not after_conds or not variables:
+        return None
+
+    n_cols = len(variables) * len(after_conds)
+    titles = [f"{v}<br><sub>{c}</sub>" for v in variables for c in after_conds]
+    fig = make_subplots(rows=1, cols=n_cols, subplot_titles=titles)
+
+    colors_map = {"After (EB=TRUE)": AFTER_EBT, "After (EB=FALSE)": AFTER_EBF}
+    PURPLE = "#6A0DAD"
+    legend_shown = set()
+
+    col_i = 0
+    for var in variables:
+        var_rows = assoc_df[assoc_df["variable"] == var]
+        vtype    = var_rows["var_type"].iloc[0] if len(var_rows) > 0 else "continuous"
+        eff_lbl  = "Pearson r" if vtype == "continuous" else "Cohen's f"
+
+        for cond in after_conds:
+            col_i += 1
+            color = colors_map.get(cond, BLUE)
+
+            b = before_df[before_df["variable"] == var][["feature", "effect_size", "sig_fdr"]].rename(
+                columns={"effect_size": "eff_b", "sig_fdr": "sig_b"})
+            a_rows = assoc_df[(assoc_df["variable"] == var) & (assoc_df["harmonization"] == cond)]
+            a = a_rows[["feature", "effect_size", "sig_fdr"]].rename(
+                columns={"effect_size": "eff_a", "sig_fdr": "sig_a"})
+            merged = b.merge(a, on="feature")
+            if len(merged) == 0:
+                continue
+
+            ns      = merged[~merged["sig_b"] & ~merged["sig_a"]]
+            new_sig = merged[~merged["sig_b"] &  merged["sig_a"]]
+            lost    = merged[ merged["sig_b"] & ~merged["sig_a"]]
+            both    = merged[ merged["sig_b"] &  merged["sig_a"]]
+
+            for sub, lbl, mc, sym, sz, op in [
+                (ns,      "Not significant (neither)",        GREY,   "circle",  7,  0.40),
+                (new_sig, "FDR significant after only",       color,  "circle",  9,  0.85),
+                (lost,    "FDR significant before only",      ORANGE, "diamond", 9,  0.85),
+                (both,    "FDR significant before and after", PURPLE, "square",  9,  0.85),
+            ]:
+                if len(sub) == 0:
+                    continue
+                show = lbl not in legend_shown
+                if show:
+                    legend_shown.add(lbl)
+                fig.add_trace(go.Scatter(
+                    x=sub["eff_b"], y=sub["eff_a"],
+                    mode="markers", name=lbl,
+                    legendgroup=lbl, showlegend=show,
+                    marker=dict(color=mc, symbol=sym, size=sz, opacity=op,
+                                line=dict(color="white", width=0.8)),
+                    text=sub["feature"],
+                    hovertemplate="<b>%{text}</b><br>Before: %{x:.3f}<br>After: %{y:.3f}<extra></extra>",
+                ), row=1, col=col_i)
+
+            vals = pd.concat([merged["eff_b"], merged["eff_a"]]).dropna()
+            if len(vals) == 0:
+                continue
+            lo, hi = float(vals.min()) - 0.05, float(vals.max()) + 0.05
+            diag_shown = "diag" not in legend_shown
+            if diag_shown:
+                legend_shown.add("diag")
+            fig.add_trace(go.Scatter(
+                x=[lo, hi], y=[lo, hi], mode="lines",
+                name="No change", legendgroup="diag", showlegend=diag_shown,
+                line=dict(color=GREY, dash="dash", width=1.2),
+            ), row=1, col=col_i)
+
+            fig.update_xaxes(title_text=f"{eff_lbl} (before harmonization)", row=1, col=col_i)
+            fig.update_yaxes(title_text=f"{eff_lbl} (after harmonization)", row=1, col=col_i)
+
+    fig.update_layout(
+        title="Additional variable associations: effect size before vs after harmonization",
+        height=490, **WHITE_BG,
+        legend=dict(orientation="h", yanchor="top", y=-0.18, xanchor="center", x=0.5),
+        margin=dict(b=100),
+    )
+    return fig

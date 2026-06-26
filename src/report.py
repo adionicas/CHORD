@@ -303,8 +303,12 @@ TEMPLATE = """<!DOCTYPE html>
 
 <h3>S3.1 Site Effect Quantification</h3>
 <p>
-  The magnitude of site-related effects was quantified using two complementary approaches.
-  First, for each imaging feature a one-way analysis of covariance (ANCOVA) model
+  For each feature values were standardized to a <em>z</em>-score
+  (subtracting the grand mean and dividing by the grand standard deviation
+  across all participants) and the mean <em>z</em>-score was computed per site.
+  Successful harmonization should reduce site mean <em>z</em>-scores toward zero.
+  {% if include_cohens_f %}
+  Additionally, for each imaging feature a one-way analysis of covariance (ANCOVA) model
   was fitted with site as the grouping factor and age and sex as covariates,
   using Type II sums of squares. The proportion of variance attributable to site
   was expressed as partial eta-squared (&#951;<sup>2</sup><sub>p</sub>), and
@@ -312,10 +316,7 @@ TEMPLATE = """<!DOCTYPE html>
   <em>f</em> = &#8730;(&#951;<sup>2</sup><sub>p</sub> / (1 &#8722; &#951;<sup>2</sup><sub>p</sub>)).
   Effect size benchmarks follow Cohen (1988) [<a href="#ref4">4</a>]:
   small &#8805; 0.10, medium &#8805; 0.25, large &#8805; 0.40.
-  Second, for each feature values were standardized to a <em>z</em>-score
-  (subtracting the grand mean and dividing by the grand standard deviation
-  across all participants) and the mean <em>z</em>-score was computed per site.
-  Successful harmonization should reduce site mean <em>z</em>-scores toward zero.
+  {% endif %}
 </p>
 
 <h3>S3.2 Within-Site Consistency</h3>
@@ -333,7 +334,8 @@ TEMPLATE = """<!DOCTYPE html>
   within-site biological variability [<a href="#ref3">3</a>].
 </p>
 
-<h3>S3.3 Preservation of Biological Associations</h3>
+{% if include_age %}
+<h3>S3.3 Preservation of Age-Related Associations</h3>
 <p>
   To evaluate whether ComBat harmonization preserves biologically meaningful
   variability, Pearson correlation coefficients were computed between
@@ -346,12 +348,32 @@ TEMPLATE = """<!DOCTYPE html>
   associated with age, was used as an indicator of changes in biologically
   relevant signal [<a href="#ref2">2</a>, <a href="#ref3">3</a>].
 </p>
+{% endif %}
+{% if include_extra_assoc %}
+<h3>S3.{{ 4 if include_age else 3 }}. Preservation of Additional Variable Associations</h3>
+<p>
+  Associations between additional variables of interest
+  ({% if assoc_cont_vars %}continuous: {{ assoc_cont_vars | join(", ") }}{% endif %}{% if assoc_cont_vars and assoc_cat_vars %}; {% endif %}{% if assoc_cat_vars %}categorical: {{ assoc_cat_vars | join(", ") }}{% endif %})
+  and each imaging feature were evaluated before and after harmonization.
+  For each continuous variable, an ordinary least-squares (OLS) regression model was fitted
+  (<em>feature</em> ~ <em>variable</em> + covariates), and the Pearson correlation
+  coefficient between the variable and each feature was computed.
+  For each categorical variable, an OLS model with the variable as a factor
+  (Type II sums of squares) was used to compute partial eta-squared and
+  Cohen's <em>f</em> as effect size measures.
+  All models controlled for the same covariates included in the ComBat model
+  (excluding the variable of interest).
+  Multiple comparisons were controlled using the Benjamini&#8211;Hochberg FDR correction,
+  applied separately per variable across features [<a href="#ref6">6</a>].
+</p>
+{% endif %}
 
 <!-- ─────────────────────────────────────── S4 ──────────────────────────── -->
 <h2>S4. Results</h2>
 
 <h3>S4.1 Site Effects Before and After Harmonization</h3>
 <p>
+  {% if include_cohens_f and anc_before %}
   Before harmonization, the mean (SD) Cohen's <em>f</em> across
   {{ anc_before.n_total }} features was
   {{ anc_before.mean }} ({{ anc_before.sd }}),
@@ -369,6 +391,7 @@ TEMPLATE = """<!DOCTYPE html>
   was {{ anc_ebf.mean }} ({{ anc_ebf.sd }})
   (median = {{ anc_ebf.median }}, range {{ anc_ebf.min }}&#8211;{{ anc_ebf.max }}).
   {% endif %}
+  {% endif %}
   Site mean <em>z</em>-score deviations from the grand mean are shown in Figure S1;
   deviations should approach zero after effective harmonization.
 </p>
@@ -383,6 +406,7 @@ TEMPLATE = """<!DOCTYPE html>
   for each site.
 </p>
 
+{% if include_cohens_f and fig_cohens_f %}
 <div class="fig-wrap">{{ fig_cohens_f }}</div>
 <p class="fig-caption">
   <b>Figure S2.</b> Site effect size (Cohen's <em>f</em>) before versus after harmonization.
@@ -401,6 +425,7 @@ TEMPLATE = """<!DOCTYPE html>
   Axis range is determined by the maximum Cohen's <em>f</em> value observed in the data (no ceiling imposed);
   large site effects may produce values substantially above 1.0.
 </p>
+{% endif %}
 
 <h3>S4.2 Within-Site Consistency</h3>
 <p>
@@ -439,7 +464,8 @@ TEMPLATE = """<!DOCTYPE html>
 </p>
 {% endif %}
 
-<h3>S4.3 Biological Signal Preservation (Age Associations)</h3>
+{% if include_age %}
+<h3>S4.3 Preservation of Age-Related Associations</h3>
 <p>
   Before harmonization, {{ age_before.n_sig }} of {{ age_before.n_total }} features
   ({{ age_before.pct_sig }}%) showed a statistically significant association with
@@ -451,12 +477,7 @@ TEMPLATE = """<!DOCTYPE html>
   ({{ age_ebf.pct_sig }}%) showed significant age associations.
   {% endif %}
   The relationship between age associations before and after harmonization is
-  shown in Figure S4. Each point represents one imaging feature; its position
-  on the x-axis indicates its Pearson <em>r</em> with {{ age_col }} before
-  harmonization and on the y-axis after harmonization. Points above the diagonal
-  indicate features whose association with age strengthened after harmonization;
-  points below indicate weakening. Points are colored according to FDR significance
-  after harmonization.
+  shown in Figure S4.
 </p>
 
 <div class="fig-wrap">{{ fig_age }}</div>
@@ -476,6 +497,32 @@ TEMPLATE = """<!DOCTYPE html>
   purple square = FDR significant in both conditions (preserved association).
   Dashed diagonal = no change; dotted lines at <em>r</em> = 0.
 </p>
+{% endif %}
+
+{% if include_extra_assoc and fig_extra_assoc %}
+<h3>S4.{{ 4 if include_age else 3 }}. Additional Variable Associations</h3>
+<p>
+  Associations between additional variables
+  ({% if assoc_cont_vars %}continuous: {{ assoc_cont_vars | join(", ") }}{% endif %}{% if assoc_cont_vars and assoc_cat_vars %}; {% endif %}{% if assoc_cat_vars %}categorical: {{ assoc_cat_vars | join(", ") }}{% endif %})
+  and each imaging feature were evaluated before and after harmonization.
+  For continuous variables, Pearson r between the variable and each feature is shown;
+  models controlled for the ComBat covariates (excluding the variable itself).
+  For categorical variables, Cohen's f (derived from partial eta-squared, OLS Type II) is shown.
+  FDR correction (Benjamini&#8211;Hochberg) was applied across features per variable [<a href="#ref6">6</a>].
+</p>
+<div class="fig-wrap">{{ fig_extra_assoc }}</div>
+<p class="fig-caption">
+  <b>Figure S{{ 5 if include_age else 4 }}.</b> Additional variable associations before versus after harmonization.
+  Each point represents one imaging feature. Effect size on the x-axis = before harmonization;
+  y-axis = after harmonization. Continuous variables: Pearson r.
+  Categorical variables: Cohen's f (partial eta-squared converted to Cohen's f).
+  Symbol and color encode FDR significance category (Benjamini&#8211;Hochberg per variable):
+  grey circle = not significant in either condition;
+  filled circle = FDR significant after harmonization only;
+  orange diamond = FDR significant before harmonization only;
+  purple square = FDR significant in both conditions.
+</p>
+{% endif %}
 
 <!-- ─────────────────────────────────────── S5 ──────────────────────────── -->
 <h2>S5. Feature-Level Results</h2>
@@ -581,6 +628,12 @@ def build_methods_paragraph(
     github_url: str = "[GitHub URL]",
     extra_continuous: list | None = None,
     extra_categorical: list | None = None,
+    include_age: bool = True,
+    include_cohens_f: bool = True,
+    include_icc_by_site: bool = True,
+    include_extra_assoc: bool = False,
+    assoc_cont_vars: list | None = None,
+    assoc_cat_vars: list | None = None,
 ) -> str:
     """Return a plain-text methods paragraph for copy-paste into a manuscript."""
     if run_ebf:
@@ -595,6 +648,48 @@ def build_methods_paragraph(
             "across features to stabilize batch effect parameter estimates (Johnson et al., 2007)."
         )
 
+    metrics = [
+        "(1) site mean z-score deviation from the grand mean before and after harmonization, "
+        "assessing residual site-related variability"
+    ]
+    metric_idx = 2
+
+    if include_icc_by_site:
+        metrics.append(
+            f"({metric_idx}) intraclass correlation coefficient (ICC3, two-way mixed effects, consistency) "
+            f"computed within each site between pre- and post-harmonization values for each feature, "
+            f"interpreted according to Koo and Li (2016): "
+            f"poor (< 0.50), moderate (0.50-0.75), good (0.75-0.90), excellent (>= 0.90); "
+            f"this is the primary recommended metric as it directly assesses whether harmonization "
+            f"preserved within-site biological variability"
+        )
+        metric_idx += 1
+
+    if include_cohens_f:
+        metrics.append(
+            f"({metric_idx}) analysis of covariance (ANCOVA, Type II sums of squares; "
+            f"covariates: {age_col}, {sex_col}) with site as the grouping factor, "
+            f"quantifying site effect size as Cohen's f (Cohen, 1988)"
+        )
+        metric_idx += 1
+
+    if include_age:
+        metrics.append(
+            f"({metric_idx}) Pearson correlation between {age_col} and each imaging feature "
+            f"before and after harmonization, with false discovery rate correction (Benjamini & Hochberg, 1995), "
+            f"to assess preservation of biologically relevant age-related variability"
+        )
+        metric_idx += 1
+
+    if include_extra_assoc and (assoc_cont_vars or assoc_cat_vars):
+        var_list = ", ".join((assoc_cont_vars or []) + (assoc_cat_vars or []))
+        metrics.append(
+            f"({metric_idx}) associations between additional variables of interest ({var_list}) "
+            f"and each imaging feature before and after harmonization, evaluated using OLS regression "
+            f"(Pearson r for continuous variables; Cohen's f from partial eta-squared for categorical variables), "
+            f"with FDR correction (Benjamini & Hochberg, 1995)"
+        )
+
     return (
         f"Scanner-related batch effects were corrected and evaluated using CHORD "
         f"(Comprehensive Harmonization Open-platform with Reporting and Diagnostics; {github_url}). "
@@ -605,18 +700,9 @@ def build_methods_paragraph(
         + (f", and {', '.join(extra_categorical)} (categorical)" if extra_categorical else "")
         + f" included as biological covariates to preserve their associated variability. "
         f"{eb_sentence} "
-        f"Harmonization effectiveness was evaluated using five complementary metrics: "
-        f"(1) site mean z-score deviation from the grand mean before and after harmonization, "
-        f"assessing residual site-related variability; "
-        f"(2) analysis of covariance (ANCOVA, Type II sums of squares; covariates: {age_col}, {sex_col}) "
-        f"with site as the grouping factor, quantifying site effect size as Cohen's f (Cohen, 1988); "
-        f"(3) intraclass correlation coefficient (ICC3, two-way mixed effects, consistency) between "
-        f"pre- and post-harmonization values for each feature, interpreted according to Koo and Li (2016): "
-        f"poor (< 0.50), moderate (0.50-0.75), good (0.75-0.90), excellent (>= 0.90); "
-        f"(4) Pearson correlation between {age_col} and each imaging feature before and after "
-        f"harmonization, with false discovery rate correction (Benjamini & Hochberg, 1995), "
-        f"to assess preservation of biologically relevant age-related variability. "
-        f"All metrics are reported in the Supplementary Material."
+        f"Harmonization effectiveness was evaluated using the following metrics: "
+        + "; ".join(metrics)
+        + ". All metrics are reported in the Supplementary Material."
     )
 
 
@@ -638,6 +724,14 @@ def generate_report(
     fig_site_dev, fig_icc, fig_icc_site, fig_spearman, fig_age, fig_cohens_f,
     extra_continuous=None,
     extra_categorical=None,
+    include_age=True,
+    include_cohens_f=True,
+    include_icc_by_site=True,
+    include_extra_assoc=False,
+    extra_assoc_df=None,
+    fig_extra_assoc=None,
+    assoc_cont_vars=None,
+    assoc_cat_vars=None,
 ) -> str:
 
     sites = sorted(df_raw[site_col].dropna().unique().astype(str))
@@ -672,6 +766,12 @@ def generate_report(
         run_ebf            = run_ebf,
         extra_continuous   = extra_continuous or [],
         extra_categorical  = extra_categorical or [],
+        include_age        = include_age,
+        include_cohens_f   = include_cohens_f,
+        include_icc_by_site = include_icc_by_site,
+        include_extra_assoc = include_extra_assoc,
+        assoc_cont_vars    = assoc_cont_vars or [],
+        assoc_cat_vars     = assoc_cat_vars or [],
         feature_list    = _format_feature_list(feature_cols),
         demo_table      = _demo_table(demo_df),
         anc_before      = anc_b,
@@ -685,11 +785,12 @@ def generate_report(
         age_ebt         = age_t,
         age_ebf         = age_f,
         fig_site_dev    = _fig_html(fig_site_dev),
-        fig_cohens_f    = _fig_html(fig_cohens_f),
+        fig_cohens_f    = (_fig_html(fig_cohens_f) if fig_cohens_f is not None else ""),
         fig_icc         = (_fig_html(fig_icc) if fig_icc is not None else ""),
         fig_icc_site    = (_fig_html(fig_icc_site) if fig_icc_site is not None else None),
         fig_spearman    = (_fig_html(fig_spearman) if fig_spearman is not None else ""),
-        fig_age         = _fig_html(fig_age),
+        fig_age         = (_fig_html(fig_age) if fig_age is not None else ""),
+        fig_extra_assoc = (_fig_html(fig_extra_assoc) if fig_extra_assoc is not None else ""),
         table_ebt       = _summary_table(icc_ebt, spm_ebt, anc_before, anc_ebt, "EB=TRUE"),
         table_ebf       = _summary_table(icc_ebf, spm_ebf, anc_before, anc_ebf, "EB=FALSE") if run_ebf else "",
         pct             = pct,
