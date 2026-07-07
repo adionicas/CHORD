@@ -36,7 +36,7 @@ st.markdown("""
     Comprehensive Harmonization Open-platform with Reporting and Diagnostics
   </p>
   <p style="color:rgba(255,255,255,0.85);margin:0;font-size:0.95rem">
-    Run ComBat harmonization on your multisite neuroimaging data — download the harmonized dataset and a publication-ready evaluation report
+    ComBat harmonization of multisite neuroimaging data, returning the harmonized dataset and a publication-ready evaluation report
   </p>
   <div style="margin-top:14px;font-size:1.0rem;color:rgba(255,255,255,0.22);
               letter-spacing:0.30em;user-select:none">
@@ -48,9 +48,9 @@ st.markdown("""
 with st.sidebar:
     st.header("About")
     st.markdown("""
-**CHORD** runs ComBat harmonization on your multisite neuroimaging data and evaluates its effectiveness.
+**CHORD** performs ComBat harmonization of multisite neuroimaging data and produces a standardized evaluation report.
 
-Upload your data → get harmonized data + evaluation report.
+Input: a table of imaging features with site, age, and sex columns. Output: the harmonized table and an evaluation report.
 
 **Recommended metrics (default ON):**
 - Site mean deviation (z-score) — always included
@@ -58,7 +58,7 @@ Upload your data → get harmonized data + evaluation report.
 - Site effect size (ANCOVA, Cohen's f)
 
 **Optional metrics:**
-- Age associations (Pearson r, FDR) — not always meaningful; can be confounded by motion or unstable in restricted age ranges
+- Age associations (Pearson r, FDR-corrected). Optional: can be confounded by head motion, and are uninformative when the age range is narrow
 - Additional variable associations (OLS) — e.g. injury severity, time since injury
 
 **Why ICC by site is the primary metric:**
@@ -259,45 +259,42 @@ use_col_num = st.checkbox("Use column numbers instead of names", value=False,
                           help="Check this if column names are not informative enough to use as range boundaries")
 
 if not use_col_num:
-    na_c1, na_c2, na_c3 = st.columns([3, 3, 2])
+    na_c1, na_c2 = st.columns(2)
     with na_c1:
         from_name = st.selectbox("From column", ["— select —"] + auto_features, key="range_from_name")
     with na_c2:
         to_name   = st.selectbox("To column",   ["— select —"] + auto_features, key="range_to_name")
-    with na_c3:
-        st.markdown("<br>", unsafe_allow_html=True)
-        if st.button("Apply range", use_container_width=True, key="apply_name"):
-            if from_name != "— select —" and to_name != "— select —":
-                i1 = auto_features.index(from_name)
-                i2 = auto_features.index(to_name)
-                lo, hi = min(i1, i2), max(i1, i2)
-                st.session_state["sel_features"] = auto_features[lo:hi + 1]
-                st.rerun()
-            else:
-                st.warning("Select both a From and a To column.")
     if from_name != "— select —" and to_name != "— select —":
-        i1, i2 = auto_features.index(from_name), auto_features.index(to_name)
-        preview = auto_features[min(i1,i2):max(i1,i2) + 1]
+        i1, i2  = auto_features.index(from_name), auto_features.index(to_name)
+        preview = auto_features[min(i1, i2):max(i1, i2) + 1]
+        # Apply automatically whenever the two boundaries change. The change
+        # check keeps later manual edits (or keyword exclusions) from being
+        # overwritten on every rerun.
+        if st.session_state.get("_last_range_name") != (from_name, to_name):
+            st.session_state["_last_range_name"] = (from_name, to_name)
+            st.session_state["sel_features"] = preview
+            st.rerun()
         st.caption(f"Range covers {len(preview)} columns: "
                    f"{', '.join(preview[:5])}{'…' if len(preview) > 5 else ''}")
 else:
-    nb_c1, nb_c2, nb_c3 = st.columns([3, 3, 2])
+    nb_c1, nb_c2 = st.columns(2)
     with nb_c1:
         from_num = st.number_input("From column №", min_value=1,
                                     max_value=len(all_df_cols), value=1, step=1)
     with nb_c2:
         to_num   = st.number_input("To column №",   min_value=1,
                                     max_value=len(all_df_cols), value=len(all_df_cols), step=1)
-    with nb_c3:
-        st.markdown("<br>", unsafe_allow_html=True)
-        if st.button("Apply range", use_container_width=True, key="apply_num"):
-            lo2, hi2 = min(from_num, to_num), max(from_num, to_num)
-            range_cols = [c for c in all_df_cols[lo2-1:hi2] if c in auto_features]
-            if range_cols:
-                st.session_state["sel_features"] = range_cols
-                st.rerun()
-            else:
-                st.warning("No numeric feature columns in that position range.")
+    range_cols = [c for c in all_df_cols[min(from_num, to_num) - 1:max(from_num, to_num)]
+                  if c in auto_features]
+    # Seed on first render so the default full range does not auto-select;
+    # apply automatically only when the user changes a boundary.
+    if "_last_range_num" not in st.session_state:
+        st.session_state["_last_range_num"] = (from_num, to_num)
+    elif st.session_state["_last_range_num"] != (from_num, to_num):
+        st.session_state["_last_range_num"] = (from_num, to_num)
+        if range_cols:
+            st.session_state["sel_features"] = range_cols
+            st.rerun()
     num_preview = all_df_cols[from_num-1:to_num]
     st.caption(f"Columns {from_num}–{to_num}: "
                f"{', '.join(num_preview[:5])}{'…' if len(num_preview) > 5 else ''}")
@@ -543,9 +540,16 @@ if st.button("Generate data matrix preview", use_container_width=False):
 # ── Data summary table ────────────────────────────────────────────────────
 st.markdown("---")
 st.markdown("**Sample summary table (optional)**")
-st.caption("One row per site. Numbers show mean (SD) for numeric variables "
-           "and counts for text/category variables. Add any column from your file — "
-           "age, sex, days since injury, scanner, etc.")
+st.caption(
+    "Builds a descriptive table of your sample broken down by site, so you can "
+    "check how participants are distributed across sites before harmonizing "
+    "(for example, whether age or sex is balanced across sites). It also serves "
+    "as a sample-characteristics table for a manuscript. "
+    "There is one row per site, plus an Overall row, and a participant count (N) per row. "
+    "Choose which variables to describe below: numeric variables are summarized as "
+    "mean (standard deviation) and text or category variables as counts and percentages. "
+    "Any column from your uploaded file can be added, for example age, sex, days since injury, or scanner."
+)
 
 # Variable candidates: everything that is not a selected imaging feature
 summary_candidates = [c for c in df.columns if c not in set(feature_cols)]
@@ -554,7 +558,7 @@ default_summary_vars = [c for c in [age_col, sex_col] if c in summary_candidates
 sum_c1, sum_c2 = st.columns([4, 1])
 with sum_c1:
     summary_vars = st.multiselect(
-        "Variables to include",
+        "Variables to describe by site (each becomes a column in the table)",
         options=summary_candidates,
         default=default_summary_vars,
         key="summary_vars",
