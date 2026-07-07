@@ -646,7 +646,7 @@ with eval_c1:
 with eval_c2:
     include_age_corr = st.checkbox(
         "Age correlations (Pearson r, FDR corrected)",
-        value=False, key="inc_age",
+        value=False, key="inc_age_corr",
         help=(
             "Pearson correlation between the age variable and each imaging feature, before and after "
             "harmonization. Optional: not all datasets have a meaningful age variable, and age "

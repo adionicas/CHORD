@@ -62,35 +62,38 @@ def run_combat(
             stacklevel=2,
         )
 
-    required = [site_col] + cont_cols + cat_cols + feature_cols
-    required = list(dict.fromkeys(required))  # deduplicate
-    subset   = df[required].copy()
+    required = list(dict.fromkeys([site_col] + cont_cols + cat_cols + feature_cols))
+    missing  = [c for c in required if c not in df.columns]
+    if missing:
+        raise KeyError(f"Columns not found in the uploaded data: {missing}")
 
-    # Drop rows with missing site, covariates, or any feature
-    check_cols    = [site_col] + cont_cols + cat_cols + feature_cols
-    complete_mask = subset[check_cols].notna().all(axis=1)
-    subset = subset[complete_mask].copy().reset_index(drop=False)
+    # Rows must be complete on the columns ComBat actually uses (site,
+    # covariates, and features). ALL other columns, including subject IDs and
+    # any additional metadata, are carried through unchanged so the harmonized
+    # output remains a complete, usable table.
+    complete_mask = df[required].notna().all(axis=1)
+    work = df[complete_mask].copy()
 
-    if subset.empty:
+    if work.empty:
         raise ValueError(
             "No rows with complete data across site, all covariates, and all features."
         )
 
-    data_matrix = subset[feature_cols].values.T  # (p, n)
+    data_matrix = work[feature_cols].values.T  # (p, n)
 
     # Build covars DataFrame
-    covars = pd.DataFrame({site_col: subset[site_col].values})
+    covars = pd.DataFrame({site_col: work[site_col].values})
     comb_cont_names = []
     comb_cat_names  = []
 
     for col in cont_cols:
         safe = f"_cont_{col}"
-        covars[safe] = subset[col].values.astype(float)
+        covars[safe] = work[col].values.astype(float)
         comb_cont_names.append(safe)
 
     for col in cat_cols:
         safe = f"_cat_{col}"
-        covars[safe] = _encode_categorical(subset[col]).values
+        covars[safe] = _encode_categorical(work[col]).values
         comb_cat_names.append(safe)
 
     result = neuroCombat(
@@ -105,10 +108,10 @@ def run_combat(
 
     harm_matrix = result["data"].T  # (n, p)
 
-    preserve = [c for c in [site_col] + cont_cols + cat_cols if c in subset.columns]
-    out      = subset[["index"] + preserve].copy().rename(columns={"index": "_orig_index"})
-    harm_df  = pd.DataFrame(harm_matrix, columns=feature_cols, index=subset.index)
-    out      = pd.concat([out.reset_index(drop=True), harm_df.reset_index(drop=True)], axis=1)
-    out      = out.set_index("_orig_index")
-    out.index.name = None
+    # Replace only the feature columns with their harmonized values; every
+    # other column (subject IDs, extra metadata, covariates, site) and the
+    # original row index are preserved so downstream metrics can still pair
+    # raw and harmonized rows by index.
+    out = work.copy()
+    out[feature_cols] = harm_matrix
     return out
