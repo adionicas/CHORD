@@ -787,6 +787,9 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
         # ── Figures ────────────────────────────────────────────────────────
         progress.progress(87, "Generating figures...")
         site_n = df_harm[site_col].value_counts().to_dict()
+        # per-site counts AFTER complete-case filtering (what ICC-by-site sees)
+        site_n_complete = (harm_primary[site_col].astype(str).value_counts().to_dict()
+                           if harm_primary is not None else {})
         fig_site = plot_site_deviation(dev_before,
                                        dev_ebt if dev_ebt is not None else pd.DataFrame(),
                                        dev_ebf,
@@ -884,6 +887,7 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
             include_age_corr=include_age_corr,
             include_extra_assoc=include_extra_assoc,
             extra_assoc_df=extra_assoc_df,
+            site_n_complete=site_n_complete,
         ))
 
     except Exception as e:
@@ -950,7 +954,26 @@ if st.session_state.get("results_ready"):
                     "Colored bands: Poor / Moderate / Good / Excellent (Koo & Li, 2016)."
                 )
             else:
-                st.info("By-site ICC not available (need at least 3 participants per site).")
+                sc    = st.session_state.get("site_n_complete", {})
+                small = {s: n for s, n in sc.items() if n < 3}
+                if sc and small:
+                    st.info(
+                        "By-site ICC needs at least 3 participants per site with complete data. "
+                        "Rows with a missing value in any selected feature, or in site, age, or sex, "
+                        "are excluded before harmonization, which can reduce per-site counts. "
+                        "Sites below 3 after that filtering: "
+                        + ", ".join(f"{s} (n={n})" for s, n in sorted(small.items()))
+                        + ". If you expected more, check the feature columns for missing values."
+                    )
+                elif sc:
+                    st.info(
+                        "By-site ICC could not be computed even though each site has at least 3 "
+                        "participants with complete data. Per-site counts: "
+                        + ", ".join(f"{s} (n={n})" for s, n in sorted(sc.items()))
+                        + ". Please report this dataset shape so it can be investigated."
+                    )
+                else:
+                    st.info("By-site ICC not available (need at least 3 participants per site with complete data).")
         tab_idx += 1
 
     if _inc_age:
