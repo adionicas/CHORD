@@ -714,9 +714,9 @@ TEMPLATE = """<!DOCTYPE html>
 </p>
 {% endif %}
 
-{% if include_extra_assoc and fig_extra_assoc %}
-{% set ns.fig = ns.fig + 1 %}
-<h3>S4.{{ 4 if include_age else 3 }}. Additional Variable Associations</h3>
+{% if include_extra_assoc and extra_assoc_figs %}
+{% set sec = 4 if include_age else 3 %}
+<h3>S4.{{ sec }}. Additional Variable Associations</h3>
 <p>
   Associations between additional variables
   ({% if assoc_cont_vars %}continuous: {{ assoc_cont_vars | join(", ") }}{% endif %}{% if assoc_cont_vars and assoc_cat_vars %}; {% endif %}{% if assoc_cat_vars %}categorical: {{ assoc_cat_vars | join(", ") }}{% endif %})
@@ -725,19 +725,22 @@ TEMPLATE = """<!DOCTYPE html>
   models controlled for the ComBat covariates (excluding the variable itself).
   For categorical variables, Cohen's f (derived from partial eta-squared, OLS Type II) is shown.
   FDR correction (Benjamini&#8211;Hochberg) was applied across features per variable [<a href="#ref6">6</a>].
+  Each additional variable is shown in its own figure below.
 </p>
-<div class="fig-wrap">{{ fig_extra_assoc }}</div>
+{% for item in extra_assoc_figs %}
+<div class="fig-wrap">{{ item.html | safe }}</div>
 <p class="fig-caption">
-  <b>Figure S{{ ns.fig }}.</b> Additional variable associations before versus after harmonization.
+  <b>Figure S4.{{ sec }}.{{ loop.index }}.</b> {{ item.variable }} association before versus after harmonization.
   Each point represents one imaging feature. Effect size on the x-axis = before harmonization;
-  y-axis = after harmonization. Continuous variables: Pearson r.
-  Categorical variables: Cohen's f (partial eta-squared converted to Cohen's f).
-  Symbol and color encode FDR significance category (Benjamini&#8211;Hochberg per variable):
-  grey circle = not significant in either condition;
-  filled circle = FDR significant after harmonization only;
-  orange diamond = FDR significant before harmonization only;
-  purple square = FDR significant in both conditions.
+  y-axis = after harmonization. Continuous variables use Pearson r.
+  Categorical variables use Cohen's f (partial eta-squared converted to Cohen's f).
+  Symbol and color encode FDR significance category (Benjamini&#8211;Hochberg per variable).
+  Grey circle = not significant in either condition.
+  Filled circle = FDR significant after harmonization only.
+  Orange diamond = FDR significant before harmonization only.
+  Purple square = FDR significant in both conditions.
 </p>
+{% endfor %}
 {% endif %}
 
 <!-- ─────────────────────────────────────── S5 ──────────────────────────── -->
@@ -909,6 +912,7 @@ def generate_report(
     include_extra_assoc=False,
     extra_assoc_df=None,
     fig_extra_assoc=None,
+    extra_assoc_figs=None,
     assoc_cont_vars=None,
     assoc_cat_vars=None,
     modality_groups=None,
@@ -991,6 +995,10 @@ def generate_report(
         fig_spearman    = (_fig_html(fig_spearman) if fig_spearman is not None else ""),
         fig_age         = (_fig_html(fig_age) if fig_age is not None else ""),
         fig_extra_assoc = (_fig_html(fig_extra_assoc) if fig_extra_assoc is not None else ""),
+        extra_assoc_figs = [
+            {"variable": d["variable"], "html": _fig_html(d["fig"])}
+            for d in (extra_assoc_figs or []) if d.get("fig") is not None
+        ],
         table_ebt       = _summary_table(icc_ebt, spm_ebt, anc_before, anc_ebt, "EB=TRUE"),
         table_ebf       = _summary_table(icc_ebf, spm_ebf, anc_before, anc_ebf, "EB=FALSE") if run_ebf else "",
         table_compare   = _comparison_table(icc_ebt, icc_ebf, anc_ebt, anc_ebf, spm_ebt, spm_ebf) if run_ebf else "",

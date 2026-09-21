@@ -1317,8 +1317,14 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
         ) if _have_site_icc else None
 
         fig_extra_assoc = None
+        extra_assoc_figs = []
         if include_extra_assoc and len(extra_assoc_df) > 0:
             fig_extra_assoc = plot_extra_associations(extra_assoc_df)
+            # one figure per additional variable for the report (S4.4.1, S4.4.2, ...)
+            for _rv in list(dict.fromkeys(extra_assoc_df["variable"].tolist())):
+                _rf = plot_single_association(extra_assoc_df, _rv)
+                if _rf is not None:
+                    extra_assoc_figs.append({"variable": _rv, "fig": _rf})
 
         # ── Report ─────────────────────────────────────────────────────────
         progress.progress(94, "Building report...")
@@ -1362,6 +1368,7 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
             include_extra_assoc=(include_extra_assoc and len(extra_assoc_df) > 0),
             extra_assoc_df=extra_assoc_df if len(extra_assoc_df) > 0 else None,
             fig_extra_assoc=fig_extra_assoc,
+            extra_assoc_figs=extra_assoc_figs,
             assoc_cont_vars=assoc_cont_vars,
             assoc_cat_vars=assoc_cat_vars,
         )
