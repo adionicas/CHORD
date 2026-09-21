@@ -51,19 +51,19 @@ with st.sidebar:
     st.markdown("""
 **CHORD** performs ComBat harmonization of multisite neuroimaging data and produces a standardized evaluation report.
 
-Input: a table of imaging features with site, age, and sex columns. Output: the harmonized table and an evaluation report.
+Input: a table of imaging features with batch, age, and sex columns. Output: the harmonized table and an evaluation report.
 
 **Recommended metrics (default ON):**
-- Site mean deviation (z-score) — always included
-- Within-site consistency by site (ICC3) — primary recommended metric
-- Site effect size (ANCOVA, Cohen's f)
+- Batch mean deviation (z-score), always included
+- Within-batch consistency by batch (ICC3), primary recommended metric
+- Batch effect size (ANCOVA, Cohen's f)
 
 **Optional metrics:**
 - Age associations (Pearson r, FDR-corrected). Optional: can be confounded by head motion, and are uninformative when the age range is narrow
 - Additional variable associations (OLS) — e.g. injury severity, time since injury
 
-**Why ICC by site is the primary metric:**
-Within-site ICC measures whether harmonization preserved the internal variability of each site's data. A high ICC means the rank ordering of participants is intact after batch correction — i.e., changing site means and scales did not distort within-site biological variability.
+**Why ICC by batch is the primary metric:**
+Within-batch ICC measures whether harmonization preserved the internal variability of each batch's data. A high ICC means the rank ordering of participants is intact after batch correction, that is, changing batch means and scales did not distort within-batch biological variability.
 
 **ICC thresholds** — Koo & Li (2016):
 - < 0.50: Poor
@@ -95,7 +95,7 @@ with col_up:
     )
 with col_demo:
     st.markdown("**No data? Try the example dataset:**")
-    if st.button("Load synthetic example data (215 participants, 6 sites, 20 FA features)"):
+    if st.button("Load synthetic example data (215 participants, 6 batches, 20 FA features)"):
         st.session_state["use_demo"] = True
 
 df = None
@@ -108,7 +108,7 @@ if uploaded is not None:
 elif st.session_state.get("use_demo"):
     try:
         df = pd.read_csv("example_data.csv")
-        st.info("Loaded synthetic example dataset (215 participants, 6 sites, 20 FA features — not real patient data)")
+        st.info("Loaded synthetic example dataset (215 participants, 6 batches, 20 FA features, not real patient data)")
     except FileNotFoundError:
         st.error("Example data file not found.")
 
@@ -175,7 +175,7 @@ if None in (site_col, age_col, sex_col):
 st.markdown("**Covariates to preserve in the ComBat model**")
 st.caption(
     "ComBat harmonization can preserve the biological variability of key variables "
-    "of interest — for example Age and Sex — while removing site-related variance. "
+    "of interest, for example Age and Sex, while removing batch-related variance. "
     "Only the Site/Batch column is strictly required. Everything else is optional."
 )
 
@@ -229,8 +229,8 @@ if all_covars_display:
     )
 else:
     st.warning(
-        f"ComBat model: batch = **{site_col}** only — no covariates. "
-        "Site effects will be removed but no biological variability is explicitly preserved."
+        f"ComBat model: batch = **{site_col}** only, no covariates. "
+        "Batch effects will be removed but no biological variability is explicitly preserved."
     )
 
 exclude_meta  = {site_col, age_col, sex_col} | set(extra_cont_add) | set(extra_cat_add)
@@ -379,7 +379,7 @@ with st.expander(f"View all {len(feature_cols)} selected feature names in full")
             grid[j].markdown(f"`{idx}.` {name}")
 
 sites = df[site_col].dropna().unique()
-st.info(f"Sites: **{', '.join(sorted(sites.astype(str)))}** ({len(sites)} sites) | Features: **{len(feature_cols)}**")
+st.info(f"Batches: **{', '.join(sorted(sites.astype(str)))}** ({len(sites)} batches) | Features: **{len(feature_cols)}**")
 
 st.divider()
 st.subheader("Step 2c. Multiple imaging modalities or measure types (optional)")
@@ -388,7 +388,7 @@ st.caption(
     "Different imaging modalities or different measures (for example cortical "
     "thickness, surface area, mean diffusivity, sulcal depth) do not necessarily "
     "share the same distribution or numeric scale. ComBat's empirical Bayes step "
-    "pools information across features to estimate each site's location and scale "
+    "pools information across features to estimate each batch's location and scale "
     "parameters, which assumes the pooled features are comparably distributed. "
     "When the selected features span measures on different scales, estimating "
     "those parameters separately for each modality or measure keeps the pooled "
@@ -463,12 +463,14 @@ if use_modality:
 
         if groups:
             preview = pd.DataFrame([
-                {"Group (token)": g,
-                 "Columns matched": len(cols),
-                 "Example columns": ", ".join(cols[:3]) + ("…" if len(cols) > 3 else "")}
+                {"Group (token)": g, "Columns matched": len(cols)}
                 for g, cols in groups.items()
             ])
             st.dataframe(preview, hide_index=True, use_container_width=True)
+            with st.expander("View all columns in each group"):
+                for g, cols in groups.items():
+                    st.markdown(f"**{g}** ({len(cols)} columns)")
+                    st.write(", ".join(cols))
 
         if unassigned:
             st.warning(
@@ -505,7 +507,7 @@ st.divider()
 st.subheader("Data preview (optional)")
 st.caption("Visual overview of the selected features before harmonization. "
            "Values are z-scored per feature; missing data shown in black. "
-           "Participants sorted by site so site effects are visible.")
+           "Participants sorted by batch so batch effects are visible.")
 
 if st.button("Generate data matrix preview", use_container_width=False):
   try:
@@ -593,7 +595,7 @@ if st.button("Generate data matrix preview", use_container_width=False):
         colorscale=site_cs,
         zmin=0, zmax=n_sites - 1,
         showscale=False,
-        hovertemplate="Site: %{customdata[0]}<br>n = %{customdata[1]}<extra></extra>",
+        hovertemplate="Batch: %{customdata[0]}<br>n = %{customdata[1]}<extra></extra>",
         customdata=np.column_stack([sites_ordered, site_n_col]),
     ), row=1, col=1)
 
@@ -681,10 +683,10 @@ if st.button("Generate data matrix preview", use_container_width=False):
     mod_note = ("Top strip = modality group (colored, separated by vertical lines). "
                 if modality_groups else "")
     st.plotly_chart(fig_carpet, use_container_width=True)
-    st.caption(f"Left strip = site identity (colored). {mod_note}"
+    st.caption(f"Left strip = batch identity (colored). {mod_note}"
                f"Main panel = z-scored feature values (red = high, blue = low, black = missing). "
                f"Missing: {np.isnan(mat).sum():,} cells ({pct_missing:.1f}%). "
-               f"Horizontal lines = site boundaries.")
+               f"Horizontal lines = batch boundaries.")
   except Exception as _preview_err:
     st.error(f"Preview could not be generated: {_preview_err}")
 
@@ -697,6 +699,30 @@ st.caption(
     "participant missing a value is excluded from that variable's run. Use this "
     "to see which variables drive the missingness."
 )
+
+# ── Model-variable (demographic) missingness — always shown ──
+# A participant missing the site, age, sex, or any added covariate is dropped
+# from EVERY ComBat run, whatever the feature-missing method chosen at Step 3.
+_model_vars = [c for c in [site_col, age_col, sex_col] + extra_continuous + extra_categorical
+               if c in df.columns]
+_model_miss = df[_model_vars].isna().sum()
+_n_model_incomplete = int(df[_model_vars].isna().any(axis=1).sum())
+if _n_model_incomplete > 0:
+    st.warning(
+        f"{_n_model_incomplete} of {len(df)} participants are missing at least one "
+        f"model variable (batch, age, sex, or an added covariate) and are dropped "
+        f"from every ComBat run, regardless of the feature-missing method below."
+    )
+    _mm = pd.DataFrame({
+        "Model variable": _model_vars,
+        "Missing (n)":    _model_miss.values,
+        "Missing (%)":    (100 * _model_miss / len(df)).round(1).values,
+    })
+    _mm = _mm[_mm["Missing (n)"] > 0].sort_values("Missing (n)", ascending=False)
+    st.dataframe(_mm, use_container_width=True, hide_index=True)
+else:
+    st.caption("All participants have complete batch, age, sex, and added covariates.")
+
 if st.button("Assess missing values"):
     try:
         assess_cols = [c for c in [age_col, sex_col] + extra_continuous + extra_categorical
@@ -714,11 +740,26 @@ if st.button("Assess missing values"):
         mc3.metric("Feature columns with missing", f"{n_cols_with_missing} / {len(feature_cols)}")
         mc4.metric("Missing feature cells", f"{total_missing_cells:,}")
 
+        _cov_set = set([age_col, sex_col] + extra_continuous + extra_categorical)
+        def _grp_of(c):
+            if c in _cov_set:
+                return "(covariate)"
+            if modality_groups:
+                for g, gcols in modality_groups.items():
+                    if c in gcols:
+                        return g
+            if "." in c:
+                return c.rsplit(".", 1)[1]
+            if "_" in c:
+                return c.split("_", 1)[0] + "_"
+            return "(feature)"
+
         miss_df = pd.DataFrame({
-            "Variable":     assess_cols,
-            "Missing (n)":  miss_n.values,
-            "Missing (%)":  miss_pct.round(1).values,
-            "Present (n)":  (n_total - miss_n.values),
+            "Variable":      assess_cols,
+            "Measure group": [_grp_of(c) for c in assess_cols],
+            "Missing (n)":   miss_n.values,
+            "Missing (%)":   miss_pct.round(1).values,
+            "Present (n)":   (n_total - miss_n.values),
         })
         miss_df = miss_df[miss_df["Missing (n)"] > 0].sort_values(
             "Missing (n)", ascending=False).reset_index(drop=True)
@@ -757,6 +798,35 @@ def _exclude_high_missing_features(cols_to_drop, threshold, miss_pcts_dict=None)
         pct_val = miss_pcts_dict.get(feat, float("nan")) if miss_pcts_dict else float("nan")
         prev_list.append({"Feature": feat, "Missing (%)": round(float(pct_val), 1)})
     st.session_state["_excl_feat_list"] = prev_list
+
+def _undo_all_exclusions():
+    restored = [d.get("Feature") for d in st.session_state.get("_excl_feat_list", []) if d.get("Feature")]
+    cur = st.session_state.get("sel_features", [])
+    st.session_state["sel_features"] = cur + [f for f in restored if f not in cur]
+    st.session_state["_excl_feat_list"] = []
+    st.session_state["_excl_info"] = {"n": 0, "threshold": None}
+
+# Persistent record of what has been excluded so far — stays visible after
+# pressing Exclude (the over-threshold list below clears because those features
+# are gone, but this record does not).
+_excluded_so_far = st.session_state.get("_excl_feat_list", [])
+if _excluded_so_far:
+    def _grp_excl(c):
+        if modality_groups:
+            for g, gcols in modality_groups.items():
+                if c in gcols:
+                    return g
+        if "." in c:
+            return c.rsplit(".", 1)[1]
+        if "_" in c:
+            return c.split("_", 1)[0] + "_"
+        return "(feature)"
+    _ex_df = pd.DataFrame(_excluded_so_far)
+    _ex_df["Measure group"] = _ex_df["Feature"].map(_grp_excl)
+    _ex_df = _ex_df[["Feature", "Measure group", "Missing (%)"]]
+    st.markdown(f"**Excluded so far: {len(_ex_df)} feature(s)** (removed from the selection)")
+    st.dataframe(_ex_df, use_container_width=True, hide_index=True)
+    st.button("Undo all exclusions (restore to selection)", on_click=_undo_all_exclusions)
 
 thr_col = st.columns([1, 2])[0]
 with thr_col:
@@ -823,11 +893,11 @@ else:
 st.markdown("---")
 st.markdown("**Sample summary table (optional)**")
 st.caption(
-    "Builds a descriptive table of your sample broken down by site, so you can "
-    "check how participants are distributed across sites before harmonizing "
-    "(for example, whether age or sex is balanced across sites). It also serves "
+    "Builds a descriptive table of your sample broken down by batch, so you can "
+    "check how participants are distributed across batches before harmonizing "
+    "(for example, whether age or sex is balanced across batches). It also serves "
     "as a sample-characteristics table for a manuscript. "
-    "There is one row per site, plus an Overall row, and a participant count (N) per row. "
+    "There is one row per batch, plus an Overall row, and a participant count (N) per row. "
     "Choose which variables to describe below: numeric variables are summarized as "
     "mean (standard deviation) and text or category variables as counts and percentages. "
     "Any column from your uploaded file can be added, for example age, sex, days since injury, or scanner."
@@ -835,12 +905,13 @@ st.caption(
 
 # Variable candidates: everything that is not a selected imaging feature
 summary_candidates = [c for c in df.columns if c not in set(feature_cols)]
-default_summary_vars = [c for c in [age_col, sex_col] if c in summary_candidates]
+default_summary_vars = [c for c in [age_col, sex_col] + extra_continuous + extra_categorical
+                        if c in summary_candidates]
 
 sum_c1, sum_c2 = st.columns([4, 1])
 with sum_c1:
     summary_vars = st.multiselect(
-        "Variables to describe by site (each becomes a column in the table)",
+        "Variables to describe by batch (each becomes a column in the table)",
         options=summary_candidates,
         default=default_summary_vars,
         key="summary_vars",
@@ -855,7 +926,7 @@ if gen_summary and summary_vars:
         rows = []
         for grp_label in sites_list + ["Overall"]:
             sub = df if grp_label == "Overall" else df[df[site_col].astype(str) == grp_label]
-            row = {"Site": grp_label, "N": len(sub)}
+            row = {"Batch": grp_label, "N": len(sub)}
             for var in summary_vars:
                 col_data = sub[var].dropna()
                 if len(col_data) == 0:
@@ -877,25 +948,49 @@ if gen_summary and summary_vars:
         st.error(f"Summary could not be generated: {_sum_err}")
 
 st.divider()
-st.subheader("Site exclusion (optional)")
+st.subheader("Batch exclusion (optional)")
 st.caption(
-    "Exclude sites before harmonization — for example sites that are too small "
-    "or whose distribution differs substantially from the rest."
+    "Exclude batches before harmonization, for example batches that are too small "
+    "or whose distribution differs substantially from the rest. The table below "
+    "summarizes each batch so you can decide, showing the sample size and the "
+    "model variables (age, sex, and any covariates you added at Step 2)."
 )
+
+# By-site summary table (auto-shown) to inform the exclusion decision.
+_site_sum_vars = [c for c in [age_col, sex_col] + extra_continuous + extra_categorical
+                  if c in df.columns]
+_site_rows = []
+for _s in sorted(df[site_col].dropna().unique().astype(str)):
+    _sub = df[df[site_col].astype(str) == _s]
+    _r = {"Batch": _s, "N": len(_sub)}
+    for _v in _site_sum_vars:
+        _cd = _sub[_v].dropna()
+        if len(_cd) == 0:
+            _r[_v] = "—"
+        elif pd.api.types.is_numeric_dtype(df[_v]):
+            _r[_v] = f"{_cd.mean():.1f} ({_cd.std():.1f})"
+        else:
+            _vc = _cd.astype(str).value_counts()
+            _r[_v] = ", ".join(f"{k}: {v}" for k, v in _vc.head(3).items())
+    _site_rows.append(_r)
+st.dataframe(pd.DataFrame(_site_rows), use_container_width=True, hide_index=True)
+st.caption("N = participants per batch. Continuous variables: mean (SD). "
+           "Categorical variables: top categories with counts.")
+
 all_sites_n = df[site_col].value_counts().sort_index()
 site_options = [f"{s}  (n={all_sites_n[s]})" for s in all_sites_n.index]
 site_label_to_name = {f"{s}  (n={all_sites_n[s]})": s for s in all_sites_n.index}
 excluded_labels = st.multiselect(
-    "Sites to exclude",
+    "Batches to exclude",
     options=site_options,
     default=[],
     key="excluded_sites",
-    placeholder="None — all sites included",
+    placeholder="None, all batches included",
 )
 excluded_sites = [site_label_to_name[l] for l in excluded_labels]
 if excluded_sites:
     st.warning(
-        f"Excluding {len(excluded_sites)} site(s): {', '.join(str(s) for s in excluded_sites)}. "
+        f"Excluding {len(excluded_sites)} batch(es): {', '.join(str(s) for s in excluded_sites)}. "
         f"Remaining participants: {int((~df[site_col].isin(excluded_sites)).sum())}."
     )
 
@@ -903,9 +998,9 @@ st.divider()
 st.subheader("Evaluation and report options")
 st.caption(
     "Select which metrics to compute and include in the supplementary report. "
-    "Within-site consistency by site (ICC3) is the primary recommended metric: it directly measures "
-    "whether harmonization preserved the internal variability of each site's data (i.e., that changing "
-    "site means and scales did not distort within-site biological signal). "
+    "Within-batch consistency by batch (ICC3) is the primary recommended metric; it directly measures "
+    "whether harmonization preserved the internal variability of each batch's data (that is, that changing "
+    "batch means and scales did not distort within-batch biological signal). "
     "Age correlations are optional because they may be confounded by motion in pediatric fMRI samples, "
     "or may be unstable in restricted age ranges where developmental trajectories are non-linear."
 )
@@ -913,20 +1008,20 @@ st.caption(
 eval_c1, eval_c2 = st.columns(2)
 with eval_c1:
     include_icc_by_site = st.checkbox(
-        "Within-site consistency by site (ICC3) — recommended",
+        "Within-batch consistency by batch (ICC3), recommended",
         value=True, key="inc_icc_site",
         help=(
-            "ICC(C,1) between raw and harmonized values computed within each site. "
-            "This is the primary metric for assessing whether harmonization preserved within-site "
-            "biological variability. Minimum 3 participants per site required (pingouin constraint)."
+            "ICC(C,1) between raw and harmonized values computed within each batch. "
+            "This is the primary metric for assessing whether harmonization preserved within-batch "
+            "biological variability. Minimum 3 participants per batch required (pingouin constraint)."
         ),
     )
     include_cohens_f = st.checkbox(
-        "Site effect size (ANOVA Cohen's f) — recommended",
+        "Batch effect size (ANOVA Cohen's f), recommended",
         value=True, key="inc_cohens_f",
         help=(
-            "ANCOVA with site as grouping factor and age + sex as covariates (Type II sums of squares). "
-            "Quantifies the magnitude of residual site-related variance before and after harmonization."
+            "ANCOVA with batch as grouping factor and age + sex as covariates (Type II sums of squares). "
+            "Quantifies the magnitude of residual batch-related variance before and after harmonization."
         ),
     )
 with eval_c2:
@@ -954,16 +1049,20 @@ assoc_cont_vars, assoc_cat_vars = [], []
 if include_extra_assoc:
     ea_c1, ea_c2 = st.columns(2)
     with ea_c1:
+        _cont_opts = [c for c in num_cols if c not in set(feature_cols) | {site_col}]
         assoc_cont_vars = st.multiselect(
             "Continuous variables to evaluate",
-            options=[c for c in num_cols if c not in set(feature_cols) | {site_col}],
+            options=_cont_opts,
+            default=[c for c in extra_continuous if c in _cont_opts],
             key="assoc_cont",
             placeholder="e.g. days since injury, TSI, GCS score ...",
         )
     with ea_c2:
+        _cat_opts = [c for c in all_cols if c not in set(feature_cols) | {site_col}]
         assoc_cat_vars = st.multiselect(
             "Categorical variables to evaluate",
-            options=[c for c in all_cols if c not in set(feature_cols) | {site_col}],
+            options=_cat_opts,
+            default=[c for c in extra_categorical if c in _cat_opts],
             key="assoc_cat",
             placeholder="e.g. Group, Diagnosis, Injury severity ...",
         )
@@ -1003,6 +1102,26 @@ missing_mode_label = st.selectbox(
 )
 missing_mode = _MISS_OPTS[missing_mode_label]
 per_feature = (missing_mode == "per_feature")
+
+# How many participants remain under the chosen handling (after any site exclusion)
+_work = df[~df[site_col].isin(excluded_sites)] if excluded_sites else df
+_cov_cols = [site_col] + continuous_covariates + categorical_covariates
+_cov_ok = _work[_cov_cols].notna().all(axis=1)
+_feat_ok_all = _work[list(feature_cols)].notna().all(axis=1)
+_feat_ok_any = _work[list(feature_cols)].notna().any(axis=1)
+if missing_mode == "complete":
+    _retained = int((_cov_ok & _feat_ok_all).sum())
+elif missing_mode == "impute":
+    _retained = int(_cov_ok.sum())
+else:  # pattern / per_feature
+    _retained = int((_cov_ok & _feat_ok_any).sum())
+_dropped = len(_work) - _retained
+st.info(
+    f"Participants with this method: **{len(_work)}** in the data "
+    f"(after batch exclusion) → **{_retained}** retained, **{_dropped}** dropped. "
+    f"Of those dropped, {int((~_cov_ok).sum())} are missing a model variable "
+    f"(batch/age/sex/covariate) and the rest are dropped by the feature-missing rule."
+)
 
 eb_options = {
     "EB=TRUE  (Empirical Bayes, recommended)":    ("ebt_only",  True,  False),
@@ -1075,7 +1194,7 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
         harm_primary = harm_ebt if harm_ebt is not None else harm_ebf
 
         # ── Metrics ────────────────────────────────────────────────────────
-        progress.progress(33, "Computing site deviation...")
+        progress.progress(33, "Computing batch deviation...")
         dev_before = site_mean_deviation(df_harm,     feature_cols, site_col)
         dev_ebt    = site_mean_deviation(harm_ebt,    feature_cols, site_col) if harm_ebt is not None else None
         dev_ebf    = site_mean_deviation(harm_ebf,    feature_cols, site_col) if harm_ebf is not None else None
@@ -1094,7 +1213,7 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
 
         icc_site_ebt = icc_site_ebf = None
         if include_icc_by_site:
-            progress.progress(67, "Computing ICC (by site)...")
+            progress.progress(67, "Computing ICC (by batch)...")
             icc_site_ebt = compute_icc_by_site(df_harm, harm_ebt, feature_cols, site_col) if harm_ebt is not None else None
             icc_site_ebf = compute_icc_by_site(df_harm, harm_ebf, feature_cols, site_col) if harm_ebf is not None else None
 
@@ -1108,7 +1227,7 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
 
         anc_before = anc_ebt = anc_ebf = None
         if include_cohens_f:
-            progress.progress(80, "Computing ANCOVA site effects...")
+            progress.progress(80, "Computing ANCOVA batch effects...")
             anc_before = ancova_site_effect(df_harm, feature_cols, site_col, age_col, sex_col, "Before")
             anc_ebt    = ancova_site_effect(harm_ebt, feature_cols, site_col, age_col, sex_col, "EB=TRUE")  if harm_ebt is not None else None
             anc_ebf    = ancova_site_effect(harm_ebf, feature_cols, site_col, age_col, sex_col, "EB=FALSE") if harm_ebf is not None else None
@@ -1280,11 +1399,11 @@ if st.session_state.get("results_ready"):
     _extra_assoc_df = st.session_state.get("extra_assoc_df", pd.DataFrame())
 
     # Build tab list dynamically based on selected metrics
-    tab_names = ["Site Deviation"]
+    tab_names = ["Batch Deviation"]
     if _inc_cohens_f:
-        tab_names.append("Site Effect Size (Cohen's f)")
+        tab_names.append("Batch Effect Size (Cohen's f)")
     if _inc_icc_site:
-        tab_names.append("Within-Site Consistency — By Site")
+        tab_names.append("Within-Batch Consistency by Batch")
     if _inc_age:
         tab_names.append("Age Associations")
     if _inc_extra and isinstance(_extra_assoc_df, pd.DataFrame) and len(_extra_assoc_df) > 0:
@@ -1296,14 +1415,14 @@ if st.session_state.get("results_ready"):
 
     with tabs[tab_idx]:
         st.plotly_chart(st.session_state["fig_site"], use_container_width=True)
-        st.caption("Each point = one (site, feature) pair. Site means should cluster near zero after harmonization.")
+        st.caption("Each point = one (batch, feature) pair. Batch means should cluster near zero after harmonization.")
     tab_idx += 1
 
     if _inc_cohens_f:
         with tabs[tab_idx]:
             if st.session_state.get("fig_anc"):
                 st.plotly_chart(st.session_state["fig_anc"], use_container_width=True)
-                st.caption("Each point = one feature. Site effect from ANCOVA Type II (Age + Sex as covariates); significance is the uncorrected p-value (p < 0.05), not corrected for multiple comparisons. Colour encodes the after-harmonization status (red = p < 0.05, green = p >= 0.05) and fill encodes the before-harmonization status (filled = p < 0.05, open = p >= 0.05), as summarised in the 2 x 2 legend. Points below the diagonal = reduced site effect size.")
+                st.caption("Each point = one feature. Batch effect from ANCOVA Type II (Age + Sex as covariates); significance is the uncorrected p-value (p < 0.05), not corrected for multiple comparisons. Colour encodes the after-harmonization status (red = p < 0.05, green = p >= 0.05) and fill encodes the before-harmonization status (filled = p < 0.05, open = p >= 0.05), as summarised in the 2 x 2 legend. Points below the diagonal = reduced batch effect size.")
             else:
                 st.info("Cohen's f not computed for this run.")
         tab_idx += 1
@@ -1313,12 +1432,12 @@ if st.session_state.get("results_ready"):
             if st.session_state.get("fig_icc_site"):
                 st.plotly_chart(st.session_state["fig_icc_site"], use_container_width=True)
                 st.caption(
-                    "Each box = distribution of ICC3 across features for that site. "
-                    "Within-site ICC is the primary recommended metric: it measures whether harmonization "
-                    "preserved the rank ordering of participants within each site, indicating that "
-                    "within-site biological variability was not distorted by batch correction. "
-                    "Sites with fewer participants may show lower consistency, particularly without EB. "
-                    "Minimum 3 participants per site required. "
+                    "Each box = distribution of ICC3 across features for that batch. "
+                    "Within-batch ICC is the primary recommended metric; it measures whether harmonization "
+                    "preserved the rank ordering of participants within each batch, indicating that "
+                    "within-batch biological variability was not distorted by batch correction. "
+                    "Batches with fewer participants may show lower consistency, particularly without EB. "
+                    "Minimum 3 participants per batch required. "
                     "Colored bands: Poor / Moderate / Good / Excellent (Koo & Li, 2016)."
                 )
             else:
@@ -1326,22 +1445,22 @@ if st.session_state.get("results_ready"):
                 small = {s: n for s, n in sc.items() if n < 3}
                 if sc and small:
                     st.info(
-                        "By-site ICC needs at least 3 participants per site with complete data. "
-                        "Rows with a missing value in any selected feature, or in site, age, or sex, "
-                        "are excluded before harmonization, which can reduce per-site counts. "
-                        "Sites below 3 after that filtering: "
+                        "By-batch ICC needs at least 3 participants per batch with complete data. "
+                        "Rows with a missing value in any selected feature, or in batch, age, or sex, "
+                        "are excluded before harmonization, which can reduce per-batch counts. "
+                        "Batches below 3 after that filtering: "
                         + ", ".join(f"{s} (n={n})" for s, n in sorted(small.items()))
                         + ". If you expected more, check the feature columns for missing values."
                     )
                 elif sc:
                     st.info(
-                        "By-site ICC could not be computed even though each site has at least 3 "
-                        "participants with complete data. Per-site counts: "
+                        "By-batch ICC could not be computed even though each batch has at least 3 "
+                        "participants with complete data. Per-batch counts: "
                         + ", ".join(f"{s} (n={n})" for s, n in sorted(sc.items()))
                         + ". Please report this dataset shape so it can be investigated."
                     )
                 else:
-                    st.info("By-site ICC not available (need at least 3 participants per site with complete data).")
+                    st.info("By-batch ICC not available (need at least 3 participants per batch with complete data).")
         tab_idx += 1
 
     if _inc_age:

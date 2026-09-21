@@ -49,35 +49,58 @@ def plot_site_deviation(
     fig = make_subplots(rows=1, cols=n_panels, subplot_titles=[d[1] for d in datasets],
                         shared_yaxes=True)
 
-    sites = sorted(dev_before["site"].unique())
+    sites    = sorted(dev_before["site"].unique())
+    site_pos = {s: i for i, s in enumerate(sites)}
+    n_sites  = len(sites)
+    use_numbers = n_sites > 12
+    tick_size   = max(7, 11 - max(0, n_sites - 10) // 3)
 
-    def site_label(s):
-        if site_n and s in site_n:
-            return f"{s} (n={site_n[s]})"
-        return str(s)
+    def _full_label(s):
+        return f"{s} (n={site_n[s]})" if site_n and s in site_n else str(s)
 
     for col_idx, (df_dev, label, color) in enumerate(datasets, start=1):
-        for site in sites:
-            sub = df_dev[df_dev["site"] == site]["site_mean_z"].values
+        for s in sites:
+            sub = df_dev[df_dev["site"] == s]["site_mean_z"].values
             if len(sub) == 0:
                 continue
+            xpos = site_pos[s]
             fig.add_trace(go.Box(
-                y=sub, name=site_label(site), legendgroup=site,
-                showlegend=False,
+                x=[xpos] * len(sub), y=sub,
+                name=f"Batch {xpos + 1}", showlegend=False,
                 marker_color=color, line_color="black",
                 boxpoints="all", jitter=0.4, pointpos=0,
                 marker=dict(size=5, opacity=0.55, color=color),
-                fillcolor="rgba(255,255,255,0.5)",
+                fillcolor="rgba(255,255,255,0.5)", width=0.5,
             ), row=1, col=col_idx)
 
         fig.add_hline(y=0, line_dash="dash", line_color="black",
                       opacity=0.4, row=1, col=col_idx)
+        fig.update_xaxes(
+            tickmode="array", tickvals=list(range(n_sites)),
+            ticktext=([str(i + 1) for i in range(n_sites)] if use_numbers
+                      else [_full_label(s) for s in sites]),
+            tickangle=0 if use_numbers else 45,
+            tickfont=dict(size=tick_size), row=1, col=col_idx,
+        )
 
-    fig.update_yaxes(title_text="Site mean z-score", row=1, col=1)
+    n_key_lines = 0
+    if use_numbers:
+        parts = [f"Batch {i + 1} = {s}" + (f" (n={site_n[s]})" if site_n and s in site_n else "")
+                 for i, s in enumerate(sites)]
+        key_lines = ["      ".join(parts[k:k + 2]) for k in range(0, len(parts), 2)]
+        n_key_lines = len(key_lines)
+        fig.add_annotation(
+            xref="paper", yref="paper", x=0, y=-0.14, xanchor="left", yanchor="top",
+            text="<b>Batch key</b><br>" + "<br>".join(key_lines),
+            showarrow=False, align="left", font=dict(size=8, color="black"),
+        )
+
+    fig.update_yaxes(title_text="Batch mean z-score", row=1, col=1)
     fig.update_layout(
-        title="Site mean deviation from grand mean (z-scored per feature)",
-        height=480, **WHITE_BG,
+        title="Batch mean deviation from grand mean (z-scored per feature)",
+        height=480 + (16 * n_key_lines if use_numbers else 0), **WHITE_BG,
         showlegend=False,
+        margin=dict(b=(120 + 18 * n_key_lines) if use_numbers else 90),
     )
     return fig
 
@@ -130,7 +153,7 @@ def plot_spearman(spm_df: pd.DataFrame) -> go.Figure:
                   annotation_font_size=10, annotation_font_color=GREY)
 
     fig.update_layout(
-        title="Within-site consistency: Spearman r (raw vs harmonized)",
+        title="Within-batch consistency: Spearman r (raw vs harmonized)",
         yaxis_title="Spearman r",
         yaxis_range=[-0.1, 1.05],
         height=480, **WHITE_BG,
@@ -180,7 +203,7 @@ def plot_icc(icc_df: pd.DataFrame) -> go.Figure:
 
     fig.update_layout(
         barmode="group",
-        title="Within-site consistency: ICC3 feature counts by category — Koo & Li (2016)",
+        title="Within-batch consistency: ICC3 feature counts by category — Koo & Li (2016)",
         xaxis_title="ICC3 category",
         yaxis_title="Number of features",
         height=420, **WHITE_BG,
@@ -360,7 +383,7 @@ def plot_cohens_f(anc_before: pd.DataFrame, anc_ebt: pd.DataFrame,
     _add_cohens_f_grid_legend(fig, RED, GREEN, has_ebf)
 
     fig.update_layout(
-        title="Site effect size: Cohen's f before vs after harmonization",
+        title="Batch effect size: Cohen's f before vs after harmonization",
         xaxis_title="Cohen's f (before harmonization)",
         yaxis_title="Cohen's f (after harmonization)",
         height=560, **WHITE_BG,
@@ -519,7 +542,7 @@ def plot_icc_by_site(
                 x_all.extend([site_pos[site] + j for j in jitter])
                 y_all.extend(cd["icc3"].values)
                 text_all.extend([
-                    f"<b>{feat}</b><br>ICC3: {icc:.3f}<br>Site: {site}"
+                    f"<b>{feat}</b><br>ICC3: {icc:.3f}<br>Batch: {site}"
                     for feat, icc in zip(cd["feature"].values, cd["icc3"].values)
                 ])
 
@@ -564,7 +587,7 @@ def plot_icc_by_site(
     n_key_lines = 0
     if use_numbers:
         parts = [
-            f"{i + 1} = {s}" + (f" (n={site_n[s]})" if site_n and s in site_n else "")
+            f"Batch {i + 1} = {s}" + (f" (n={site_n[s]})" if site_n and s in site_n else "")
             for i, s in enumerate(sites)
         ]
         per_line = 2
@@ -572,16 +595,16 @@ def plot_icc_by_site(
         n_key_lines = len(key_lines)
         fig.add_annotation(
             xref="paper", yref="paper", x=0, y=-0.12, xanchor="left", yanchor="top",
-            text="<b>Site key</b><br>" + "<br>".join(key_lines),
+            text="<b>Batch key</b><br>" + "<br>".join(key_lines),
             showarrow=False, align="left", font=dict(size=8, color="black"),
         )
 
-    legend_y = -0.16 - 0.035 * n_key_lines
-    bottom   = (110 + 15 * n_key_lines) if use_numbers else 150
+    legend_y = -0.16 - 0.052 * n_key_lines
+    bottom   = (140 + 22 * n_key_lines) if use_numbers else 150
     fig.update_yaxes(title_text="ICC3", range=[0, 1.08], row=1, col=1)
     fig.update_layout(
-        title="Within-site consistency by site: ICC3 - Koo & Li (2016)",
-        height=500 + (12 * n_key_lines if use_numbers else 0), **WHITE_BG,
+        title="Within-batch consistency by batch: ICC3 - Koo & Li (2016)",
+        height=520 + (18 * n_key_lines if use_numbers else 0), **WHITE_BG,
         margin=dict(r=40, b=bottom),
         legend=dict(
             orientation="h",
@@ -635,14 +658,14 @@ def plot_spearman_by_site(
     fig.update_yaxes(title_text="Spearman r", range=[-0.1, 1.05], row=1, col=1)
     fig.update_xaxes(tickangle=45)
     fig.update_layout(
-        title="Within-site consistency by site: Spearman r (raw vs harmonized)",
+        title="Within-batch consistency by batch: Spearman r (raw vs harmonized)",
         height=500, **WHITE_BG,
         margin=dict(r=60, b=120),
         legend=dict(
             orientation="h",
             yanchor="top", y=-0.25,
             xanchor="center", x=0.5,
-            title_text="Site",
+            title_text="Batch",
         ),
     )
     return fig
@@ -667,22 +690,25 @@ def plot_extra_associations(assoc_df: pd.DataFrame) -> go.Figure | None:
     if len(before_df) == 0 or not after_conds or not variables:
         return None
 
-    n_cols = len(variables) * len(after_conds)
+    # One ROW per variable so the layout scales cleanly with many variables.
+    n_rows = len(variables)
+    n_cols = len(after_conds)
     titles = [f"{v}<br><sub>{c}</sub>" for v in variables for c in after_conds]
-    fig = make_subplots(rows=1, cols=n_cols, subplot_titles=titles)
+    fig = make_subplots(
+        rows=n_rows, cols=n_cols, subplot_titles=titles,
+        vertical_spacing=min(0.12, 0.55 / max(n_rows, 1)),
+        horizontal_spacing=0.14,
+    )
 
     colors_map = {"After (EB=TRUE)": AFTER_EBT, "After (EB=FALSE)": AFTER_EBF}
     PURPLE = "#6A0DAD"
-    legend_shown = set()
 
-    col_i = 0
-    for var in variables:
+    for row_i, var in enumerate(variables, start=1):
         var_rows = assoc_df[assoc_df["variable"] == var]
         vtype    = var_rows["var_type"].iloc[0] if len(var_rows) > 0 else "continuous"
         eff_lbl  = "Pearson r" if vtype == "continuous" else "Cohen's f"
 
-        for cond in after_conds:
-            col_i += 1
+        for col_i, cond in enumerate(after_conds, start=1):
             color = colors_map.get(cond, BLUE)
 
             b = before_df[before_df["variable"] == var][["feature", "effect_size", "sig_fdr"]].rename(
@@ -707,40 +733,53 @@ def plot_extra_associations(assoc_df: pd.DataFrame) -> go.Figure | None:
             ]:
                 if len(sub) == 0:
                     continue
-                show = lbl not in legend_shown
-                if show:
-                    legend_shown.add(lbl)
                 fig.add_trace(go.Scatter(
                     x=sub["eff_b"], y=sub["eff_a"],
                     mode="markers", name=lbl,
-                    legendgroup=lbl, showlegend=show,
+                    legendgroup=lbl, showlegend=False,
                     marker=dict(color=mc, symbol=sym, size=sz, opacity=op,
                                 line=dict(color="white", width=0.8)),
                     text=sub["feature"],
                     hovertemplate="<b>%{text}</b><br>Before: %{x:.3f}<br>After: %{y:.3f}<extra></extra>",
-                ), row=1, col=col_i)
+                ), row=row_i, col=col_i)
 
             vals = pd.concat([merged["eff_b"], merged["eff_a"]]).dropna()
             if len(vals) == 0:
                 continue
             lo, hi = float(vals.min()) - 0.05, float(vals.max()) + 0.05
-            diag_shown = "diag" not in legend_shown
-            if diag_shown:
-                legend_shown.add("diag")
             fig.add_trace(go.Scatter(
                 x=[lo, hi], y=[lo, hi], mode="lines",
-                name="No change", legendgroup="diag", showlegend=diag_shown,
+                name="No change", legendgroup="diag", showlegend=False,
                 line=dict(color=GREY, dash="dash", width=1.2),
-            ), row=1, col=col_i)
+            ), row=row_i, col=col_i)
 
-            fig.update_xaxes(title_text=f"{eff_lbl} (before harmonization)", row=1, col=col_i)
-            fig.update_yaxes(title_text=f"{eff_lbl} (after harmonization)", row=1, col=col_i)
+            fig.update_xaxes(title_text=f"{eff_lbl} (before)", row=row_i, col=col_i)
+            fig.update_yaxes(title_text=f"{eff_lbl} (after)", row=row_i, col=col_i)
+
+    # Fixed legend: always show every category (table-like), even those with no
+    # points in this run, so the full scheme is visible.
+    for lbl, mc, sym in [
+        ("Not significant (neither)",        GREY,      "circle"),
+        ("FDR significant after only",       AFTER_EBT, "circle"),
+        ("FDR significant before only",      ORANGE,    "diamond"),
+        ("FDR significant before and after", PURPLE,    "square"),
+    ]:
+        fig.add_trace(go.Scatter(
+            x=[None], y=[None], mode="markers", name=lbl, legendgroup=lbl,
+            marker=dict(color=mc, symbol=sym, size=9, line=dict(color="white", width=0.8)),
+            showlegend=True,
+        ), row=1, col=1)
+    fig.add_trace(go.Scatter(
+        x=[None], y=[None], mode="lines", name="No change", legendgroup="diag",
+        line=dict(color=GREY, dash="dash", width=1.2), showlegend=True,
+    ), row=1, col=1)
 
     fig.update_layout(
         title="Additional variable associations: effect size before vs after harmonization",
-        height=490, **WHITE_BG,
-        legend=dict(orientation="h", yanchor="top", y=-0.18, xanchor="center", x=0.5),
-        margin=dict(b=100),
+        height=300 * n_rows + 140, **WHITE_BG,
+        legend=dict(orientation="h", yanchor="top", y=-0.09 / max(n_rows, 1) - 0.03,
+                    xanchor="center", x=0.5),
+        margin=dict(b=90),
     )
     return fig
 
@@ -771,7 +810,7 @@ def plot_icc_ci_compare(icc_ebt, icc_ebf):
         error_y=dict(type="data", symmetric=False,
                      array=m["icc3_upper_t"] - m["icc3_t"],
                      arrayminus=m["icc3_t"] - m["icc3_lower_t"],
-                     color=AFTER_EBT, thickness=1.1, width=0),
+                     color="rgba(42,110,187,0.35)", thickness=1.0, width=0),
         mode="markers", marker=dict(color=AFTER_EBT, size=3),
         name="EB=TRUE", text=m["feature"],
         hovertemplate="<b>%{text}</b><br>EB=TRUE ICC: %{y:.3f}<extra></extra>",
@@ -781,7 +820,7 @@ def plot_icc_ci_compare(icc_ebt, icc_ebf):
         error_y=dict(type="data", symmetric=False,
                      array=m["icc3_upper_f"] - m["icc3_f"],
                      arrayminus=m["icc3_f"] - m["icc3_lower_f"],
-                     color=AFTER_EBF, thickness=1.1, width=0),
+                     color="rgba(42,157,143,0.35)", thickness=1.0, width=0),
         mode="markers", marker=dict(color=AFTER_EBF, size=3),
         name="EB=FALSE", text=m["feature"],
         hovertemplate="<b>%{text}</b><br>EB=FALSE ICC: %{y:.3f}<extra></extra>",
