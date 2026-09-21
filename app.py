@@ -17,7 +17,8 @@ from src.metrics   import (site_mean_deviation, spearman_raw_vs_harm,
 from src.plots     import (plot_site_deviation, plot_spearman, plot_icc,
                            plot_age_correlations, plot_cohens_f,
                            plot_icc_by_site, plot_spearman_by_site,
-                           plot_extra_associations, plot_icc_ci_compare)
+                           plot_extra_associations, plot_single_association,
+                           plot_icc_ci_compare)
 from src.report    import generate_report, build_methods_paragraph
 
 # ── Update this URL once the repo is live ─────────────────────────────────
@@ -1026,22 +1027,24 @@ with eval_c1:
     )
 with eval_c2:
     include_age_corr = st.checkbox(
-        "Age correlations (Pearson r, FDR corrected)",
+        "Preserved-covariate associations (Age, Sex)",
         value=False, key="inc_age_corr",
         help=(
-            "Pearson correlation between the age variable and each imaging feature, before and after "
-            "harmonization. Optional: not all datasets have a meaningful age variable, and age "
-            "correlations can be confounded by motion or unstable in restricted age ranges."
+            "Shows each preserved covariate (Age, and Sex when it is included in the model) as its own "
+            "results tab, with its association to every feature before and after harmonization. "
+            "Continuous covariates use Pearson r; categorical covariates use Cohen's f. Each model "
+            "controls for the other preserved covariates, excluding the covariate being evaluated. "
+            "Age associations can be confounded by motion or unstable in restricted age ranges."
         ),
     )
     include_extra_assoc = st.checkbox(
         "Additional variable associations",
         value=False, key="inc_extra_assoc",
         help=(
-            "Evaluate associations between additional clinical or demographic variables and imaging "
-            "features before and after harmonization. Uses OLS regression controlling for the "
-            "same covariates passed to ComBat. Continuous variables: Pearson r + regression "
-            "t-statistic. Categorical variables: partial eta-squared and Cohen's f."
+            "Adds a results tab for each additional clinical or demographic variable you select below, "
+            "with its association to every feature before and after harmonization. Continuous variables "
+            "use Pearson r; categorical variables use Cohen's f. Each model controls for the same "
+            "covariates passed to ComBat, excluding the variable being evaluated."
         ),
     )
 
@@ -1232,22 +1235,42 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
             anc_ebt    = ancova_site_effect(harm_ebt, feature_cols, site_col, age_col, sex_col, "EB=TRUE")  if harm_ebt is not None else None
             anc_ebf    = ancova_site_effect(harm_ebf, feature_cols, site_col, age_col, sex_col, "EB=FALSE") if harm_ebf is not None else None
 
-        extra_assoc_df = pd.DataFrame()
-        if include_extra_assoc and (assoc_cont_vars or assoc_cat_vars):
-            progress.progress(82, "Computing additional variable associations...")
-            assoc_parts = [compute_extra_associations(
-                df_harm, feature_cols, assoc_cont_vars, assoc_cat_vars,
+        # Per-variable associations for the results tabs. The evaluated set is
+        # every covariate preserved in the ComBat model (Age, Sex, and any extra
+        # covariates) plus any additional variables selected, so age and sex are
+        # shown in the same grammar as every other variable. Each variable's model
+        # controls for the remaining preserved covariates (excluding itself).
+        assoc_unified_df = pd.DataFrame()
+        _feat_set  = set(feature_cols)
+        eval_cont  = [c for c in dict.fromkeys(continuous_covariates + assoc_cont_vars)
+                      if c in df.columns and c not in _feat_set]
+        eval_cat   = [c for c in dict.fromkeys(categorical_covariates + assoc_cat_vars)
+                      if c in df.columns and c not in _feat_set]
+        if (include_age_corr or include_extra_assoc) and (eval_cont or eval_cat):
+            progress.progress(82, "Computing per-variable associations...")
+            u_parts = [compute_extra_associations(
+                df_harm, feature_cols, eval_cont, eval_cat,
                 continuous_covariates, categorical_covariates, "Before harmonization")]
             if harm_ebt is not None:
-                assoc_parts.append(compute_extra_associations(
-                    harm_ebt, feature_cols, assoc_cont_vars, assoc_cat_vars,
+                u_parts.append(compute_extra_associations(
+                    harm_ebt, feature_cols, eval_cont, eval_cat,
                     continuous_covariates, categorical_covariates, "After (EB=TRUE)"))
             if harm_ebf is not None:
-                assoc_parts.append(compute_extra_associations(
-                    harm_ebf, feature_cols, assoc_cont_vars, assoc_cat_vars,
+                u_parts.append(compute_extra_associations(
+                    harm_ebf, feature_cols, eval_cont, eval_cat,
                     continuous_covariates, categorical_covariates, "After (EB=FALSE)"))
-            non_empty = [p for p in assoc_parts if len(p) > 0]
-            extra_assoc_df = pd.concat(non_empty, ignore_index=True) if non_empty else pd.DataFrame()
+            u_ne = [p for p in u_parts if len(p) > 0]
+            assoc_unified_df = pd.concat(u_ne, ignore_index=True) if u_ne else pd.DataFrame()
+
+        # The report keeps its existing additional-variable figure (user-added
+        # variables only). It is derived from the unified table so the same
+        # models are never computed twice.
+        extra_assoc_df = pd.DataFrame()
+        if include_extra_assoc and len(assoc_unified_df) > 0 and (assoc_cont_vars or assoc_cat_vars):
+            _user_vars   = set(assoc_cont_vars) | set(assoc_cat_vars)
+            extra_assoc_df = assoc_unified_df[
+                assoc_unified_df["variable"].isin(_user_vars)
+            ].reset_index(drop=True)
 
         # ── Figures ────────────────────────────────────────────────────────
         progress.progress(87, "Generating figures...")
@@ -1374,6 +1397,7 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
             include_age_corr=include_age_corr,
             include_extra_assoc=include_extra_assoc,
             extra_assoc_df=extra_assoc_df,
+            assoc_unified_df=assoc_unified_df,
             site_n_complete=site_n_complete,
         ))
 
@@ -1397,17 +1421,19 @@ if st.session_state.get("results_ready"):
     _inc_age        = st.session_state.get("include_age_corr",    False)
     _inc_extra      = st.session_state.get("include_extra_assoc", False)
     _extra_assoc_df = st.session_state.get("extra_assoc_df", pd.DataFrame())
+    _assoc_uni      = st.session_state.get("assoc_unified_df", pd.DataFrame())
+    _assoc_vars     = (list(dict.fromkeys(_assoc_uni["variable"].tolist()))
+                       if isinstance(_assoc_uni, pd.DataFrame) and len(_assoc_uni) > 0 else [])
 
-    # Build tab list dynamically based on selected metrics
+    # Build tab list dynamically based on selected metrics. Age, Sex, and every
+    # additional variable each get their own association tab, in the same style.
     tab_names = ["Batch Deviation"]
     if _inc_cohens_f:
         tab_names.append("Batch Effect Size (Cohen's f)")
     if _inc_icc_site:
         tab_names.append("Within-Batch Consistency by Batch")
-    if _inc_age:
-        tab_names.append("Age Associations")
-    if _inc_extra and isinstance(_extra_assoc_df, pd.DataFrame) and len(_extra_assoc_df) > 0:
-        tab_names.append("Variable Associations")
+    for _v in _assoc_vars:
+        tab_names.append(str(_v))
     tab_names.append("Methods paragraph")
 
     tabs = st.tabs(tab_names)
@@ -1463,27 +1489,26 @@ if st.session_state.get("results_ready"):
                     st.info("By-batch ICC not available (need at least 3 participants per batch with complete data).")
         tab_idx += 1
 
-    if _inc_age:
+    # One tab per evaluated variable (Age, Sex, and any additional variables),
+    # each in the same before-versus-after grammar.
+    for _v in _assoc_vars:
         with tabs[tab_idx]:
-            if st.session_state.get("fig_age"):
-                st.plotly_chart(st.session_state["fig_age"], use_container_width=True)
-                st.caption("Each point = one feature. Grey circle = not significant either condition | Filled circle = FDR significant after only | Orange diamond = FDR significant before only | Purple square = FDR significant in both. Pearson r computed independently per condition; no formal test of difference applied.")
-            else:
-                st.info("Age correlations not available.")
-        tab_idx += 1
-
-    if _inc_extra and isinstance(_extra_assoc_df, pd.DataFrame) and len(_extra_assoc_df) > 0:
-        with tabs[tab_idx]:
-            if st.session_state.get("fig_extra_assoc"):
-                st.plotly_chart(st.session_state["fig_extra_assoc"], use_container_width=True)
+            _fig_v = plot_single_association(_assoc_uni, _v)
+            if _fig_v is not None:
+                st.plotly_chart(_fig_v, use_container_width=True)
+                _sub_v = _assoc_uni[_assoc_uni["variable"] == _v]
+                _vt_v  = _sub_v["var_type"].iloc[0] if len(_sub_v) else "continuous"
+                _eff_v = "Pearson r" if _vt_v == "continuous" else "Cohen's f"
                 st.caption(
-                    "Each point = one feature. Effect size before (x-axis) vs after (y-axis) harmonization. "
-                    "Continuous variables: Pearson r. Categorical variables: Cohen's f (from OLS ANOVA Type II). "
-                    "All models control for the same covariates passed to ComBat (excluding the variable itself). "
-                    "FDR correction (Benjamini-Hochberg) applied per variable across features."
+                    f"Each point = one feature. Effect size for {_v} before (x-axis) versus after "
+                    f"(y-axis) harmonization, shown as {_eff_v}. Significance is the FDR-corrected "
+                    f"(Benjamini-Hochberg, per variable) p-value from a linear model that controls for "
+                    f"the other preserved covariates (excluding {_v}). Grey circle = not significant in "
+                    f"either condition. Filled circle = FDR significant after only. Orange diamond = FDR "
+                    f"significant before only. Purple square = FDR significant in both. Dashed diagonal = no change."
                 )
             else:
-                st.info("No extra variable associations computed.")
+                st.info(f"No association could be computed for {_v}.")
         tab_idx += 1
 
     with tabs[tab_idx]:

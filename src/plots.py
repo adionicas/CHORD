@@ -77,9 +77,9 @@ def plot_site_deviation(
                       opacity=0.4, row=1, col=col_idx)
         fig.update_xaxes(
             tickmode="array", tickvals=list(range(n_sites)),
-            ticktext=([str(i + 1) for i in range(n_sites)] if use_numbers
+            ticktext=([f"Batch {i + 1}" for i in range(n_sites)] if use_numbers
                       else [_full_label(s) for s in sites]),
-            tickangle=0 if use_numbers else 45,
+            tickangle=(-90 if use_numbers else 45),
             tickfont=dict(size=tick_size), row=1, col=col_idx,
         )
 
@@ -90,7 +90,7 @@ def plot_site_deviation(
         key_lines = ["      ".join(parts[k:k + 2]) for k in range(0, len(parts), 2)]
         n_key_lines = len(key_lines)
         fig.add_annotation(
-            xref="paper", yref="paper", x=0, y=-0.14, xanchor="left", yanchor="top",
+            xref="paper", yref="paper", x=0, y=-0.34, xanchor="left", yanchor="top",
             text="<b>Batch key</b><br>" + "<br>".join(key_lines),
             showarrow=False, align="left", font=dict(size=8, color="black"),
         )
@@ -98,9 +98,9 @@ def plot_site_deviation(
     fig.update_yaxes(title_text="Batch mean z-score", row=1, col=1)
     fig.update_layout(
         title="Batch mean deviation from grand mean (z-scored per feature)",
-        height=480 + (16 * n_key_lines if use_numbers else 0), **WHITE_BG,
+        height=(430 if use_numbers else 480) + (13 * n_key_lines if use_numbers else 0), **WHITE_BG,
         showlegend=False,
-        margin=dict(b=(120 + 18 * n_key_lines) if use_numbers else 90),
+        margin=dict(b=(150 + 13 * n_key_lines) if use_numbers else 90),
     )
     return fig
 
@@ -411,38 +411,40 @@ def _add_cohens_f_grid_legend(fig, red, green, has_ebf=False):
                                                       family="Arial"),
                            xanchor=xanchor, yanchor="middle")
 
-    y_bottom = 0.585 if has_ebf else 0.66
+    # Compact box hugging the content, with larger symbols and text so the grid
+    # reads clearly rather than sitting tiny inside an oversized square.
+    y_bottom = 0.66 if has_ebf else 0.74
     fig.add_shape(type="rect", xref="paper", yref="paper",
-                  x0=0.58, x1=0.995, y0=y_bottom, y1=0.995,
-                  fillcolor="rgba(255,255,255,0.90)", line=dict(color="#cccccc", width=1),
+                  x0=0.60, x1=0.992, y0=y_bottom, y1=0.992,
+                  fillcolor="rgba(255,255,255,0.92)", line=dict(color="#cccccc", width=1),
                   layer="above")
 
-    cx1, cx2 = 0.83, 0.945          # column x-positions (after p<0.05 / p>=0.05)
-    r1, r2   = 0.84, 0.75           # row y-positions   (before p<0.05 / p>=0.05)
+    cx1, cx2 = 0.86, 0.955          # column x-positions (after p<0.05 / p>=0.05)
+    r1, r2   = (0.885, 0.805) if has_ebf else (0.87, 0.79)   # row y-positions
 
     # column header (after harmonization)
-    ann((cx1 + cx2) / 2, 0.965, "<b>After harmonization</b>", size=9, color="#111")
-    ann(cx1, 0.905, "p &lt; 0.05",   size=8, color="#444")
-    ann(cx2, 0.905, "p &#8805; 0.05", size=8, color="#444")
+    ann((cx1 + cx2) / 2, 0.955, "<b>After harmonization</b>", size=10, color="#111")
+    ann(cx1, 0.918, "p &lt; 0.05",   size=9, color="#444")
+    ann(cx2, 0.918, "p &#8805; 0.05", size=9, color="#444")
 
     # row header (before harmonization)
-    ann(0.60, (r1 + r2) / 2, "<b>Before<br>harmonization</b>", size=9,
+    ann(0.615, (r1 + r2) / 2, "<b>Before<br>harmonization</b>", size=10,
         color="#111", xanchor="left")
-    ann(0.775, r1, "p &lt; 0.05",   size=8, color="#444", xanchor="right")
-    ann(0.775, r2, "p &#8805; 0.05", size=8, color="#444", xanchor="right")
+    ann(0.80, r1, "p &lt; 0.05",   size=9, color="#444", xanchor="right")
+    ann(0.80, r2, "p &#8805; 0.05", size=9, color="#444", xanchor="right")
 
     # cells: exactly the marker a feature of that type carries
-    ann(cx1, r1, "&#9679;", size=18, color=red)     # filled red   = sig before & after
-    ann(cx2, r1, "&#9679;", size=18, color=green)   # filled green = sig before, ns after
-    ann(cx1, r2, "&#9675;", size=18, color=red)     # open red     = ns before, sig after
-    ann(cx2, r2, "&#9675;", size=18, color=green)   # open green   = ns before & after
+    ann(cx1, r1, "&#9679;", size=24, color=red)     # filled red   = sig before & after
+    ann(cx2, r1, "&#9679;", size=24, color=green)   # filled green = sig before, ns after
+    ann(cx1, r2, "&#9675;", size=24, color=red)     # open red     = ns before, sig after
+    ann(cx2, r2, "&#9675;", size=24, color=green)   # open green   = ns before & after
 
     if has_ebf:
-        y_s = 0.64
-        ann(0.63, y_s, "&#9679;", size=13, color="#333")
-        ann(0.655, y_s, "EB=TRUE",  size=8, color="#444", xanchor="left")
-        ann(0.80, y_s, "&#9670;", size=13, color="#333")
-        ann(0.825, y_s, "EB=FALSE", size=8, color="#444", xanchor="left")
+        y_s = 0.71
+        ann(0.635, y_s, "&#9679;", size=16, color="#333")
+        ann(0.665, y_s, "EB=TRUE",  size=9, color="#444", xanchor="left")
+        ann(0.83, y_s, "&#9670;", size=16, color="#333")
+        ann(0.86, y_s, "EB=FALSE", size=9, color="#444", xanchor="left")
 
 
 # ---------------------------------------------------------------------------
@@ -779,6 +781,106 @@ def plot_extra_associations(assoc_df: pd.DataFrame) -> go.Figure | None:
         height=300 * n_rows + 140, **WHITE_BG,
         legend=dict(orientation="h", yanchor="top", y=-0.09 / max(n_rows, 1) - 0.03,
                     xanchor="center", x=0.5),
+        margin=dict(b=90),
+    )
+    return fig
+
+
+def plot_single_association(assoc_df: pd.DataFrame, variable: str) -> go.Figure | None:
+    """
+    Before-versus-after effect-size scatter for ONE variable, one panel per
+    after-harmonization condition (EB=TRUE, EB=FALSE). Continuous variables use
+    Pearson r; categorical variables use Cohen's f. Points are coloured and
+    shaped by their FDR significance category, with an always-visible legend.
+
+    This is the per-variable figure used for the results tabs, so age, sex, and
+    every additional variable are shown in exactly the same grammar.
+    """
+    if assoc_df is None or len(assoc_df) == 0:
+        return None
+    sub_all = assoc_df[assoc_df["variable"] == variable]
+    if len(sub_all) == 0:
+        return None
+
+    before_df   = sub_all[sub_all["harmonization"] == "Before harmonization"]
+    after_conds = [c for c in ["After (EB=TRUE)", "After (EB=FALSE)"]
+                   if c in set(sub_all["harmonization"].unique())]
+    if len(before_df) == 0 or not after_conds:
+        return None
+
+    vtype   = sub_all["var_type"].iloc[0]
+    eff_lbl = "Pearson r" if vtype == "continuous" else "Cohen's f"
+    colors_map = {"After (EB=TRUE)": AFTER_EBT, "After (EB=FALSE)": AFTER_EBF}
+    PURPLE = "#6A0DAD"
+
+    n_cols = len(after_conds)
+    fig = make_subplots(rows=1, cols=n_cols, subplot_titles=after_conds,
+                        horizontal_spacing=0.14)
+
+    for col_i, cond in enumerate(after_conds, start=1):
+        color = colors_map.get(cond, BLUE)
+        b = before_df[["feature", "effect_size", "sig_fdr"]].rename(
+            columns={"effect_size": "eff_b", "sig_fdr": "sig_b"})
+        a = sub_all[sub_all["harmonization"] == cond][["feature", "effect_size", "sig_fdr"]].rename(
+            columns={"effect_size": "eff_a", "sig_fdr": "sig_a"})
+        merged = b.merge(a, on="feature")
+        if len(merged) == 0:
+            continue
+
+        ns      = merged[~merged["sig_b"] & ~merged["sig_a"]]
+        new_sig = merged[~merged["sig_b"] &  merged["sig_a"]]
+        lost    = merged[ merged["sig_b"] & ~merged["sig_a"]]
+        both    = merged[ merged["sig_b"] &  merged["sig_a"]]
+
+        for grp, lbl, mc, sym, sz, op in [
+            (ns,      "Not significant (neither)",        GREY,   "circle",  7,  0.40),
+            (new_sig, "FDR significant after only",       color,  "circle",  9,  0.85),
+            (lost,    "FDR significant before only",      ORANGE, "diamond", 9,  0.85),
+            (both,    "FDR significant before and after", PURPLE, "square",  9,  0.85),
+        ]:
+            if len(grp) == 0:
+                continue
+            fig.add_trace(go.Scatter(
+                x=grp["eff_b"], y=grp["eff_a"],
+                mode="markers", name=lbl, legendgroup=lbl, showlegend=False,
+                marker=dict(color=mc, symbol=sym, size=sz, opacity=op,
+                            line=dict(color="white", width=0.8)),
+                text=grp["feature"],
+                hovertemplate="<b>%{text}</b><br>Before: %{x:.3f}<br>After: %{y:.3f}<extra></extra>",
+            ), row=1, col=col_i)
+
+        vals = pd.concat([merged["eff_b"], merged["eff_a"]]).dropna()
+        if len(vals) == 0:
+            continue
+        lo, hi = float(vals.min()) - 0.05, float(vals.max()) + 0.05
+        fig.add_trace(go.Scatter(
+            x=[lo, hi], y=[lo, hi], mode="lines",
+            name="No change", legendgroup="diag", showlegend=False,
+            line=dict(color=GREY, dash="dash", width=1.2),
+        ), row=1, col=col_i)
+        fig.update_xaxes(title_text=f"{eff_lbl} (before)", row=1, col=col_i)
+        fig.update_yaxes(title_text=f"{eff_lbl} (after)", row=1, col=col_i)
+
+    for lbl, mc, sym in [
+        ("Not significant (neither)",        GREY,      "circle"),
+        ("FDR significant after only",       AFTER_EBT, "circle"),
+        ("FDR significant before only",      ORANGE,    "diamond"),
+        ("FDR significant before and after", PURPLE,    "square"),
+    ]:
+        fig.add_trace(go.Scatter(
+            x=[None], y=[None], mode="markers", name=lbl, legendgroup=lbl,
+            marker=dict(color=mc, symbol=sym, size=9, line=dict(color="white", width=0.8)),
+            showlegend=True,
+        ), row=1, col=1)
+    fig.add_trace(go.Scatter(
+        x=[None], y=[None], mode="lines", name="No change", legendgroup="diag",
+        line=dict(color=GREY, dash="dash", width=1.2), showlegend=True,
+    ), row=1, col=1)
+
+    fig.update_layout(
+        title=f"{variable} association ({eff_lbl}) before versus after harmonization",
+        height=470, **WHITE_BG,
+        legend=dict(orientation="h", yanchor="top", y=-0.16, xanchor="center", x=0.5),
         margin=dict(b=90),
     )
     return fig
