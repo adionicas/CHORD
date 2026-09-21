@@ -7,7 +7,8 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 
-from src.harmonize import run_combat
+from src.harmonize import (run_combat, run_combat_grouped, run_combat_per_feature,
+                           run_combat_by_missing_pattern, run_combat_with_imputation)
 from src.metrics   import (site_mean_deviation, spearman_raw_vs_harm,
                             compute_icc, age_correlations, ancova_site_effect,
                             demographic_summary,
@@ -16,7 +17,7 @@ from src.metrics   import (site_mean_deviation, spearman_raw_vs_harm,
 from src.plots     import (plot_site_deviation, plot_spearman, plot_icc,
                            plot_age_correlations, plot_cohens_f,
                            plot_icc_by_site, plot_spearman_by_site,
-                           plot_extra_associations)
+                           plot_extra_associations, plot_icc_ci_compare)
 from src.report    import generate_report, build_methods_paragraph
 
 # ── Update this URL once the repo is live ─────────────────────────────────
@@ -380,13 +381,130 @@ with st.expander(f"View all {len(feature_cols)} selected feature names in full")
 sites = df[site_col].dropna().unique()
 st.info(f"Sites: **{', '.join(sorted(sites.astype(str)))}** ({len(sites)} sites) | Features: **{len(feature_cols)}**")
 
+st.divider()
+st.subheader("Step 2c. Multiple imaging modalities or measure types (optional)")
+
+st.caption(
+    "Different imaging modalities or different measures (for example cortical "
+    "thickness, surface area, mean diffusivity, sulcal depth) do not necessarily "
+    "share the same distribution or numeric scale. ComBat's empirical Bayes step "
+    "pools information across features to estimate each site's location and scale "
+    "parameters, which assumes the pooled features are comparably distributed. "
+    "When the selected features span measures on different scales, estimating "
+    "those parameters separately for each modality or measure keeps the pooled "
+    "features exchangeable and avoids distorting the empirical Bayes priors "
+    "(Johnson et al., 2007; Fortin et al., 2017, 2018). If enabled below, each "
+    "group is harmonized in its own ComBat run, with the same batch variable and "
+    "the same covariates, and the harmonized blocks are recombined per participant."
+)
+
+
+def _suggest_modality_tokens(cols):
+    """Propose candidate grouping tokens from the selected feature names.
+
+    First tries the text after the last '.' (common for surface / measure
+    naming such as ``L_S_central.meandepth_native``); if that partitions every
+    column, those suffixes are suggested. Otherwise falls back to the prefix
+    before the first '_'.
+    """
+    suff = {}
+    for c in cols:
+        if "." in c:
+            key = c.rsplit(".", 1)[1]
+            suff[key] = suff.get(key, 0) + 1
+    if len(suff) >= 2 and sum(suff.values()) == len(cols):
+        return sorted(suff)
+    pref = {}
+    for c in cols:
+        if "_" in c:
+            key = c.split("_", 1)[0] + "_"
+            pref[key] = pref.get(key, 0) + 1
+    if len(pref) >= 2:
+        return sorted(pref)
+    return sorted(suff)
+
+
+modality_groups = None
+use_modality = st.checkbox(
+    "My selected features include multiple modalities or measure types. "
+    "Harmonize each group separately",
+    value=False, key="use_modality_groups",
+)
+
+if use_modality:
+    st.markdown(
+        "Define one group per modality or measure type using a text token that "
+        "appears in that group's column names (for example a suffix such as "
+        "`meandepth_native`, or a prefix such as `FA_`). Enter one token per line. "
+        "Each selected feature is assigned to the first group whose token it "
+        "contains."
+    )
+    if st.button("Suggest groups from column names"):
+        st.session_state["modality_tokens_text"] = "\n".join(
+            _suggest_modality_tokens(feature_cols)
+        )
+        st.rerun()
+    tokens_text = st.text_area(
+        "One token per line",
+        key="modality_tokens_text",
+        placeholder="hull_junction_length_native\nmeandepth_native\nsurface_native\nopening",
+        height=130,
+    )
+    tokens = [t.strip() for t in tokens_text.splitlines() if t.strip()]
+    if tokens:
+        groups, assigned = {}, set()
+        for t in tokens:
+            matched = [c for c in feature_cols
+                       if t.lower() in c.lower() and c not in assigned]
+            if matched:
+                groups[t] = matched
+                assigned.update(matched)
+        unassigned = [c for c in feature_cols if c not in assigned]
+
+        if groups:
+            preview = pd.DataFrame([
+                {"Group (token)": g,
+                 "Columns matched": len(cols),
+                 "Example columns": ", ".join(cols[:3]) + ("…" if len(cols) > 3 else "")}
+                for g, cols in groups.items()
+            ])
+            st.dataframe(preview, hide_index=True, use_container_width=True)
+
+        if unassigned:
+            st.warning(
+                f"{len(unassigned)} selected feature(s) match no token and would "
+                "not be harmonized. Add a token that covers them, or remove them "
+                "from the feature selection above."
+            )
+            with st.expander(f"View {len(unassigned)} unassigned column(s)"):
+                st.write(unassigned)
+
+        if len(groups) >= 2 and not unassigned:
+            modality_groups = groups
+            st.success(
+                f"{len(groups)} groups defined, covering all {len(feature_cols)} "
+                "selected features. Each group will be harmonized in its own "
+                "ComBat run."
+            )
+        elif len(groups) < 2:
+            st.info(
+                "Define at least two groups to harmonize by modality. With fewer "
+                "than two groups, harmonization runs over all features together."
+            )
+        else:
+            st.info(
+                "Resolve the unassigned columns above to enable grouped "
+                "harmonization."
+            )
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP 3 — Run
 # ─────────────────────────────────────────────────────────────────────────────
 st.divider()
 st.subheader("Data preview (optional)")
 st.caption("Visual overview of the selected features before harmonization. "
-           "Values are z-scored per feature; missing data shown in grey. "
+           "Values are z-scored per feature; missing data shown in black. "
            "Participants sorted by site so site effects are visible.")
 
 if st.button("Generate data matrix preview", use_container_width=False):
@@ -400,7 +518,12 @@ if st.button("Generate data matrix preview", use_container_width=False):
     # categorical variables are label-encoded so they can be z-scored
     covariate_cols = [c for c in [age_col, sex_col] + extra_continuous + extra_categorical
                       if c in df.columns]
-    all_plot_cols  = covariate_cols + feature_cols
+    # when modality grouping is used, order features so each modality is contiguous
+    if modality_groups:
+        ordered_feats = [c for g, cols in modality_groups.items() for c in cols]
+    else:
+        ordered_feats = list(feature_cols)
+    all_plot_cols  = covariate_cols + ordered_feats
 
     plot_df = df[[site_col] + all_plot_cols].copy()
 
@@ -491,17 +614,40 @@ if st.button("Generate data matrix preview", use_container_width=False):
         fig_carpet.add_vline(x=sep_x, line_color="black",
                              line_width=2, opacity=0.7, row=1, col=2)
 
-    # grey squares for missing values
-    nan_rows, nan_cols_idx = np.where(np.isnan(z))
-    if len(nan_rows) > 0:
-        fig_carpet.add_trace(go.Scatter(
-            x=[all_plot_cols[c] for c in nan_cols_idx],
-            y=nan_rows.tolist(),
-            mode="markers",
-            marker=dict(color="lightgrey", size=2, symbol="square"),
-            name="Missing",
-            showlegend=True,
-            xaxis="x2", yaxis="y",
+    # ── Modality color strip, separators, and labels (when grouping is used) ──
+    if modality_groups:
+        mod_palette = px.colors.qualitative.Bold
+        mod_names   = list(modality_groups.keys())
+        mod_color   = {g: mod_palette[i % len(mod_palette)] for i, g in enumerate(mod_names)}
+        x0 = len(covariate_cols)
+        for gi, gname in enumerate(mod_names):
+            x1 = x0 + len(modality_groups[gname])
+            if gi > 0:  # separator between modality blocks
+                fig_carpet.add_vline(x=x0 - 0.5, line_color="black",
+                                     line_width=1.5, opacity=0.85, row=1, col=2)
+            fig_carpet.add_shape(  # colored band above the block
+                type="rect", xref="x2", yref="paper",
+                x0=x0 - 0.5, x1=x1 - 0.5, y0=1.002, y1=1.028,
+                fillcolor=mod_color[gname], line_width=0, layer="above",
+            )
+            fig_carpet.add_annotation(  # modality label above the block
+                xref="x2", yref="paper", x=(x0 + x1 - 1) / 2, y=1.035,
+                text=gname, showarrow=False, xanchor="center", yanchor="bottom",
+                font=dict(size=9, color=mod_color[gname]),
+            )
+            x0 = x1
+
+    # black cells for missing values — fills each missing cell so missingness
+    # is clearly visible against the red/blue data
+    miss_layer = np.where(np.isnan(z), 1.0, np.nan)
+    if np.isnan(z).any():
+        fig_carpet.add_trace(go.Heatmap(
+            z=miss_layer,
+            x=all_plot_cols,
+            colorscale=[[0, "black"], [1, "black"]],
+            showscale=False,
+            hoverongaps=False,
+            hovertemplate="Column: %{x}<br>missing<extra></extra>",
         ), row=1, col=2)
 
     # site boundary lines on both panels
@@ -513,9 +659,12 @@ if st.button("Generate data matrix preview", use_container_width=False):
     n_feat  = len(all_plot_cols)
     height  = max(400, min(len(plot_df) * 4, 900))
     covar_label = f" | first {len(covariate_cols)} columns = covariates (Age, Sex, ...)" if covariate_cols else ""
+    _title_text = (f"Raw data matrix — {len(plot_df)} participants × {n_feat} columns "
+                   f"(sorted by {site_col}; z-scored){covar_label}")
+    _title = (dict(text=_title_text, y=0.995, yanchor="top")
+              if modality_groups else _title_text)
     fig_carpet.update_layout(
-        title=f"Raw data matrix — {len(plot_df)} participants × {n_feat} columns "
-              f"(sorted by {site_col}; z-scored){covar_label}",
+        title=_title,
         xaxis=dict(showticklabels=False, showgrid=False),
         xaxis2=dict(showticklabels=n_feat <= 80, tickangle=45,
                     tickfont=dict(size=7)),
@@ -525,17 +674,150 @@ if st.button("Generate data matrix preview", use_container_width=False):
         showlegend=False,
         plot_bgcolor="white", paper_bgcolor="white",
         font=dict(color="black", family="Arial"),
-        margin=dict(l=110, b=90, r=60),
+        margin={"l": 110, "b": 90, "r": 60, **({"t": 70} if modality_groups else {})},
     )
 
     pct_missing = 100 * np.isnan(mat).sum() / mat.size
+    mod_note = ("Top strip = modality group (colored, separated by vertical lines). "
+                if modality_groups else "")
     st.plotly_chart(fig_carpet, use_container_width=True)
-    st.caption(f"Left strip = site identity (colored). "
-               f"Main panel = z-scored feature values (red = high, blue = low, grey = missing). "
+    st.caption(f"Left strip = site identity (colored). {mod_note}"
+               f"Main panel = z-scored feature values (red = high, blue = low, black = missing). "
                f"Missing: {np.isnan(mat).sum():,} cells ({pct_missing:.1f}%). "
                f"Horizontal lines = site boundaries.")
   except Exception as _preview_err:
     st.error(f"Preview could not be generated: {_preview_err}")
+
+# ── Missing value assessment ────────────────────────────────────────────────
+st.markdown("---")
+st.markdown("**Missing value assessment (optional)**")
+st.caption(
+    "Counts missing values per variable among the selected features and the "
+    "covariates. neuroCombat requires complete data within each ComBat run, so a "
+    "participant missing a value is excluded from that variable's run. Use this "
+    "to see which variables drive the missingness."
+)
+if st.button("Assess missing values"):
+    try:
+        assess_cols = [c for c in [age_col, sex_col] + extra_continuous + extra_categorical
+                       if c in df.columns] + list(feature_cols)
+        n_total = len(df)
+        miss_n = df[assess_cols].isna().sum()
+        miss_pct = (100 * miss_n / n_total) if n_total else miss_n * 0
+        n_complete_feats = int(df[list(feature_cols)].notna().all(axis=1).sum())
+        total_missing_cells = int(df[list(feature_cols)].isna().sum().sum())
+        n_cols_with_missing = int((df[list(feature_cols)].isna().sum() > 0).sum())
+
+        mc1, mc2, mc3, mc4 = st.columns(4)
+        mc1.metric("Participants", f"{n_total}")
+        mc2.metric("Complete on all features", f"{n_complete_feats}")
+        mc3.metric("Feature columns with missing", f"{n_cols_with_missing} / {len(feature_cols)}")
+        mc4.metric("Missing feature cells", f"{total_missing_cells:,}")
+
+        miss_df = pd.DataFrame({
+            "Variable":     assess_cols,
+            "Missing (n)":  miss_n.values,
+            "Missing (%)":  miss_pct.round(1).values,
+            "Present (n)":  (n_total - miss_n.values),
+        })
+        miss_df = miss_df[miss_df["Missing (n)"] > 0].sort_values(
+            "Missing (n)", ascending=False).reset_index(drop=True)
+
+        if len(miss_df) == 0:
+            st.success("No missing values in the selected features or covariates.")
+        else:
+            st.caption(
+                f"{len(miss_df)} of {len(assess_cols)} variables have at least one "
+                f"missing value; the remaining {len(assess_cols) - len(miss_df)} are "
+                "complete. Sorted by count, most missing first."
+            )
+            st.dataframe(miss_df, use_container_width=True, hide_index=True)
+    except Exception as _miss_err:
+        st.error(f"Missing-value assessment could not be generated: {_miss_err}")
+
+# ── Exclude features by missing percentage ───────────────────────────────────
+st.markdown("**Exclude features by missing percentage (optional)**")
+st.caption(
+    "Optionally set a threshold to list the selected features whose missing "
+    "percentage exceeds it, then remove them from the selection in one step. The "
+    "box is empty by default, so nothing is filtered until you enter a value. "
+    "Missing percentage is computed per feature across all uploaded participants. "
+    "When multiple modalities are used, the exceedances are broken down by modality."
+)
+
+def _exclude_high_missing_features(cols_to_drop, threshold, miss_pcts_dict=None):
+    drop = set(cols_to_drop)
+    st.session_state["sel_features"] = [
+        c for c in st.session_state.get("sel_features", []) if c not in drop
+    ]
+    prev = st.session_state.get("_excl_info", {"n": 0, "threshold": None})
+    st.session_state["_excl_info"] = {"n": prev["n"] + len(drop), "threshold": threshold}
+    prev_list = st.session_state.get("_excl_feat_list", [])
+    for feat in cols_to_drop:
+        pct_val = miss_pcts_dict.get(feat, float("nan")) if miss_pcts_dict else float("nan")
+        prev_list.append({"Feature": feat, "Missing (%)": round(float(pct_val), 1)})
+    st.session_state["_excl_feat_list"] = prev_list
+
+thr_col = st.columns([1, 2])[0]
+with thr_col:
+    miss_thr = st.number_input(
+        "Missing % threshold", min_value=0.0, max_value=100.0,
+        value=None, step=5.0, key="miss_excl_thr", placeholder="e.g. 25",
+    )
+
+if miss_thr is None:
+    st.caption("Enter a percentage above to list the features that exceed it.")
+else:
+    feat_miss_pct = df[list(feature_cols)].isna().mean() * 100
+    over = feat_miss_pct[feat_miss_pct > miss_thr].sort_values(ascending=False)
+    if len(over) == 0:
+        st.caption(f"No selected features exceed {miss_thr:.0f}% missing.")
+    else:
+        # measure / modality label per feature: use the defined groups when
+        # present, otherwise derive it from the column name
+        if modality_groups:
+            col_to_measure = {c: g for g, cols in modality_groups.items() for c in cols}
+        else:
+            def _measure_of(c):
+                if "." in c:
+                    return c.rsplit(".", 1)[1]
+                if "_" in c:
+                    return c.split("_", 1)[0] + "_"
+                return "(unknown)"
+            col_to_measure = {c: _measure_of(c) for c in feature_cols}
+
+        measures = {}
+        for c in feature_cols:
+            measures.setdefault(col_to_measure[c], []).append(c)
+
+        st.warning(
+            f"{len(over)} of {len(feature_cols)} selected features exceed "
+            f"{miss_thr:.0f}% missing. Breakdown by measure below."
+        )
+        # per-measure summary: how many exceed the threshold in each measure
+        summ = pd.DataFrame([
+            {
+                "Measure / modality":      meas,
+                "Features over threshold": int((feat_miss_pct.reindex(mcols) > miss_thr).sum()),
+                "Total features":          len(mcols),
+                "Mean missing (%)":        round(float(feat_miss_pct.reindex(mcols).mean()), 1),
+            }
+            for meas, mcols in measures.items()
+        ]).sort_values("Features over threshold", ascending=False).reset_index(drop=True)
+        st.dataframe(summ, use_container_width=True, hide_index=True)
+        # detailed list of the features over threshold, with their measure
+        with st.expander(f"View the {len(over)} features over threshold and their measure"):
+            over_df = pd.DataFrame({
+                "Variable":           list(over.index),
+                "Measure / modality": [col_to_measure[c] for c in over.index],
+                "Missing (%)":        over.values.round(1),
+            })
+            st.dataframe(over_df, use_container_width=True, hide_index=True)
+
+        st.button(
+            f"Exclude these {len(over)} feature(s) from the selection",
+            on_click=_exclude_high_missing_features, args=(list(over.index), miss_thr, over.to_dict()),
+        )
 
 # ── Data summary table ────────────────────────────────────────────────────
 st.markdown("---")
@@ -689,14 +971,56 @@ if include_extra_assoc:
 st.divider()
 st.subheader("Step 3 — ComBat configuration and run")
 
+# ── Missing-value handling ──────────────────────────────────────────────────
+_feat_na = df[list(feature_cols)].isna()
+if bool(_feat_na.any().any()):
+    _cov_ok = df[[site_col] + continuous_covariates + categorical_covariates].notna().all(axis=1)
+    _cc_all = int((~_feat_na.any(axis=1) & _cov_ok).sum())
+    st.warning(
+        f"Your selected features contain missing values, and the pattern looks "
+        f"scattered. With strict complete-case harmonization a participant must be "
+        f"complete across every feature in a run, which would keep only {_cc_all} "
+        f"of {len(df)} participants. Choose how to handle missing values below. "
+        f"Median imputation and pattern grouping keep Empirical Bayes; the "
+        f"per-feature option runs without it."
+    )
+
+_MISS_OPTS = {
+    "Complete case (drop participants missing any feature in a run)": "complete",
+    "Impute missing with median, keep Empirical Bayes":              "impute",
+    "Group features by shared missing pattern, keep Empirical Bayes": "pattern",
+    "Per-feature, feature-wise (no Empirical Bayes)":                "per_feature",
+}
+missing_mode_label = st.selectbox(
+    "Missing-value handling", list(_MISS_OPTS.keys()), index=0, key="missing_mode",
+    help="Complete case drops any participant missing a feature in the run. "
+         "Median imputation fills missing values with each feature's median, "
+         "harmonizes with Empirical Bayes, then restores the missing cells to "
+         "blank. Pattern grouping harmonizes together the features that are "
+         "missing in the same participants, keeping Empirical Bayes within each "
+         "group. Per-feature harmonizes each feature on its own complete cases, "
+         "without Empirical Bayes.",
+)
+missing_mode = _MISS_OPTS[missing_mode_label]
+per_feature = (missing_mode == "per_feature")
+
 eb_options = {
     "EB=TRUE  (Empirical Bayes, recommended)":    ("ebt_only",  True,  False),
     "EB=FALSE  (feature-wise, no EB shrinkage)":  ("ebf_only",  False, True),
     "Compare EB=TRUE vs EB=FALSE":                ("compare",   True,  True),
 }
 eb_label = st.radio("ComBat configuration", list(eb_options.keys()),
-                    horizontal=True, index=0)
+                    horizontal=True, index=0, disabled=per_feature)
 eb_mode, run_ebt, run_ebf = eb_options[eb_label]
+if per_feature:
+    st.caption("Per-feature mode runs feature-wise, so the Empirical Bayes "
+               "setting above does not apply.")
+    run_ebt, run_ebf = False, True
+elif run_ebf and missing_mode in ("impute", "pattern"):
+    st.caption("This missing-value handling matters for the EB=TRUE estimates, "
+               "because Empirical Bayes pools across features. Under EB=FALSE "
+               "(feature-wise) there is no pooling, so it has little effect on "
+               "those estimates.")
 
 if st.button("▶  Run Harmonization", type="primary", use_container_width=True):
 
@@ -711,19 +1035,41 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
         # ── Harmonize ──────────────────────────────────────────────────────
         harm_ebt, harm_ebf = None, None
 
+        def _harmonize(eb):
+            if missing_mode == "impute":
+                return run_combat_with_imputation(
+                    df_harm, feature_cols, site_col,
+                    continuous_covariates=continuous_covariates,
+                    categorical_covariates=categorical_covariates,
+                    eb=eb, groups=modality_groups)
+            if missing_mode == "pattern":
+                return run_combat_by_missing_pattern(
+                    df_harm, feature_cols, site_col,
+                    continuous_covariates=continuous_covariates,
+                    categorical_covariates=categorical_covariates, eb=eb)
+            if missing_mode == "per_feature":
+                return run_combat_per_feature(
+                    df_harm, feature_cols, site_col,
+                    continuous_covariates=continuous_covariates,
+                    categorical_covariates=categorical_covariates)
+            if modality_groups:
+                return run_combat_grouped(
+                    df_harm, modality_groups, site_col,
+                    continuous_covariates=continuous_covariates,
+                    categorical_covariates=categorical_covariates, eb=eb)
+            return run_combat(
+                df_harm, feature_cols, site_col,
+                continuous_covariates=continuous_covariates,
+                categorical_covariates=categorical_covariates, eb=eb)
+
         if run_ebt:
             progress.progress(5, "Running ComBat (EB=TRUE)...")
-            harm_ebt = run_combat(df_harm, feature_cols, site_col,
-                                   continuous_covariates=continuous_covariates,
-                                   categorical_covariates=categorical_covariates,
-                                   eb=True)
+            harm_ebt = _harmonize(True)
 
         if run_ebf:
-            progress.progress(20, "Running ComBat (EB=FALSE)...")
-            harm_ebf = run_combat(df_harm, feature_cols, site_col,
-                                   continuous_covariates=continuous_covariates,
-                                   categorical_covariates=categorical_covariates,
-                                   eb=False)
+            progress.progress(20, "Running per-feature ComBat..." if per_feature
+                              else "Running ComBat (EB=FALSE)...")
+            harm_ebf = _harmonize(False)
 
         # primary result for site deviation (before panel always uses raw)
         harm_primary = harm_ebt if harm_ebt is not None else harm_ebf
@@ -803,6 +1149,10 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
 
         fig_icc = plot_icc(icc_all) if len(icc_all) > 0 else None
 
+        fig_icc_ci = None
+        if run_ebf and icc_ebt is not None and icc_ebf is not None:
+            fig_icc_ci = plot_icc_ci_compare(icc_ebt, icc_ebf)
+
         fig_age = None
         if include_age_corr and len(age_all) > 0:
             fig_age = plot_age_correlations(age_all)
@@ -826,9 +1176,27 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
         progress.progress(94, "Building report...")
         demo_df    = demographic_summary(df_harm, site_col, age_col, sex_col)
         n_retained = len(harm_primary) if harm_primary is not None else 0
+        # missing-data documentation for the report
+        _fm   = df_harm[feature_cols].isna()
+        _fpct = _fm.mean() * 100
+        _k    = int((_fpct > 0).sum())
+        missing_summary = {
+            "k":     _k,
+            "min":   round(float(_fpct[_fpct > 0].min()), 1) if _k else 0.0,
+            "max":   round(float(_fpct.max()), 1),
+            "total": int(_fm.sum().sum()),
+        } if _k else None
+        excl_info = st.session_state.get("_excl_info")
+        excl_feat_list = st.session_state.get("_excl_feat_list", [])
         html_report = generate_report(
             df_raw=df, site_col=site_col, age_col=age_col, sex_col=sex_col,
             feature_cols=feature_cols, n_retained=n_retained,
+            modality_groups=modality_groups,
+            missing_handling=missing_mode,
+            missing_summary=missing_summary,
+            excl_info=excl_info,
+            excl_feat_list=excl_feat_list,
+            fig_icc_ci=fig_icc_ci,
             run_ebf=(run_ebf and harm_ebf is not None),
             demo_df=demo_df,
             dev_before=dev_before, dev_ebt=dev_ebt, dev_ebf=dev_ebf,

@@ -64,9 +64,9 @@ def plot_site_deviation(
             fig.add_trace(go.Box(
                 y=sub, name=site_label(site), legendgroup=site,
                 showlegend=False,
-                marker_color=color, line_color=color,
+                marker_color=color, line_color="black",
                 boxpoints="all", jitter=0.4, pointpos=0,
-                marker=dict(size=5, opacity=0.55),
+                marker=dict(size=5, opacity=0.55, color=color),
                 fillcolor="rgba(255,255,255,0.5)",
             ), row=1, col=col_idx)
 
@@ -220,7 +220,9 @@ def plot_age_correlations(age_df: pd.DataFrame) -> go.Figure:
         if len(merged) == 0:
             continue
 
-        color = colors_map.get(cond, BLUE)
+        # single consistent colour for "significant after only" so the legend
+        # (built from the first panel only) matches the markers in every panel
+        color = AFTER_EBT
         show  = col_i == 1
 
         # Four mutually exclusive categories — each with a distinct color AND shape
@@ -365,15 +367,18 @@ def plot_cohens_f(anc_before: pd.DataFrame, anc_ebt: pd.DataFrame,
         showlegend=False,
         xaxis_range=[0, max_val],
         yaxis_range=[0, max_val],
-        margin=dict(r=70, b=190),
+        margin=dict(r=70, b=70),
     )
     return fig
 
 
 def _add_cohens_f_grid_legend(fig, red, green, has_ebf=False):
     """
-    Draw a 2 x 2 contingency legend below the plot. Each cell holds the actual
-    marker a feature of that type carries, so a point can be read directly:
+    Draw the 2 x 2 contingency legend in the upper-right corner of the plot,
+    over a light background box (that region is usually empty because
+    harmonization moves points toward the lower-left). Each cell holds the
+    actual marker a feature of that type carries, so a point can be read
+    directly:
       rows    = before harmonization (p < 0.05 / p >= 0.05)  -> fill
       columns = after  harmonization (p < 0.05 / p >= 0.05)  -> colour
     """
@@ -383,29 +388,38 @@ def _add_cohens_f_grid_legend(fig, red, green, has_ebf=False):
                                                       family="Arial"),
                            xanchor=xanchor, yanchor="middle")
 
-    cx1, cx2 = 0.55, 0.74           # column x-positions (after p<0.05 / p>=0.05)
-    r1, r2   = -0.30, -0.38          # row y-positions   (before p<0.05 / p>=0.05)
+    y_bottom = 0.585 if has_ebf else 0.66
+    fig.add_shape(type="rect", xref="paper", yref="paper",
+                  x0=0.58, x1=0.995, y0=y_bottom, y1=0.995,
+                  fillcolor="rgba(255,255,255,0.90)", line=dict(color="#cccccc", width=1),
+                  layer="above")
+
+    cx1, cx2 = 0.83, 0.945          # column x-positions (after p<0.05 / p>=0.05)
+    r1, r2   = 0.84, 0.75           # row y-positions   (before p<0.05 / p>=0.05)
 
     # column header (after harmonization)
-    ann((cx1 + cx2) / 2, -0.20, "<b>After harmonization</b>", size=11, color="#111")
-    ann(cx1, -0.245, "p &lt; 0.05",   size=10, color="#444")
-    ann(cx2, -0.245, "p &#8805; 0.05", size=10, color="#444")
+    ann((cx1 + cx2) / 2, 0.965, "<b>After harmonization</b>", size=9, color="#111")
+    ann(cx1, 0.905, "p &lt; 0.05",   size=8, color="#444")
+    ann(cx2, 0.905, "p &#8805; 0.05", size=8, color="#444")
 
     # row header (before harmonization)
-    ann(0.30, (r1 + r2) / 2, "<b>Before<br>harmonization</b>", size=11,
-        color="#111", xanchor="right")
-    ann(0.42, r1, "p &lt; 0.05",   size=10, color="#444", xanchor="right")
-    ann(0.42, r2, "p &#8805; 0.05", size=10, color="#444", xanchor="right")
+    ann(0.60, (r1 + r2) / 2, "<b>Before<br>harmonization</b>", size=9,
+        color="#111", xanchor="left")
+    ann(0.775, r1, "p &lt; 0.05",   size=8, color="#444", xanchor="right")
+    ann(0.775, r2, "p &#8805; 0.05", size=8, color="#444", xanchor="right")
 
     # cells: exactly the marker a feature of that type carries
-    ann(cx1, r1, "&#9679;", size=22, color=red)     # filled red   = sig before & after
-    ann(cx2, r1, "&#9679;", size=22, color=green)   # filled green = sig before, ns after
-    ann(cx1, r2, "&#9675;", size=22, color=red)     # open red     = ns before, sig after
-    ann(cx2, r2, "&#9675;", size=22, color=green)   # open green   = ns before & after
+    ann(cx1, r1, "&#9679;", size=18, color=red)     # filled red   = sig before & after
+    ann(cx2, r1, "&#9679;", size=18, color=green)   # filled green = sig before, ns after
+    ann(cx1, r2, "&#9675;", size=18, color=red)     # open red     = ns before, sig after
+    ann(cx2, r2, "&#9675;", size=18, color=green)   # open green   = ns before & after
 
     if has_ebf:
-        ann(0.52, r2 - 0.055, "Circles = EB=TRUE  |  diamonds = EB=FALSE",
-            size=9, color="#777")
+        y_s = 0.64
+        ann(0.63, y_s, "&#9679;", size=13, color="#333")
+        ann(0.655, y_s, "EB=TRUE",  size=8, color="#444", xanchor="left")
+        ann(0.80, y_s, "&#9670;", size=13, color="#333")
+        ann(0.825, y_s, "EB=FALSE", size=8, color="#444", xanchor="left")
 
 
 # ---------------------------------------------------------------------------
@@ -432,7 +446,16 @@ def plot_icc_by_site(
 ) -> go.Figure:
     """
     site_n: dict mapping site name -> participant count, used for x-axis labels.
+    Points are colored by ICC3 threshold category (Koo & Li 2016).
+    Hover shows the brain ROI (feature) name and ICC3 value.
     """
+    CAT_BINS = [
+        ("Poor (< 0.50)",        "#E74C3C", -np.inf, 0.50),
+        ("Moderate (0.50-0.75)", "#E67E22",  0.50,   0.75),
+        ("Good (0.75-0.90)",     "#2980B9",  0.75,   0.90),
+        ("Excellent (>= 0.90)",  "#27AE60",  0.90,   np.inf),
+    ]
+
     datasets = []
     if icc_by_site_ebt is not None and len(icc_by_site_ebt) > 0:
         datasets.append((icc_by_site_ebt, "EB=TRUE", AFTER_EBT))
@@ -443,64 +466,128 @@ def plot_icc_by_site(
     titles   = [d[1] for d in datasets]
     fig = make_subplots(rows=1, cols=n_panels, subplot_titles=titles, shared_yaxes=True)
 
-    sites = sorted(set().union(*[set(d[0]["site"].unique()) for d in datasets if len(d[0]) > 0]))
-    site_palette_local = px.colors.qualitative.Safe[:len(sites)]
-    site_color = dict(zip(sites, site_palette_local))
+    sites    = sorted(set().union(*[set(d[0]["site"].unique()) for d in datasets if len(d[0]) > 0]))
+    site_pos = {s: i for i, s in enumerate(sites)}
+
+    # When there are many sites, long batch labels overlap. Above a threshold we
+    # number the sites 1..N on the x-axis and print a key mapping numbers to
+    # batch names below the figure. Otherwise labels are shown in full, angled
+    # 45 degrees, with the font size shrinking as the number of sites grows.
+    n_sites     = len(sites)
+    use_numbers = n_sites > 12
+    tick_size   = max(7, 11 - max(0, n_sites - 10) // 3)
 
     def _site_label(s):
         if site_n and s in site_n:
             return f"{s}<br>(n={site_n[s]})"
         return s
 
+    rng          = np.random.default_rng(42)
+    legend_shown = set()
+
     for col_i, (df_s, label, _) in enumerate(datasets, start=1):
+        # Box traces (distribution shape only, no individual points)
         for site in sites:
-            sub = df_s[df_s["site"] == site]["icc3"].dropna()
-            if len(sub) == 0:
+            sd = df_s[df_s["site"] == site][["icc3", "feature"]].dropna(subset=["icc3"])
+            if len(sd) == 0:
                 continue
+            xpos = site_pos[site]
             fig.add_trace(go.Box(
-                y=sub, name=_site_label(site), legendgroup=site,
-                showlegend=(col_i == 1),
-                marker_color=site_color.get(site, "#888"),
-                line_color=site_color.get(site, "#888"),
-                boxpoints="all", jitter=0.35, pointpos=0,
-                marker=dict(size=4, opacity=0.55),
-                fillcolor="rgba(255,255,255,0.5)",
-                hovertemplate=f"<b>{site}</b><br>ICC: %{{y:.3f}}<extra></extra>",
+                x=[xpos] * len(sd),
+                y=sd["icc3"].values,
+                name=_site_label(site),
+                showlegend=False,
+                boxpoints=False,
+                line_color="black",
+                line_width=1.0,
+                fillcolor="rgba(200,200,200,0.15)",
+                width=0.45,
+                hoverinfo="skip",
             ), row=1, col=col_i)
 
-        # boundary lines
-        for yval, lbl in [(0.50, ""), (0.75, ""), (0.90, "")]:
-            fig.add_hline(y=yval, line_dash="solid", line_color=GREY,
-                          opacity=0.40, line_width=0.8, row=1, col=col_i)
+        # Scatter traces: one per ICC category, colored by category
+        for cat_name, cat_color, lo, hi in CAT_BINS:
+            x_all, y_all, text_all = [], [], []
+            for site in sites:
+                sd = df_s[df_s["site"] == site][["icc3", "feature"]].dropna(subset=["icc3"])
+                mask = (sd["icc3"] >= lo) & (sd["icc3"] < hi)
+                cd   = sd[mask]
+                if len(cd) == 0:
+                    continue
+                n      = len(cd)
+                jitter = rng.uniform(-0.12, 0.12, n)
+                x_all.extend([site_pos[site] + j for j in jitter])
+                y_all.extend(cd["icc3"].values)
+                text_all.extend([
+                    f"<b>{feat}</b><br>ICC3: {icc:.3f}<br>Site: {site}"
+                    for feat, icc in zip(cd["feature"].values, cd["icc3"].values)
+                ])
 
-    # band shapes on all subplots
-    for shape in _icc_band_shapes():
-        fig.add_shape(**shape)
+            if not x_all:
+                continue
 
-    # interval labels (right of plot)
-    for ymid, lbl, col in [
-        (0.25,  "Poor",      "rgba(170,40,40,0.70)"),
-        (0.625, "Moderate",  "rgba(170,100,20,0.70)"),
-        (0.825, "Good",      "rgba(40,120,40,0.70)"),
-        (0.99,  "Excellent", "rgba(20,80,20,0.70)"),
-    ]:
-        fig.add_annotation(
-            x=1.01, y=ymid, xref="paper", yref="y",
-            text=f"<b>{lbl}</b>", showarrow=False,
-            xanchor="left", font=dict(size=8, color=col, family="Arial"),
+            show = cat_name not in legend_shown
+            if show:
+                legend_shown.add(cat_name)
+
+            fig.add_trace(go.Scatter(
+                x=x_all, y=y_all,
+                mode="markers",
+                name=cat_name,
+                legendgroup=cat_name,
+                showlegend=show,
+                marker=dict(
+                    color=cat_color, size=6, opacity=0.85,
+                    line=dict(color="rgba(0,0,0,0.15)", width=0.5),
+                ),
+                text=text_all,
+                hovertemplate="%{text}<extra></extra>",
+            ), row=1, col=col_i)
+
+        # Threshold dashed lines
+        for yval in [0.50, 0.75, 0.90]:
+            fig.add_hline(y=yval, line_dash="dash", line_color=GREY,
+                          opacity=0.45, line_width=0.8, row=1, col=col_i)
+
+        # x-axis: numeric positions mapped to site labels (or 1..N numbers)
+        fig.update_xaxes(
+            tickmode="array",
+            tickvals=list(range(len(sites))),
+            ticktext=([str(i + 1) for i in range(n_sites)] if use_numbers
+                      else [_site_label(s) for s in sites]),
+            tickangle=0 if use_numbers else 45,
+            tickfont=dict(size=tick_size),
+            row=1, col=col_i,
         )
 
+    # Site key when the sites are numbered
+    n_key_lines = 0
+    if use_numbers:
+        parts = [
+            f"{i + 1} = {s}" + (f" (n={site_n[s]})" if site_n and s in site_n else "")
+            for i, s in enumerate(sites)
+        ]
+        per_line = 2
+        key_lines = ["      ".join(parts[k:k + per_line]) for k in range(0, len(parts), per_line)]
+        n_key_lines = len(key_lines)
+        fig.add_annotation(
+            xref="paper", yref="paper", x=0, y=-0.12, xanchor="left", yanchor="top",
+            text="<b>Site key</b><br>" + "<br>".join(key_lines),
+            showarrow=False, align="left", font=dict(size=8, color="black"),
+        )
+
+    legend_y = -0.16 - 0.035 * n_key_lines
+    bottom   = (110 + 15 * n_key_lines) if use_numbers else 150
     fig.update_yaxes(title_text="ICC3", range=[0, 1.08], row=1, col=1)
-    fig.update_xaxes(tickangle=45)
     fig.update_layout(
-        title="Within-site consistency by site: ICC3 — Koo & Li (2016)",
-        height=500, **WHITE_BG,
-        margin=dict(r=80, b=120),
+        title="Within-site consistency by site: ICC3 - Koo & Li (2016)",
+        height=500 + (12 * n_key_lines if use_numbers else 0), **WHITE_BG,
+        margin=dict(r=40, b=bottom),
         legend=dict(
             orientation="h",
-            yanchor="top", y=-0.25,
+            yanchor="top", y=legend_y,
             xanchor="center", x=0.5,
-            title_text="Site",
+            title_text="ICC3 category",
         ),
     )
     return fig
@@ -654,5 +741,61 @@ def plot_extra_associations(assoc_df: pd.DataFrame) -> go.Figure | None:
         height=490, **WHITE_BG,
         legend=dict(orientation="h", yanchor="top", y=-0.18, xanchor="center", x=0.5),
         margin=dict(b=100),
+    )
+    return fig
+
+
+def plot_icc_ci_compare(icc_ebt, icc_ebf):
+    """
+    ICC(C,1) 95% confidence intervals per feature for EB=TRUE vs EB=FALSE, drawn
+    as coloured vertical segments side by side so their overlap is visible.
+    Features are sorted by the EB=TRUE ICC so the plot reads as two ordered
+    bands; where the two coloured segments overlap in height, the confidence
+    intervals overlap.
+    """
+    if (icc_ebt is None or icc_ebf is None
+            or len(icc_ebt) == 0 or len(icc_ebf) == 0):
+        return None
+    need = {"feature", "icc3", "icc3_lower", "icc3_upper"}
+    if not need.issubset(icc_ebt.columns) or not need.issubset(icc_ebf.columns):
+        return None
+    m = icc_ebt.merge(icc_ebf, on="feature", suffixes=("_t", "_f"))
+    if len(m) == 0:
+        return None
+    m = m.sort_values("icc3_t").reset_index(drop=True)
+    x = np.arange(len(m))
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=x - 0.2, y=m["icc3_t"],
+        error_y=dict(type="data", symmetric=False,
+                     array=m["icc3_upper_t"] - m["icc3_t"],
+                     arrayminus=m["icc3_t"] - m["icc3_lower_t"],
+                     color=AFTER_EBT, thickness=1.1, width=0),
+        mode="markers", marker=dict(color=AFTER_EBT, size=3),
+        name="EB=TRUE", text=m["feature"],
+        hovertemplate="<b>%{text}</b><br>EB=TRUE ICC: %{y:.3f}<extra></extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=x + 0.2, y=m["icc3_f"],
+        error_y=dict(type="data", symmetric=False,
+                     array=m["icc3_upper_f"] - m["icc3_f"],
+                     arrayminus=m["icc3_f"] - m["icc3_lower_f"],
+                     color=AFTER_EBF, thickness=1.1, width=0),
+        mode="markers", marker=dict(color=AFTER_EBF, size=3),
+        name="EB=FALSE", text=m["feature"],
+        hovertemplate="<b>%{text}</b><br>EB=FALSE ICC: %{y:.3f}<extra></extra>",
+    ))
+    for yval in [0.50, 0.75, 0.90]:
+        fig.add_hline(y=yval, line_dash="dash", line_color=GREY, opacity=0.4, line_width=0.8)
+    fig.update_layout(
+        title="ICC(C,1) 95% confidence intervals: EB=TRUE vs EB=FALSE (per feature)",
+        xaxis_title="feature (sorted by EB=TRUE ICC)",
+        yaxis_title="ICC3",
+        height=520, **WHITE_BG,
+        xaxis=dict(showticklabels=False),
+        yaxis=dict(range=[0, 1.05]),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
+        margin=dict(b=60, r=40),
     )
     return fig

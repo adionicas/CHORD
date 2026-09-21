@@ -121,6 +121,60 @@ def _demo_table(df):
     return _df_table(df, float_fmt=2)
 
 
+def _excl_feat_block(excl_feat_list, multimodal):
+    """Excluded-feature block for the report. When the run is multimodal, the
+    excluded ROIs are grouped by measure / modality (one row per measure, the
+    ROI list in a single cell). Otherwise a simple list is rendered."""
+    if not excl_feat_list:
+        return ""
+    d = pd.DataFrame(excl_feat_list)
+    name_col = "Feature" if "Feature" in d.columns else d.columns[0]
+    if multimodal:
+        def _measure(c):
+            if "." in c:
+                return c.rsplit(".", 1)[1]
+            if "_" in c:
+                return c.split("_", 1)[0] + "_"
+            return "(unknown)"
+        d = d.copy()
+        d["Measure / modality"] = d[name_col].astype(str).map(_measure)
+        rows = []
+        for meas, g in d.groupby("Measure / modality"):
+            rows.append({
+                "Measure / modality":       meas,
+                "n excluded":               len(g),
+                "Excluded ROIs (features)": ", ".join(g[name_col].astype(str).tolist()),
+            })
+        return _df_table(pd.DataFrame(rows))
+    items = "".join(
+        f'<li>{r.get("Feature", "")} ({r.get("Missing (%)", "?")}% missing)</li>'
+        for r in excl_feat_list
+    )
+    return f'<ul style="margin:4px 0 0 18px;columns:2;font-size:10pt">{items}</ul>'
+
+
+def _comparison_table(icc_ebt, icc_ebf, anc_ebt, anc_ebf, spm_ebt, spm_ebf):
+    """Side-by-side after-harmonization comparison: EB=TRUE vs EB=FALSE, one row per feature."""
+    frames = {}
+    if icc_ebt is not None and len(icc_ebt) > 0:
+        frames["ICC3 (EB=TRUE)"] = icc_ebt.set_index("feature")["icc3"]
+    if icc_ebf is not None and len(icc_ebf) > 0:
+        frames["ICC3 (EB=FALSE)"] = icc_ebf.set_index("feature")["icc3"]
+    if anc_ebt is not None and len(anc_ebt) > 0:
+        frames["Cohen's f after (EB=TRUE)"] = anc_ebt.set_index("feature")["cohens_f"]
+    if anc_ebf is not None and len(anc_ebf) > 0:
+        frames["Cohen's f after (EB=FALSE)"] = anc_ebf.set_index("feature")["cohens_f"]
+    if spm_ebt is not None and len(spm_ebt) > 0:
+        frames["Spearman r (EB=TRUE)"] = spm_ebt.set_index("feature")["spearman_r"]
+    if spm_ebf is not None and len(spm_ebf) > 0:
+        frames["Spearman r (EB=FALSE)"] = spm_ebf.set_index("feature")["spearman_r"]
+    if not frames:
+        return "<p><em>No data.</em></p>"
+    result = pd.DataFrame(frames)
+    result.index.name = "Feature"
+    return _df_table(result.reset_index())
+
+
 def _summary_table(icc_df, spm_df, anc_before, anc_after, label):
     frames = []
     if icc_df is not None and len(icc_df) > 0:
@@ -228,7 +282,8 @@ TEMPLATE = """<!DOCTYPE html>
   <b>{{ n_sites }}</b> sites ({{ site_list }}).
   A total of <b>{{ n_features }}</b> imaging features were submitted for harmonization.
   {% if n_retained != n_participants %}
-  After excluding participants with missing values in the batch variable or any covariate,
+  After excluding participants with missing values in the batch variable or any covariate
+  (n = {{ n_participants - n_retained }}),
   <b>{{ n_retained }}</b> participants were retained for harmonization.
   {% endif %}
   The batch variable was <em>{{ site_col }}</em>; covariates preserved during
@@ -241,6 +296,16 @@ TEMPLATE = """<!DOCTYPE html>
   <em>Note.</em> Age is reported as mean (standard deviation).
   Sex distribution reports the number and percentage of female participants.
 </p>
+
+{% if excl_feat_table %}
+<p class="table-title">Table S1a. Features excluded due to missingness.</p>
+{{ excl_feat_table }}
+<p class="table-note">
+  <em>Note.</em> Features listed above were removed from the analysis before harmonization
+  because their missing rate exceeded the user-specified threshold.
+  Missing (%) is computed across all uploaded participants.
+</p>
+{% endif %}
 
 <h3>S1.1 Imaging features</h3>
 <p>
@@ -281,12 +346,67 @@ TEMPLATE = """<!DOCTYPE html>
 </p>
 
 <p>
-  Prior to harmonization, features were examined for missing data.
-  Only participants with complete observations in the batch variable,
-  all covariates, and at least one feature within a given modality group
-  were included in the harmonization for that modality.
-  Features were harmonized independently per modality group using
-  participants with non-missing values for that group.
+  {% if excl_info and excl_info.n > 0 %}
+  Before harmonization, {{ excl_info.n }} feature{{ 's' if excl_info.n != 1 else '' }}
+  with a missing rate above {{ excl_info.threshold }}% {{ 'were' if excl_info.n != 1 else 'was' }}
+  excluded, leaving {{ n_features }} features for harmonization
+  (see Table S1a for the list of excluded features and their missing rates).
+  {% endif %}
+  {% if missing_summary and missing_summary.k > 0 %}
+  Of the {{ n_features }} harmonized features, {{ missing_summary.k }} contained
+  missing values (per-feature missing rate {{ missing_summary.min }}% to
+  {{ missing_summary.max }}%, {{ missing_summary.total }} missing cells in total).
+  {% endif %}
+  Prior to harmonization, features were examined for missing data. neuroCombat
+  requires a complete feature matrix, so a participant was entered into a given
+  ComBat run only when the batch variable, the covariates, and the relevant
+  feature columns were all observed.
+  {% if missing_handling == 'per_feature' %}
+  Because the features contained scattered missing data, each feature was
+  harmonized independently on its own complete cases, using only the
+  participants for whom that feature and the batch and covariates were observed.
+  Each run therefore contained a single feature and was performed feature-wise,
+  without Empirical Bayes pooling across features [<a href="#ref3">3</a>], so
+  that requiring completeness across a whole block would not remove participants
+  who were missing other features. The harmonized features were recombined per
+  participant into a single table.
+  {% elif missing_handling == 'impute' %}
+  Because the features contained scattered missing data, missing values were
+  imputed with each feature's median before harmonization so that all
+  participants could enter the model and Empirical Bayes could pool information
+  across features [<a href="#ref1">1</a>]. After harmonization, the originally
+  missing cells were restored to missing so that imputed values were not
+  reported.
+  {% elif missing_handling == 'pattern' %}
+  Because the features contained scattered missing data, features were grouped
+  by their shared pattern of missing participants and each group was harmonized
+  in its own ComBat run. Features that are missing in the same participants are
+  complete on the same participants, so Empirical Bayes could pool information
+  across the features within a group [<a href="#ref1">1</a>], while retaining
+  every participant for the features they had. The harmonized groups were
+  recombined per participant into a single table.
+  {% elif modality_on %}
+  Because the submitted features span multiple modalities or measure types that
+  do not necessarily share a common distribution or numeric scale, harmonization
+  was applied separately to each measure type. The Empirical Bayes step pools
+  information across features to estimate each site's location and scale
+  parameters, which assumes the pooled features are comparably distributed;
+  separating measures into their own runs keeps the pooled features exchangeable
+  and avoids distorting the Empirical Bayes priors [<a href="#ref1">1</a>]. The
+  {{ n_features }} features were harmonized in {{ modality_n_groups }} separate
+  runs ({{ modality_group_desc }}), each using the participants with complete
+  data for that group, and the harmonized blocks were recombined per participant.
+  {% else %}
+  All selected features were harmonized together in a single ComBat run, using
+  the participants with complete data across the batch variable, the covariates,
+  and every selected feature.
+  {% endif %}
+  {% if run_ebf and missing_handling in ['impute', 'pattern'] %}
+  Empirical Bayes pools information across features only under EB=TRUE, so this
+  handling of missing values is consequential mainly for the EB=TRUE results.
+  Under EB=FALSE, ComBat adjusts each feature independently, so the missing-value
+  handling has little effect on those estimates.
+  {% endif %}
 </p>
 
 <!-- ─────────────────────────────────────── S3 ──────────────────────────── -->
@@ -544,6 +664,27 @@ TEMPLATE = """<!DOCTYPE html>
 <p class="table-note">
   <em>Note.</em> See Table S2 note for metric descriptions.
 </p>
+
+<p class="table-title">Table S4. After-harmonization metrics: EB=TRUE vs EB=FALSE side-by-side.</p>
+{{ table_compare }}
+<p class="table-note">
+  <em>Note.</em> Each row is one feature. Paired columns allow direct comparison of the two ComBat configurations.
+  ICC3 = intraclass correlation coefficient (two-way mixed effects, consistency; higher is better).
+  Cohen's <em>f</em> after = post-harmonization site effect size (lower is better).
+  Spearman <em>r</em> = rank correlation between raw and harmonized values (higher is better).
+</p>
+
+{% if fig_icc_ci %}
+<p class="fig-title">Figure S4a. ICC(C,1) 95% confidence intervals: EB=TRUE vs EB=FALSE.</p>
+<div class="fig-wrap">{{ fig_icc_ci }}</div>
+<p class="fig-note">
+  <em>Note.</em> Each feature contributes two coloured segments, the 95% confidence
+  interval of its ICC(C,1) under EB=TRUE and under EB=FALSE, drawn side by side.
+  Features are ordered by their EB=TRUE ICC. Where the two segments overlap in
+  height, the confidence intervals overlap, indicating the two configurations do
+  not differ meaningfully for that feature.
+</p>
+{% endif %}
 {% endif %}
 
 <!-- ─────────────────────────────────────── Refs ────────────────────────── -->
@@ -732,6 +873,12 @@ def generate_report(
     fig_extra_assoc=None,
     assoc_cont_vars=None,
     assoc_cat_vars=None,
+    modality_groups=None,
+    missing_handling="complete",
+    missing_summary=None,
+    excl_info=None,
+    excl_feat_list=None,
+    fig_icc_ci=None,
 ) -> str:
 
     sites = sorted(df_raw[site_col].dropna().unique().astype(str))
@@ -752,6 +899,13 @@ def generate_report(
             return "N/A"
         return f"{100 * num / den:.1f}"
 
+    if modality_groups:
+        modality_group_desc = "; ".join(
+            f"{g}: {len(cols)} features" for g, cols in modality_groups.items()
+        )
+    else:
+        modality_group_desc = ""
+
     tmpl = Template(TEMPLATE)
     html = tmpl.render(
         date            = datetime.now().strftime("%Y-%m-%d %H:%M"),
@@ -760,6 +914,13 @@ def generate_report(
         site_list       = ", ".join(sites),
         n_features      = len(feature_cols),
         n_retained      = n_retained,
+        modality_on         = bool(modality_groups),
+        modality_n_groups   = len(modality_groups) if modality_groups else 0,
+        modality_group_desc = modality_group_desc,
+        missing_handling    = missing_handling,
+        missing_summary     = missing_summary,
+        excl_info           = excl_info,
+        excl_feat_table     = _excl_feat_block(excl_feat_list, bool(modality_groups)),
         site_col           = site_col,
         age_col            = age_col,
         sex_col            = sex_col,
@@ -793,6 +954,8 @@ def generate_report(
         fig_extra_assoc = (_fig_html(fig_extra_assoc) if fig_extra_assoc is not None else ""),
         table_ebt       = _summary_table(icc_ebt, spm_ebt, anc_before, anc_ebt, "EB=TRUE"),
         table_ebf       = _summary_table(icc_ebf, spm_ebf, anc_before, anc_ebf, "EB=FALSE") if run_ebf else "",
+        table_compare   = _comparison_table(icc_ebt, icc_ebf, anc_ebt, anc_ebf, spm_ebt, spm_ebf) if run_ebf else "",
+        fig_icc_ci      = (_fig_html(fig_icc_ci) if fig_icc_ci is not None else ""),
         pct             = pct,
     )
     return html
