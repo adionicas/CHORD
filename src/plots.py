@@ -52,7 +52,11 @@ def plot_site_deviation(
     sites    = sorted(dev_before["site"].unique())
     site_pos = {s: i for i, s in enumerate(sites)}
     n_sites  = len(sites)
-    use_numbers = n_sites > 12
+    # Use numbered "Batch N" labels plus a key when there are many batches OR when
+    # any batch name is long enough to crowd the axis; short-named, few-batch
+    # datasets keep their full names on the axis.
+    _max_name_len = max((len(str(s)) for s in sites), default=0)
+    use_numbers = n_sites > 12 or _max_name_len > 16
     tick_size   = max(7, 11 - max(0, n_sites - 10) // 3)
 
     def _full_label(s):
@@ -810,6 +814,10 @@ def plot_single_association(assoc_df: pd.DataFrame, variable: str) -> go.Figure 
 
     vtype   = sub_all["var_type"].iloc[0]
     eff_lbl = "Pearson r" if vtype == "continuous" else "Cohen's f"
+    # linear-model statistic surfaced in the hover, per variable type
+    lm_col  = "beta" if vtype == "continuous" else "eta_sq"
+    lm_name = ("Linear-model coefficient (after)" if vtype == "continuous"
+               else "Partial eta squared (after)")
     colors_map = {"After (EB=TRUE)": AFTER_EBT, "After (EB=FALSE)": AFTER_EBF}
     PURPLE = "#6A0DAD"
 
@@ -821,11 +829,17 @@ def plot_single_association(assoc_df: pd.DataFrame, variable: str) -> go.Figure 
         color = colors_map.get(cond, BLUE)
         b = before_df[["feature", "effect_size", "sig_fdr"]].rename(
             columns={"effect_size": "eff_b", "sig_fdr": "sig_b"})
-        a = sub_all[sub_all["harmonization"] == cond][["feature", "effect_size", "sig_fdr"]].rename(
-            columns={"effect_size": "eff_a", "sig_fdr": "sig_a"})
+        _after = sub_all[sub_all["harmonization"] == cond]
+        a_cols = ["feature", "effect_size", "sig_fdr"]
+        if "p_fdr" in _after.columns:
+            a_cols.append("p_fdr")
+        if lm_col in _after.columns:
+            a_cols.append(lm_col)
+        a = _after[a_cols].rename(columns={"effect_size": "eff_a", "sig_fdr": "sig_a"})
         merged = b.merge(a, on="feature")
         if len(merged) == 0:
             continue
+        _has_lm = (lm_col in merged.columns) and ("p_fdr" in merged.columns)
 
         ns      = merged[~merged["sig_b"] & ~merged["sig_a"]]
         new_sig = merged[~merged["sig_b"] &  merged["sig_a"]]
@@ -840,13 +854,21 @@ def plot_single_association(assoc_df: pd.DataFrame, variable: str) -> go.Figure 
         ]:
             if len(grp) == 0:
                 continue
+            if _has_lm:
+                cdata = grp[[lm_col, "p_fdr"]].to_numpy()
+                htmpl = ("<b>%{text}</b><br>Before: %{x:.3f}<br>After: %{y:.3f}<br>"
+                         + lm_name + ": %{customdata[0]:.3f}<br>"
+                         "FDR-corrected p (after): %{customdata[1]:.3g}<extra></extra>")
+            else:
+                cdata = None
+                htmpl = "<b>%{text}</b><br>Before: %{x:.3f}<br>After: %{y:.3f}<extra></extra>"
             fig.add_trace(go.Scatter(
                 x=grp["eff_b"], y=grp["eff_a"],
                 mode="markers", name=lbl, legendgroup=lbl, showlegend=False,
                 marker=dict(color=mc, symbol=sym, size=sz, opacity=op,
                             line=dict(color="white", width=0.8)),
-                text=grp["feature"],
-                hovertemplate="<b>%{text}</b><br>Before: %{x:.3f}<br>After: %{y:.3f}<extra></extra>",
+                text=grp["feature"], customdata=cdata,
+                hovertemplate=htmpl,
             ), row=1, col=col_i)
 
         vals = pd.concat([merged["eff_b"], merged["eff_a"]]).dropna()

@@ -1235,18 +1235,24 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
             anc_ebt    = ancova_site_effect(harm_ebt, feature_cols, site_col, age_col, sex_col, "EB=TRUE")  if harm_ebt is not None else None
             anc_ebf    = ancova_site_effect(harm_ebf, feature_cols, site_col, age_col, sex_col, "EB=FALSE") if harm_ebf is not None else None
 
-        # Per-variable associations for the results tabs. The evaluated set is
-        # every covariate preserved in the ComBat model (Age, Sex, and any extra
-        # covariates) plus any additional variables selected, so age and sex are
-        # shown in the same grammar as every other variable. Each variable's model
-        # controls for the remaining preserved covariates (excluding itself).
+        # Per-variable associations for the results tabs. Each checkbox controls
+        # only its own tabs: the preserved-covariate toggle contributes Age, Sex,
+        # and any extra covariates; the additional-variable toggle contributes the
+        # variables selected below. Each variable's model controls for the
+        # remaining preserved covariates (excluding itself). A column is evaluated
+        # under a single type: if it appears in both lists, the continuous
+        # assignment wins, so a variable is never plotted twice.
         assoc_unified_df = pd.DataFrame()
         _feat_set  = set(feature_cols)
-        eval_cont  = [c for c in dict.fromkeys(continuous_covariates + assoc_cont_vars)
+        _cont_src  = ((continuous_covariates if include_age_corr else [])
+                      + (assoc_cont_vars if include_extra_assoc else []))
+        _cat_src   = ((categorical_covariates if include_age_corr else [])
+                      + (assoc_cat_vars if include_extra_assoc else []))
+        eval_cont  = [c for c in dict.fromkeys(_cont_src)
                       if c in df.columns and c not in _feat_set]
-        eval_cat   = [c for c in dict.fromkeys(categorical_covariates + assoc_cat_vars)
-                      if c in df.columns and c not in _feat_set]
-        if (include_age_corr or include_extra_assoc) and (eval_cont or eval_cat):
+        eval_cat   = [c for c in dict.fromkeys(_cat_src)
+                      if c in df.columns and c not in _feat_set and c not in set(eval_cont)]
+        if eval_cont or eval_cat:
             progress.progress(82, "Computing per-variable associations...")
             u_parts = [compute_extra_associations(
                 df_harm, feature_cols, eval_cont, eval_cat,
