@@ -261,6 +261,20 @@ def run_combat_per_feature(
     return combined
 
 
+def missing_pattern_groups(df: pd.DataFrame, feature_cols: list) -> dict:
+    """
+    Group feature columns by the participants they are missing in.
+
+    Returns a dict mapping "pattern_1", "pattern_2", ... to lists of feature
+    columns; the features with no missing values share one pattern.
+    """
+    groups = {}
+    for f in feature_cols:
+        key = tuple(np.flatnonzero(df[f].isna().to_numpy()).tolist())
+        groups.setdefault(key, []).append(f)
+    return {f"pattern_{i + 1}": cols for i, cols in enumerate(groups.values())}
+
+
 def run_combat_by_missing_pattern(
     df: pd.DataFrame,
     feature_cols: list,
@@ -279,18 +293,14 @@ def run_combat_by_missing_pattern(
     single group harmonized on all participants. This keeps Empirical Bayes
     wherever a pattern is shared by two or more features, and retains each
     participant for every feature they actually have. Features whose pattern is
-    unique run on their own (Empirical Bayes then has nothing to pool).
+    unique run on their own, feature-wise, because Empirical Bayes needs at
+    least two features to pool (see run_combat).
 
     Returns a frame over the union of participants retained by any group, with
     each feature harmonized for its own complete cases and NaN elsewhere.
     """
-    groups = {}
-    for f in feature_cols:
-        key = tuple(np.flatnonzero(df[f].isna().to_numpy()).tolist())
-        groups.setdefault(key, []).append(f)
-    named = {f"pattern_{i + 1}": cols for i, (k, cols) in enumerate(groups.items())}
     return run_combat_grouped(
-        df, named, site_col,
+        df, missing_pattern_groups(df, feature_cols), site_col,
         continuous_covariates=continuous_covariates,
         categorical_covariates=categorical_covariates,
         eb=eb,

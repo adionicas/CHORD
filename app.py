@@ -8,7 +8,8 @@ import pandas as pd
 import numpy as np
 
 from src.harmonize import (run_combat, run_combat_grouped, run_combat_per_feature,
-                           run_combat_by_missing_pattern, run_combat_with_imputation)
+                           run_combat_by_missing_pattern, run_combat_with_imputation,
+                           missing_pattern_groups)
 from src.metrics   import (site_mean_deviation, spearman_raw_vs_harm,
                             compute_icc, age_correlations, ancova_site_effect,
                             demographic_summary,
@@ -1083,8 +1084,10 @@ if bool(_feat_na.any().any()):
         f"scattered. With strict complete-case harmonization a participant must be "
         f"complete across every feature in a run, which would keep only {_cc_all} "
         f"of {len(df)} participants. Choose how to handle missing values below. "
-        f"Median imputation and pattern grouping keep Empirical Bayes; the "
-        f"per-feature option runs without it."
+        f"For scattered missing data, pattern grouping keeps every observed value "
+        f"and keeps Empirical Bayes; median imputation also keeps Empirical Bayes "
+        f"but suits data with few missing values; the per-feature option runs "
+        f"without Empirical Bayes."
     )
 
 _MISS_OPTS = {
@@ -1098,10 +1101,15 @@ missing_mode_label = st.selectbox(
     help="Complete case drops any participant missing a feature in the run. "
          "Median imputation fills missing values with each feature's median, "
          "harmonizes with Empirical Bayes, then restores the missing cells to "
-         "blank. Pattern grouping harmonizes together the features that are "
-         "missing in the same participants, keeping Empirical Bayes within each "
-         "group. Per-feature harmonizes each feature on its own complete cases, "
-         "without Empirical Bayes.",
+         "blank; it suits data with few missing values, because many filled-in "
+         "medians pull the batches toward each other and can under-correct the "
+         "batch effects. Pattern grouping harmonizes together the features that "
+         "are missing in the same participants, keeping Empirical Bayes within "
+         "each group; it suits scattered missing data. A feature whose missing "
+         "pattern no other feature shares is harmonized on its own, without "
+         "Empirical Bayes, which needs at least two features. Per-feature "
+         "harmonizes each feature on its own complete cases, without Empirical "
+         "Bayes.",
 )
 missing_mode = _MISS_OPTS[missing_mode_label]
 per_feature = (missing_mode == "per_feature")
@@ -1195,6 +1203,21 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
 
         # primary result for site deviation (before panel always uses raw)
         harm_primary = harm_ebt if harm_ebt is not None else harm_ebf
+
+        # Features harmonized in a run of their own although EB=TRUE was asked:
+        # Empirical Bayes needs at least two features, so run_combat runs them
+        # feature-wise. Features left blank in a harmonized table are reported too.
+        no_eb_features = []
+        if harm_ebt is not None:
+            if missing_mode == "pattern":
+                _runs = missing_pattern_groups(df_harm, feature_cols).values()
+            elif modality_groups:
+                _runs = modality_groups.values()
+            else:
+                _runs = [feature_cols]
+            no_eb_features = [cols[0] for cols in _runs if len(cols) == 1]
+        blank_features = [f for f in feature_cols
+                          if any(h is not None and h[f].isna().all() for h in (harm_ebt, harm_ebf))]
 
         # ── Metrics ────────────────────────────────────────────────────────
         progress.progress(33, "Computing batch deviation...")
@@ -1328,8 +1351,23 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
 
         # ── Report ─────────────────────────────────────────────────────────
         progress.progress(94, "Building report...")
-        demo_df    = demographic_summary(df_harm, site_col, age_col, sex_col)
         n_retained = len(harm_primary) if harm_primary is not None else 0
+        # Table S1 describes the participants retained for harmonization
+        demo_df    = demographic_summary(
+            df_harm.loc[harm_primary.index] if harm_primary is not None else df_harm,
+            site_col, age_col, sex_col)
+        # why participants were not harmonized (the counts add up to the total)
+        _cov_cols  = continuous_covariates + categorical_covariates
+        _no_batch  = df_harm[site_col].isna()
+        _no_cov    = (~_no_batch & df_harm[_cov_cols].isna().any(axis=1)) if _cov_cols \
+                     else pd.Series(False, index=df_harm.index)
+        excl_counts = {
+            "batch_excluded": len(df) - len(df_harm),
+            "batch_missing":  int(_no_batch.sum()),
+            "cov_missing":    int(_no_cov.sum()),
+        }
+        excl_counts["features"] = (len(df) - n_retained - excl_counts["batch_excluded"]
+                                   - excl_counts["batch_missing"] - excl_counts["cov_missing"])
         # missing-data documentation for the report
         _fm   = df_harm[feature_cols].isna()
         _fpct = _fm.mean() * 100
@@ -1350,6 +1388,9 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
             missing_summary=missing_summary,
             excl_info=excl_info,
             excl_feat_list=excl_feat_list,
+            excl_counts=excl_counts,
+            no_eb_features=no_eb_features,
+            blank_features=blank_features,
             fig_icc_ci=fig_icc_ci,
             run_ebf=(run_ebf and harm_ebf is not None),
             demo_df=demo_df,
@@ -1360,8 +1401,8 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
             age_df=age_all,
             fig_site_dev=fig_site, fig_icc=fig_icc, fig_icc_site=fig_icc_site,
             fig_spearman=None, fig_age=fig_age, fig_cohens_f=fig_anc,
-            extra_continuous=continuous_covariates,
-            extra_categorical=categorical_covariates,
+            extra_continuous=extra_continuous,
+            extra_categorical=extra_categorical,
             include_age=include_age_corr,
             include_cohens_f=include_cohens_f,
             include_icc_by_site=include_icc_by_site,
@@ -1377,8 +1418,8 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
             site_col=site_col, age_col=age_col, sex_col=sex_col,
             run_ebf=(run_ebf and harm_ebf is not None),
             github_url=GITHUB_URL,
-            extra_continuous=continuous_covariates,
-            extra_categorical=categorical_covariates,
+            extra_continuous=extra_continuous,
+            extra_categorical=extra_categorical,
             include_age=include_age_corr,
             include_cohens_f=include_cohens_f,
             include_icc_by_site=include_icc_by_site,
@@ -1412,6 +1453,8 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
             extra_assoc_df=extra_assoc_df,
             assoc_unified_df=assoc_unified_df,
             site_n_complete=site_n_complete,
+            no_eb_features=no_eb_features,
+            blank_features=blank_features,
         ))
 
     except Exception as e:
@@ -1426,6 +1469,20 @@ if st.session_state.get("results_ready"):
 
     st.divider()
     st.subheader("Results")
+
+    _blank = st.session_state.get("blank_features") or []
+    if _blank:
+        st.warning(
+            f"{len(_blank)} feature(s) could not be harmonized and are blank in the "
+            f"harmonized table: {', '.join(_blank)}. The report lists them too."
+        )
+    _no_eb = st.session_state.get("no_eb_features") or []
+    if _no_eb:
+        st.info(
+            f"{len(_no_eb)} feature(s) were harmonized in a run of their own, so "
+            f"without Empirical Bayes, which needs at least two features: "
+            f"{', '.join(_no_eb)}. The report lists them too."
+        )
 
     icc_ebt = st.session_state.get("icc_ebt")
     icc_ebf = st.session_state.get("icc_ebf")

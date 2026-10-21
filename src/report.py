@@ -359,8 +359,13 @@ TEMPLATE = """<!DOCTYPE html>
   <b>{{ n_sites }}</b> batches ({{ site_list }}).
   A total of <b>{{ n_features }}</b> imaging features were submitted for harmonization.
   {% if n_retained != n_participants %}
+  {% if excl_reasons %}
+  After excluding {{ n_participants - n_retained }} participants
+  ({{ excl_reasons | join("; ") }}),
+  {% else %}
   After excluding participants with missing values in the batch variable or any covariate
   (n = {{ n_participants - n_retained }}),
+  {% endif %}
   <b>{{ n_retained }}</b> participants were retained for harmonization.
   {% endif %}
   The batch variable was <em>{{ site_col }}</em>; covariates preserved during
@@ -370,7 +375,8 @@ TEMPLATE = """<!DOCTYPE html>
 <p class="table-title">Table S1. Sample characteristics by batch.</p>
 {{ demo_table }}
 <p class="table-note">
-  <em>Note.</em> Age is reported as mean (standard deviation).
+  <em>Note.</em> The table describes the {{ n_retained }} participants retained for harmonization.
+  Age is reported as mean (standard deviation).
   Sex distribution reports the number and percentage of female participants.
 </p>
 
@@ -477,6 +483,20 @@ TEMPLATE = """<!DOCTYPE html>
   All selected features were harmonized together in a single ComBat run, using
   the participants with complete data across the batch variable, the covariates,
   and every selected feature.
+  {% endif %}
+  {% if no_eb_features %}
+  Empirical Bayes pools information across the features of a run and needs at least
+  two of them, so the {{ no_eb_features | length }}
+  feature{{ 's' if no_eb_features | length != 1 else '' }} harmonized in a run of
+  {{ 'their' if no_eb_features | length != 1 else 'its' }} own
+  {% if missing_handling == 'pattern' %}(a missing pattern shared with no other feature){% endif %}
+  {{ 'were' if no_eb_features | length != 1 else 'was' }} harmonized feature-wise,
+  as under EB=FALSE: {{ no_eb_features | join(", ") }}.
+  {% endif %}
+  {% if blank_features %}
+  {{ blank_features | length }} feature{{ 's' if blank_features | length != 1 else '' }}
+  could not be harmonized and {{ 'are' if blank_features | length != 1 else 'is' }}
+  blank in the harmonized table: {{ blank_features | join(", ") }}.
   {% endif %}
   {% if run_ebf and missing_handling in ['impute', 'pattern'] %}
   Empirical Bayes pools information across features only under EB=TRUE, so this
@@ -920,6 +940,9 @@ def generate_report(
     missing_summary=None,
     excl_info=None,
     excl_feat_list=None,
+    excl_counts=None,
+    no_eb_features=None,
+    blank_features=None,
     fig_icc_ci=None,
 ) -> str:
 
@@ -948,6 +971,18 @@ def generate_report(
     else:
         modality_group_desc = ""
 
+    # why participants were not harmonized, one phrase per reason
+    excl_reasons = []
+    if excl_counts:
+        _feat_reason = ("missing at least one selected feature" if missing_handling == "complete"
+                        else "with no observed feature values")
+        for key, label in [("batch_excluded", "in batches excluded from the analysis"),
+                           ("batch_missing",  "missing the batch variable"),
+                           ("cov_missing",    "missing a covariate"),
+                           ("features",       _feat_reason)]:
+            if excl_counts.get(key):
+                excl_reasons.append(f"n = {excl_counts[key]} {label}")
+
     tmpl = Template(TEMPLATE)
     html = tmpl.render(
         date            = datetime.now().strftime("%Y-%m-%d %H:%M"),
@@ -963,6 +998,9 @@ def generate_report(
         missing_summary     = missing_summary,
         excl_info           = excl_info,
         excl_feat_table     = _excl_feat_block(excl_feat_list, bool(modality_groups)),
+        excl_reasons        = excl_reasons,
+        no_eb_features      = no_eb_features or [],
+        blank_features      = blank_features or [],
         site_col           = site_col,
         age_col            = age_col,
         sex_col            = sex_col,
