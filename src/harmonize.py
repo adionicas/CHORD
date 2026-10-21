@@ -67,6 +67,13 @@ def run_combat(
     if missing:
         raise KeyError(f"Columns not found in the uploaded data: {missing}")
 
+    # Empirical Bayes pools the batch estimates across features. With a single
+    # feature there is nothing to pool, and neuroCombat then returns an all-NaN
+    # column without an error (its prior variances use ddof=1), so a run with
+    # one feature is always feature-wise.
+    if eb and len(feature_cols) < 2:
+        eb = False
+
     # Rows must be complete on the columns ComBat actually uses (site,
     # covariates, and features). ALL other columns, including subject IDs and
     # any additional metadata, are carried through unchanged so the harmonized
