@@ -308,8 +308,10 @@ if "sel_features" not in st.session_state or \
 
 st.markdown(f"**Step 2b — Select feature columns to harmonize** ({len(auto_features)} numeric columns available)")
 
-# ── Option 1: Range by column name (primary) ──────────────────────────────
-st.markdown("**Option 1 — Select a range**")
+# ── Range of feature columns (the main way to select) ──────────────────────
+st.markdown("**Choose the first and last feature column**")
+st.caption("Every column from the first to the last is selected. You can then remove "
+           "columns by keyword, or edit the list of selected features further down.")
 use_col_num = st.session_state.get("range_use_col_num", False)
 
 if not use_col_num:
@@ -356,58 +358,58 @@ else:
 st.checkbox("Use column numbers instead of names", value=False, key="range_use_col_num",
             help="Check this if column names are not informative enough to use as range boundaries")
 
-# ── Option 2: Exclude by keyword ──────────────────────────────────────────
-st.markdown("**Option 2 — Exclude columns whose name contains a keyword**")
-ex_c1, ex_c2 = st.columns([4, 2])
-with ex_c1:
-    excl_input = st.text_input(
-        "Exclude keyword(s)",
-        placeholder='e.g.  unassigned   or   unassigned, reward, LIM',
-        label_visibility="collapsed",
-    )
-with ex_c2:
-    st.markdown("<br>", unsafe_allow_html=True)
-    if st.button("Exclude matching", use_container_width=True):
-        if excl_input.strip():
-            keywords = [k.strip().lower() for k in excl_input.split(",") if k.strip()]
-            before   = st.session_state.get("sel_features", [])
-            kept     = [c for c in before
-                        if not any(kw in c.lower() for kw in keywords)]
-            removed  = len(before) - len(kept)
-            st.session_state["sel_features"] = kept
-            st.rerun()
-if excl_input.strip():
-    import re as _re2
-    keywords     = [k.strip().lower() for k in excl_input.split(",") if k.strip()]
-    would_remove = [c for c in st.session_state.get("sel_features", [])
-                    if any(kw in c.lower() for kw in keywords)]
+# ── Optional: exclude by keyword ───────────────────────────────────────────
+if st.toggle("Exclude columns whose name contains a keyword", key="use_keyword_exclusion"):
+    ex_c1, ex_c2 = st.columns([4, 2])
+    with ex_c1:
+        excl_input = st.text_input(
+            "Exclude keyword(s)", key="excl_keywords",
+            placeholder='e.g.  unassigned   or   unassigned, reward, LIM',
+            label_visibility="collapsed",
+        )
+    with ex_c2:
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("Exclude matching", use_container_width=True):
+            if excl_input.strip():
+                keywords = [k.strip().lower() for k in excl_input.split(",") if k.strip()]
+                before   = st.session_state.get("sel_features", [])
+                kept     = [c for c in before
+                            if not any(kw in c.lower() for kw in keywords)]
+                removed  = len(before) - len(kept)
+                st.session_state["sel_features"] = kept
+                st.rerun()
+    if excl_input.strip():
+        import re as _re2
+        keywords     = [k.strip().lower() for k in excl_input.split(",") if k.strip()]
+        would_remove = [c for c in st.session_state.get("sel_features", [])
+                        if any(kw in c.lower() for kw in keywords)]
 
-    def _highlight(name, kws):
-        """Wrap each matching keyword in the column name with a yellow highlight."""
-        result = name
-        for kw in kws:
-            pattern = _re2.compile(_re2.escape(kw), _re2.IGNORECASE)
-            result  = pattern.sub(
-                lambda m: f'<mark style="background:#FFD700;padding:0 2px;'
-                          f'border-radius:2px;font-weight:bold">{m.group()}</mark>',
-                result,
-            )
-        return result
-
-    if would_remove:
-        st.warning(f"**{len(would_remove)} column{'s' if len(would_remove) > 1 else ''} "
-                   f"match{'es' if len(would_remove) == 1 else ''} and would be removed:**")
-        rm_rows = [would_remove[i:i+3] for i in range(0, len(would_remove), 3)]
-        for row in rm_rows:
-            grid = st.columns(3)
-            for j, name in enumerate(row):
-                highlighted = _highlight(name, keywords)
-                grid[j].markdown(
-                    f'<span style="font-family:monospace;font-size:0.88em">{highlighted}</span>',
-                    unsafe_allow_html=True,
+        def _highlight(name, kws):
+            """Wrap each matching keyword in the column name with a yellow highlight."""
+            result = name
+            for kw in kws:
+                pattern = _re2.compile(_re2.escape(kw), _re2.IGNORECASE)
+                result  = pattern.sub(
+                    lambda m: f'<mark style="background:#FFD700;padding:0 2px;'
+                              f'border-radius:2px;font-weight:bold">{m.group()}</mark>',
+                    result,
                 )
-    else:
-        st.caption("No currently selected columns match that keyword.")
+            return result
+
+        if would_remove:
+            st.warning(f"**{len(would_remove)} column{'s' if len(would_remove) > 1 else ''} "
+                       f"match{'es' if len(would_remove) == 1 else ''} and would be removed:**")
+            rm_rows = [would_remove[i:i+3] for i in range(0, len(would_remove), 3)]
+            for row in rm_rows:
+                grid = st.columns(3)
+                for j, name in enumerate(row):
+                    highlighted = _highlight(name, keywords)
+                    grid[j].markdown(
+                        f'<span style="font-family:monospace;font-size:0.88em">{highlighted}</span>',
+                        unsafe_allow_html=True,
+                    )
+        else:
+            st.caption("No currently selected columns match that keyword.")
 
 # ── Final review multiselect ───────────────────────────────────────────────
 n_sel = len(st.session_state.get("sel_features", []))
@@ -420,7 +422,8 @@ feature_cols = st.multiselect(
 )
 
 if not feature_cols:
-    st.info("No features selected yet. Use one of the options above to select features.")
+    st.info("No features selected yet. Choose the first and last feature column above, "
+            "or pick features in the list.")
     st.stop()
 
 # ── Full name preview ──────────────────────────────────────────────────────
