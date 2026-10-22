@@ -9,6 +9,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 
+from src.naming    import measure_keys
 from src.harmonize import (run_combat, run_combat_grouped, run_combat_per_feature,
                            run_combat_by_missing_pattern, run_combat_with_imputation,
                            missing_pattern_groups)
@@ -114,8 +115,26 @@ if df is None:
     st.stop()
 
 st.success(f"Data loaded: **{df.shape[0]} participants** × **{df.shape[1]} columns**")
-with st.expander("Preview data"):
-    st.dataframe(df.head(8), use_container_width=True)
+with st.expander("Preview data", expanded=True):
+    _whole = st.toggle("Show the whole table", key="preview_whole_table")
+    if not _whole:
+        st.dataframe(df.head(8), use_container_width=True)
+        st.caption(f"First 8 of {len(df)} rows. Switch on \"Show the whole table\" to scroll through all of it.")
+    else:
+        _col_filter = st.text_input(
+            "Only the columns whose name contains (optional)", key="preview_col_filter",
+            placeholder="for example FA_ or Left-Amygdala")
+        _cols = ([c for c in df.columns if _col_filter.lower() in str(c).lower()]
+                 if _col_filter else list(df.columns))
+        # keep the page fast: at most about 300,000 cells at a time
+        _k = max(1, 300_000 // max(len(df), 1))
+        _shown = _cols[:_k]
+        st.dataframe(df[_shown], use_container_width=True, height=520)
+        if len(_shown) < len(_cols):
+            st.caption(f"{len(df)} rows; showing the first {len(_shown)} of {len(_cols)} columns, "
+                       "because the table is large. Type part of a column name above to see other columns.")
+        else:
+            st.caption(f"{len(df)} rows x {len(_shown)} columns.")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP 2 — Configure
@@ -437,28 +456,21 @@ st.caption(
 
 
 def _suggest_modality_tokens(cols):
-    """Propose candidate grouping tokens from the selected feature names.
+    """Suggested grouping tokens, one per guessed measure, in column order
+    (see src/naming.py); the user checks and edits them."""
+    return list(dict.fromkeys(measure_keys(cols).values()))
 
-    First tries the text after the last '.' (common for surface / measure
-    naming such as ``L_S_central.meandepth_native``); if that partitions every
-    column, those suffixes are suggested. Otherwise falls back to the prefix
-    before the first '_'.
-    """
-    suff = {}
-    for c in cols:
-        if "." in c:
-            key = c.rsplit(".", 1)[1]
-            suff[key] = suff.get(key, 0) + 1
-    if len(suff) >= 2 and sum(suff.values()) == len(cols):
-        return sorted(suff)
-    pref = {}
-    for c in cols:
-        if "_" in c:
-            key = c.split("_", 1)[0] + "_"
-            pref[key] = pref.get(key, 0) + 1
-    if len(pref) >= 2:
-        return sorted(pref)
-    return sorted(suff)
+
+def _token_matches(token, cols):
+    """Columns a grouping token selects: a token ending in "_" (a prefix such
+    as FA_) selects the names that start with it, when there are any; any
+    other token selects the names that contain it."""
+    t = token.lower()
+    if t.endswith("_"):
+        starts = [c for c in cols if c.lower().startswith(t)]
+        if starts:
+            return starts
+    return [c for c in cols if t in c.lower()]
 
 
 modality_groups = None
@@ -472,9 +484,10 @@ if use_modality:
     st.markdown(
         "Define one group per modality or measure type using a text token that "
         "appears in that group's column names (for example a suffix such as "
-        "`meandepth_native`, or a prefix such as `FA_`). Enter one token per line. "
+        "`meandepth_native` or `t1w_t2w_mean`, or a prefix such as `FA_`, which "
+        "selects the names that start with it). Enter one token per line. "
         "Each selected feature is assigned to the first group whose token it "
-        "contains."
+        "matches. A group should be one measure, not a brain region."
     )
     if st.button("Suggest groups from column names"):
         st.session_state["modality_tokens_text"] = "\n".join(
@@ -491,12 +504,26 @@ if use_modality:
     if tokens:
         groups, assigned = {}, set()
         for t in tokens:
-            matched = [c for c in feature_cols
-                       if t.lower() in c.lower() and c not in assigned]
+            matched = [c for c in _token_matches(t, feature_cols) if c not in assigned]
             if matched:
                 groups[t] = matched
                 assigned.update(matched)
         unassigned = [c for c in feature_cols if c not in assigned]
+
+        st.caption(
+            "Suggested groups are guesses from the column names, and naming differs "
+            "between datasets: check that each group is one measure (for example FA, "
+            "cortical thickness or a T1w/T2w ratio) and edit the list if not."
+        )
+        _small = {g: c for g, c in groups.items() if len(c) <= 2}
+        if _small:
+            st.warning(
+                f"{len(_small)} group(s) have only one or two columns: "
+                + "; ".join(f"{g} ({', '.join(c)})" for g, c in _small.items())
+                + ". Such a small group is often a brain region or a single summary "
+                "value rather than a measure. Check it; a one-column group is "
+                "harmonized without Empirical Bayes, which needs at least two features."
+            )
 
         if groups:
             preview = pd.DataFrame([
@@ -559,7 +586,7 @@ def _matrix_figure(data_key, rows_key, site_col, covariate_cols, feats, groups, 
         missing_only=missing_only, title=title)
 
 
-def _show_matrix_preview(rows_df, rows_key, feats, title, marked=None):
+def _show_matrix_preview(rows_df, rows_key, feats, title, marked=None, missing_only=None):
     covs = [c for c in [age_col, sex_col] + extra_continuous + extra_categorical
             if c and c in rows_df.columns]
     groups = tuple((g, tuple(c)) for g, c in modality_groups.items()) if modality_groups else None
@@ -567,7 +594,8 @@ def _show_matrix_preview(rows_df, rows_key, feats, title, marked=None):
         fig, note = _matrix_figure(
             data_key, rows_key, site_col, tuple(covs), tuple(feats), groups,
             (marked[0], tuple(marked[1])) if marked else None,
-            bool(st.session_state.get("preview_missing_only", False)), title, rows_df)
+            bool(st.session_state.get("preview_missing_only", False)) if missing_only is None
+            else missing_only, title, rows_df)
         st.plotly_chart(fig, use_container_width=True)
         if note:
             st.caption(note)
@@ -623,6 +651,10 @@ else:
 
 st.markdown("**Missingness in the imaging features**")
 if st.button("Assess missing values"):
+    st.session_state["_miss_assess_on"] = True   # stays open until hidden
+if st.session_state.get("_miss_assess_on"):
+    st.button("Hide the missing-value assessment",
+              on_click=lambda: st.session_state.update(_miss_assess_on=False))
     try:
         assess_cols = [c for c in [age_col, sex_col] + extra_continuous + extra_categorical
                        if c in df.columns] + list(feature_cols)
@@ -639,6 +671,9 @@ if st.button("Assess missing values"):
         mc3.metric("Feature columns with missing", f"{n_cols_with_missing} / {len(feature_cols)}")
         mc4.metric("Missing feature cells", f"{total_missing_cells:,}")
 
+        # missing values at a glance, as vis_miss in the R package naniar
+        _show_matrix_preview(df, "all", feature_cols, "Missing values", missing_only=True)
+
         _cov_set = set([age_col, sex_col] + extra_continuous + extra_categorical)
         def _grp_of(c):
             if c in _cov_set:
@@ -647,12 +682,9 @@ if st.button("Assess missing values"):
                 for g, gcols in modality_groups.items():
                     if c in gcols:
                         return g
-            if "." in c:
-                return c.rsplit(".", 1)[1]
-            if "_" in c:
-                return c.split("_", 1)[0] + "_"
-            return "(feature)"
+            return _guessed_measure.get(c, "(feature)")
 
+        _guessed_measure = measure_keys([c for c in assess_cols if c not in _cov_set])
         miss_df = pd.DataFrame({
             "Variable":      assess_cols,
             "Measure group": [_grp_of(c) for c in assess_cols],
@@ -710,16 +742,13 @@ def _undo_all_exclusions():
 # are gone, but this record does not).
 _excluded_so_far = st.session_state.get("_excl_feat_list", [])
 if _excluded_so_far:
+    _excl_guess = measure_keys(list(feature_cols) + [d["Feature"] for d in _excluded_so_far])
     def _grp_excl(c):
         if modality_groups:
             for g, gcols in modality_groups.items():
                 if c in gcols:
                     return g
-        if "." in c:
-            return c.rsplit(".", 1)[1]
-        if "_" in c:
-            return c.split("_", 1)[0] + "_"
-        return "(feature)"
+        return _excl_guess.get(c, "(feature)")
     _ex_df = pd.DataFrame(_excluded_so_far)
     _ex_df["Measure group"] = _ex_df["Feature"].map(_grp_excl)
     _ex_df = _ex_df[["Feature", "Measure group", "Missing (%)"]]
@@ -747,13 +776,7 @@ else:
         if modality_groups:
             col_to_measure = {c: g for g, cols in modality_groups.items() for c in cols}
         else:
-            def _measure_of(c):
-                if "." in c:
-                    return c.rsplit(".", 1)[1]
-                if "_" in c:
-                    return c.split("_", 1)[0] + "_"
-                return "(unknown)"
-            col_to_measure = {c: _measure_of(c) for c in feature_cols}
+            col_to_measure = measure_keys(feature_cols)
 
         measures = {}
         for c in feature_cols:

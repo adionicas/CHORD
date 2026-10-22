@@ -1077,7 +1077,10 @@ def plot_data_matrix(
     reduced = len(row_blocks) < len(d) or len(col_blocks) < len(cols)
 
     def _label(a, b):
-        return cols[a] if b - a == 1 else f"{cols[a]} to {cols[b - 1]} ({b - a} columns)"
+        name = cols[a] if b - a == 1 else f"{cols[a]} to {cols[b - 1]} ({b - a} columns)"
+        if missing_only:  # as in vis_miss: the percentage missing next to each column
+            name += f" ({100 * miss[:, a:b].mean():.1f}%)" if miss.size else ""
+        return name
     x_labels = [_label(a, b) for a, b in col_blocks]
 
     if missing_only:
@@ -1167,7 +1170,10 @@ def plot_data_matrix(
                                    yanchor="bottom", font=dict(size=9, color=color))
             x0 = x1
 
-    what = "missing values in black, present in grey" if missing_only else "z-scored per column, missing in black"
+    what = (f"missing values in black ({100 * miss.mean():.1f}% of cells), present in grey"
+            if missing_only and miss.size else
+            "missing values in black, present in grey" if missing_only else
+            "z-scored per column, missing in black")
     fig.update_layout(
         title=dict(text=f"{title}: {len(d)} participants x {len(feats)} features"
                         f"{f' + {len(cov)} covariates' if cov else ''} (sorted by batch; {what})",
