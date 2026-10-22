@@ -4,6 +4,8 @@ Plotly figures for all harmonization evaluation metrics.
 All figures have white background and are returned as plotly Figure objects.
 """
 
+import warnings
+
 import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
@@ -971,3 +973,224 @@ def plot_icc_ci_compare(icc_ebt, icc_ebf):
         margin=dict(b=60, r=40),
     )
     return fig
+
+
+# ---------------------------------------------------------------------------
+# Data matrix preview (carpet plot)
+# ---------------------------------------------------------------------------
+def _proportional_blocks(sizes, max_total):
+    """
+    Split consecutive groups of the given sizes into display blocks, at most
+    about max_total blocks in all, never crossing a group boundary. Each group
+    gets a share of blocks proportional to its size (at least one). Returns a
+    list of (start, end, group index) over the concatenated groups.
+    """
+    total = int(sum(sizes))
+    blocks, start = [], 0
+    for gi, size in enumerate(sizes):
+        size = int(size)
+        if size == 0:
+            continue
+        k = size if total <= max_total else max(1, min(size, round(size * max_total / total)))
+        edges = np.linspace(0, size, k + 1).round().astype(int)
+        for a, b in zip(edges[:-1], edges[1:]):
+            if b > a:
+                blocks.append((start + a, start + b, gi))
+        start += size
+    return blocks
+
+
+def plot_data_matrix(
+    df: pd.DataFrame,
+    site_col: str,
+    covariate_cols: list,
+    feature_cols: list,
+    modality_groups: dict | None = None,
+    marked_block: tuple | None = None,
+    missing_only: bool = False,
+    title: str = "Data matrix",
+    max_rows: int = 600,
+    max_cols: int = 300,
+):
+    """
+    Carpet plot of the data: one row per participant, sorted by batch, with a
+    batch colour strip on the left; covariates first, then the features.
+
+    Normal view: each column z-scored, missing values in black. Missing-only
+    view: missing in black, present in light grey (as in the R package naniar).
+
+    Large tables are drawn at reduced resolution, in blocks that never cross a
+    batch or a modality boundary: in the normal view a block shows its middle
+    participant and feature, in the missing-only view the share of missing
+    values in the block, so no missing value is hidden.
+
+    marked_block = (label, columns) places those feature columns last, under a
+    labelled band (used to show the features excluded for missingness).
+
+    Returns (figure, note); note is "" or says how the matrix was reduced.
+    """
+    marked_label, marked_cols = marked_block if marked_block else (None, [])
+    marked_cols = [c for c in marked_cols if c in df.columns]
+    marked_set = set(marked_cols)
+    main_feats = [c for c in feature_cols if c not in marked_set]
+
+    # feature groups, in display order: modality groups, then any feature in
+    # no group, then the marked block
+    groups = []
+    if modality_groups:
+        placed = set()
+        for g, gcols in modality_groups.items():
+            cols_g = [c for c in gcols if c in main_feats and c not in placed]
+            placed.update(cols_g)
+            if cols_g:
+                groups.append((g, cols_g))
+        rest = [c for c in main_feats if c not in placed]
+        if rest:
+            groups.append(("Not in a group", rest))
+    elif main_feats:
+        groups.append((None, main_feats))
+    if marked_cols:
+        groups.append((marked_label, marked_cols))
+    feats = [c for _, cols_g in groups for c in cols_g]
+    cov = [c for c in covariate_cols if c in df.columns and c not in set(feats)]
+    cols = cov + feats
+
+    d = df[[site_col] + cols].copy()
+    n_no_batch = int(d[site_col].isna().sum())
+    d = d[d[site_col].notna()]
+    for c in cols:  # categorical columns become numbers so they can be drawn
+        if not pd.api.types.is_numeric_dtype(d[c]):
+            uniq = sorted(d[c].dropna().astype(str).unique())
+            d[c] = d[c].astype(str).map({v: i for i, v in enumerate(uniq)}).where(d[c].notna())
+    d = d.sort_values(site_col, kind="stable").reset_index(drop=True)
+    sites = d[site_col].astype(str).to_numpy()
+    site_order = list(dict.fromkeys(sites))
+    site_n = {s: int((sites == s).sum()) for s in site_order}
+    mat = d[cols].to_numpy(dtype=float)
+    miss = np.isnan(mat)
+
+    # display blocks: rows within batches, columns within groups
+    row_blocks = [(a, b) for a, b, _ in _proportional_blocks([site_n[s] for s in site_order], max_rows)]
+    feat_blocks = _proportional_blocks([len(c) for _, c in groups], max(1, max_cols - len(cov)))
+    col_blocks = [(i, i + 1) for i in range(len(cov))] + [(len(cov) + a, len(cov) + b) for a, b, _ in feat_blocks]
+    blocks_per_group = [sum(1 for *_, g in feat_blocks if g == gi) for gi in range(len(groups))]
+    reduced = len(row_blocks) < len(d) or len(col_blocks) < len(cols)
+
+    def _label(a, b):
+        return cols[a] if b - a == 1 else f"{cols[a]} to {cols[b - 1]} ({b - a} columns)"
+    x_labels = [_label(a, b) for a, b in col_blocks]
+
+    if missing_only:
+        rs = np.array([a for a, _ in row_blocks])
+        cs = np.array([a for a, _ in col_blocks])
+        counts = np.add.reduceat(np.add.reduceat(miss.astype(float), rs, axis=0), cs, axis=1)
+        sizes = np.outer([b - a for a, b in row_blocks], [b - a for a, b in col_blocks])
+        zz = np.round(counts / sizes, 3)
+        main = go.Heatmap(
+            z=zz, x=x_labels, zmin=0, zmax=1,
+            colorscale=[[0, "#DDDDDD"], [1, "black"]],
+            showscale=reduced,
+            colorbar=dict(title="share<br>missing", thickness=12, x=1.01),
+            hovertemplate=("Column: %{x}<br>" + ("share missing: %{z:.2f}" if reduced else "missing: %{z:.0f}")
+                           + "<extra></extra>"),
+        )
+    else:
+        with warnings.catch_warnings(), np.errstate(all="ignore"):
+            warnings.simplefilter("ignore", category=RuntimeWarning)  # all-missing columns
+            mu = np.nanmean(mat, axis=0)
+            sd = np.nanstd(mat, axis=0)
+        sd[~np.isfinite(sd) | (sd == 0)] = 1
+        z = (mat - mu) / sd
+        rmid = [(a + b - 1) // 2 for a, b in row_blocks]
+        cmid = [(a + b - 1) // 2 for a, b in col_blocks]
+        zz = np.round(z[np.ix_(rmid, cmid)], 2)
+        main = go.Heatmap(
+            z=zz, x=x_labels, colorscale="RdBu_r", zmid=0, zmin=-3, zmax=3,
+            colorbar=dict(title="z-score", thickness=12, x=1.01),
+            hoverongaps=False,
+            hovertemplate="Column: %{x}<br>z: %{z:.2f}<extra></extra>",
+        )
+
+    # batch strip
+    block_site = [sites[a] for a, _ in row_blocks]
+    palette = px.colors.qualitative.Safe
+    color_of = {s: palette[i % len(palette)] for i, s in enumerate(sorted(site_order))}
+    n_s = len(site_order)
+    strip_cs = []
+    for i, s in enumerate(site_order):
+        strip_cs += [[round(i / n_s, 8), color_of[s]], [round(min((i + 1) / n_s, 1.0), 8), color_of[s]]]
+    strip = go.Heatmap(
+        z=[[site_order.index(s)] for s in block_site], colorscale=strip_cs,
+        zmin=0, zmax=max(n_s - 1, 1), showscale=False,
+        customdata=[[f"{s} (n = {site_n[s]})"] for s in block_site],
+        hovertemplate="Batch: %{customdata}<extra></extra>",
+    )
+
+    fig = make_subplots(rows=1, cols=2, column_widths=[0.025, 0.975],
+                        shared_yaxes=True, horizontal_spacing=0.003)
+    fig.add_trace(strip, row=1, col=1)
+    fig.add_trace(main, row=1, col=2)
+
+    # batch labels and boundaries
+    ytv, ytt, start = [], [], 0
+    for i in range(1, len(block_site) + 1):
+        if i == len(block_site) or block_site[i] != block_site[i - 1]:
+            ytv.append((start + i - 1) / 2)
+            ytt.append(f"{block_site[start]} (n={site_n[block_site[start]]})")
+            if i < len(block_site):
+                for col_i in (1, 2):
+                    fig.add_hline(y=i - 0.5, line_color="white" if not missing_only else "black",
+                                  line_width=1.0, opacity=0.8, row=1, col=col_i)
+            start = i
+
+    # covariates | features separator, and group bands with labels
+    if cov:
+        fig.add_vline(x=len(cov) - 0.5, line_color="#555555", line_width=2, row=1, col=2)
+    show_bands = any(g is not None for g, _ in groups)
+    if show_bands:
+        band_palette = px.colors.qualitative.Bold
+        x0, gi_color = len(cov), 0
+        for (g, c), n_blk in zip(groups, blocks_per_group):
+            x1 = x0 + n_blk
+            if g is not None:
+                if g == marked_label:
+                    color = "#888888"
+                else:
+                    color = band_palette[gi_color % len(band_palette)]
+                    gi_color += 1
+                if x0 > len(cov):
+                    fig.add_vline(x=x0 - 0.5, line_color="#555555", line_width=1.5, row=1, col=2)
+                fig.add_shape(type="rect", xref="x2", yref="paper", x0=x0 - 0.5, x1=x1 - 0.5,
+                              y0=1.002, y1=1.028, fillcolor=color, line_width=0, layer="above")
+                fig.add_annotation(xref="x2", yref="paper", x=(x0 + x1 - 1) / 2, y=1.035,
+                                   text=f"{g} ({len(c)})", showarrow=False, xanchor="center",
+                                   yanchor="bottom", font=dict(size=9, color=color))
+            x0 = x1
+
+    what = "missing values in black, present in grey" if missing_only else "z-scored per column, missing in black"
+    fig.update_layout(
+        title=dict(text=f"{title}: {len(d)} participants x {len(feats)} features"
+                        f"{f' + {len(cov)} covariates' if cov else ''} (sorted by batch; {what})",
+                   y=0.995, yanchor="top"),
+        xaxis=dict(showticklabels=False, showgrid=False),
+        # fixed range: the group labels above the bands would otherwise widen the axis
+        xaxis2=dict(showticklabels=len(col_blocks) <= 80, tickangle=45, tickfont=dict(size=7),
+                    range=[-0.5, len(col_blocks) - 0.5]),
+        yaxis=dict(tickmode="array", tickvals=ytv, ticktext=ytt, tickfont=dict(size=9),
+                   autorange="reversed"),
+        height=max(400, min(len(row_blocks) * 4, 900)),
+        showlegend=False,
+        plot_bgcolor="black", paper_bgcolor="white",
+        font=dict(color="black", family="Arial"),
+        margin={"l": 110, "b": 90, "r": 60, "t": 80 if show_bands else 60},
+    )
+
+    notes = []
+    if reduced:
+        how = ("each cell shows the share of missing values in its block"
+               if missing_only else "each cell shows the middle participant and feature of its block")
+        notes.append(f"Shown at reduced resolution ({len(d)} participants in {len(row_blocks)} rows, "
+                     f"{len(cols)} columns in {len(col_blocks)}); {how}.")
+    if n_no_batch:
+        notes.append(f"{n_no_batch} participant(s) with no batch value are not shown.")
+    return fig, " ".join(notes)

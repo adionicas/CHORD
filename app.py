@@ -18,7 +18,7 @@ from src.metrics   import (site_mean_deviation, spearman_raw_vs_harm,
                             compute_icc_by_site, compute_icc_within_summary,
                             compute_spearman_by_site,
                             compute_extra_associations)
-from src.plots     import (plot_site_deviation, plot_spearman, plot_icc,
+from src.plots     import (plot_site_deviation, plot_spearman, plot_icc, plot_data_matrix,
                            plot_age_correlations, plot_cohens_f,
                            plot_icc_by_site, plot_spearman_by_site,
                            plot_extra_associations, plot_single_association,
@@ -98,12 +98,14 @@ df = None
 if uploaded is not None:
     try:
         df = pd.read_csv(uploaded) if uploaded.name.endswith(".csv") else pd.read_excel(uploaded)
+        data_key = f"upload:{uploaded.name}:{uploaded.size}"
         st.session_state["use_demo"] = False
     except Exception as e:
         st.error(f"Could not read file: {e}")
 elif st.session_state.get("use_demo"):
     try:
         df = pd.read_csv("example_data.csv")
+        data_key = "example_data.csv"
         st.info("Loaded synthetic example dataset (215 participants, 6 batches, 20 FA features, not real patient data)")
     except FileNotFoundError:
         st.error("Example data file not found.")
@@ -539,187 +541,49 @@ if use_modality:
 # STEP 3 — Run
 # ─────────────────────────────────────────────────────────────────────────────
 st.divider()
-st.subheader("Data preview (optional)")
-st.caption("Visual overview of the selected features before harmonization. "
-           "Values are z-scored per feature; missing data shown in black. "
-           "Participants sorted by batch so batch effects are visible.")
+st.subheader("Data preview")
+st.caption("Overview of the selected features, one row per participant sorted by batch, "
+           "with covariates first. Values are z-scored per column and missing values are black. "
+           "This first view is before any exclusion; once features or batches are excluded below, "
+           "a second view after the exclusions appears at the end of the batch exclusion section.")
 
-if st.button("Generate data matrix preview", use_container_width=False):
-  try:
-    import plotly.graph_objects as go
-    import plotly.express as px
-    from plotly.subplots import make_subplots
-    import numpy as np
 
-    # columns to display: covariates first, then imaging features
-    # categorical variables are label-encoded so they can be z-scored
-    covariate_cols = [c for c in [age_col, sex_col] + extra_continuous + extra_categorical
-                      if c in df.columns]
-    # when modality grouping is used, order features so each modality is contiguous
-    if modality_groups:
-        ordered_feats = [c for g, cols in modality_groups.items() for c in cols]
-    else:
-        ordered_feats = list(feature_cols)
-    all_plot_cols  = covariate_cols + ordered_feats
+@st.cache_data(show_spinner=False, max_entries=8)
+def _matrix_figure(data_key, rows_key, site_col, covariate_cols, feats, groups, marked,
+                   missing_only, title, _rows_df):
+    """Cached data-matrix figure; the table itself (_rows_df) is identified by the keys."""
+    return plot_data_matrix(
+        _rows_df, site_col, list(covariate_cols), list(feats),
+        modality_groups={g: list(c) for g, c in groups} if groups else None,
+        marked_block=(marked[0], list(marked[1])) if marked else None,
+        missing_only=missing_only, title=title)
 
-    plot_df = df[[site_col] + all_plot_cols].copy()
 
-    # encode any categorical / string columns to numeric
-    for col in all_plot_cols:
-        if not pd.api.types.is_numeric_dtype(plot_df[col]):
-            uniq = sorted(plot_df[col].dropna().astype(str).unique())
-            mapping = {v: i for i, v in enumerate(uniq)}
-            plot_df[col] = plot_df[col].astype(str).map(mapping)
+def _show_matrix_preview(rows_df, rows_key, feats, title, marked=None):
+    covs = [c for c in [age_col, sex_col] + extra_continuous + extra_categorical
+            if c and c in rows_df.columns]
+    groups = tuple((g, tuple(c)) for g, c in modality_groups.items()) if modality_groups else None
+    try:
+        fig, note = _matrix_figure(
+            data_key, rows_key, site_col, tuple(covs), tuple(feats), groups,
+            (marked[0], tuple(marked[1])) if marked else None,
+            bool(st.session_state.get("preview_missing_only", False)), title, rows_df)
+        st.plotly_chart(fig, use_container_width=True)
+        if note:
+            st.caption(note)
+    except Exception as _preview_err:
+        st.error(f"Preview could not be generated: {_preview_err}")
 
-    plot_df = plot_df.sort_values(site_col).reset_index(drop=True)
 
-    # z-score every column
-    mat      = plot_df[all_plot_cols].values.astype(float)
-    col_means = np.nanmean(mat, axis=0)
-    col_sds   = np.nanstd(mat, axis=0)
-    col_sds[col_sds == 0] = 1
-    z = (mat - col_means) / col_sds
-
-    # site color mapping — same palette as ICC by-site plot
-    sites_ordered  = np.array(plot_df[site_col].astype(str))
-    sites_unique   = sorted(set(sites_ordered))
-    palette        = px.colors.qualitative.Safe
-    site_color_map = {s: palette[i % len(palette)] for i, s in enumerate(sites_unique)}
-
-    # site strip: numeric index per participant row
-    site_idx = np.array([[sites_unique.index(s)] for s in sites_ordered], dtype=float)
-
-    # site boundaries for horizontal lines
-    boundary_y = [i - 0.5 for i in range(1, len(sites_ordered))
-                  if sites_ordered[i] != sites_ordered[i-1]]
-
-    # sample size per site
-    site_n_map = plot_df.groupby(site_col).size().to_dict()
-
-    # y-tick labels: site name + n at midpoint of each block
-    ytick_vals, ytick_text, prev, start = [], [], sites_ordered[0], 0
-    for i, s in enumerate(sites_ordered):
-        if s != prev:
-            ytick_vals.append((start + i - 1) / 2)
-            ytick_text.append(f"{prev} (n={site_n_map.get(prev, '?')})")
-            prev, start = s, i
-    ytick_vals.append((start + len(sites_ordered) - 1) / 2)
-    ytick_text.append(f"{prev} (n={site_n_map.get(prev, '?')})")
-
-    # discrete colorscale for site strip — each site occupies 1/n_sites of [0,1]
-    n_sites = len(sites_unique)
-    site_cs = []
-    for i, s in enumerate(sites_unique):
-        lo = round(i / n_sites, 8)
-        hi = round(min((i + 1) / n_sites, 1.0), 8)
-        site_cs.append([lo, site_color_map[s]])
-        site_cs.append([hi, site_color_map[s]])
-
-    # subplots: thin site strip | main heatmap
-    fig_carpet = make_subplots(
-        rows=1, cols=2,
-        column_widths=[0.025, 0.975],
-        shared_yaxes=True,
-        horizontal_spacing=0.003,
-    )
-
-    # ── Site color strip (left) ──
-    site_n_col = np.array([site_n_map.get(s, '?') for s in sites_ordered])
-    fig_carpet.add_trace(go.Heatmap(
-        z=site_idx,
-        colorscale=site_cs,
-        zmin=0, zmax=n_sites - 1,
-        showscale=False,
-        hovertemplate="Batch: %{customdata[0]}<br>n = %{customdata[1]}<extra></extra>",
-        customdata=np.column_stack([sites_ordered, site_n_col]),
-    ), row=1, col=1)
-
-    # ── Main data heatmap (right) ──
-    fig_carpet.add_trace(go.Heatmap(
-        z=z,
-        x=all_plot_cols,
-        colorscale="RdBu_r",
-        zmid=0, zmin=-3, zmax=3,
-        colorbar=dict(title="z-score", thickness=12, x=1.01),
-        hoverongaps=False,
-        hovertemplate="Column: %{x}<br>z: %{z:.2f}<extra></extra>",
-    ), row=1, col=2)
-
-    # vertical separator between covariate columns and imaging features
-    if covariate_cols:
-        sep_x = len(covariate_cols) - 0.5
-        fig_carpet.add_vline(x=sep_x, line_color="black",
-                             line_width=2, opacity=0.7, row=1, col=2)
-
-    # ── Modality color strip, separators, and labels (when grouping is used) ──
-    if modality_groups:
-        mod_palette = px.colors.qualitative.Bold
-        mod_names   = list(modality_groups.keys())
-        mod_color   = {g: mod_palette[i % len(mod_palette)] for i, g in enumerate(mod_names)}
-        x0 = len(covariate_cols)
-        for gi, gname in enumerate(mod_names):
-            x1 = x0 + len(modality_groups[gname])
-            if gi > 0:  # separator between modality blocks
-                fig_carpet.add_vline(x=x0 - 0.5, line_color="black",
-                                     line_width=1.5, opacity=0.85, row=1, col=2)
-            fig_carpet.add_shape(  # colored band above the block
-                type="rect", xref="x2", yref="paper",
-                x0=x0 - 0.5, x1=x1 - 0.5, y0=1.002, y1=1.028,
-                fillcolor=mod_color[gname], line_width=0, layer="above",
-            )
-            fig_carpet.add_annotation(  # modality label above the block
-                xref="x2", yref="paper", x=(x0 + x1 - 1) / 2, y=1.035,
-                text=gname, showarrow=False, xanchor="center", yanchor="bottom",
-                font=dict(size=9, color=mod_color[gname]),
-            )
-            x0 = x1
-
-    # black cells for missing values — fills each missing cell so missingness
-    # is clearly visible against the red/blue data
-    miss_layer = np.where(np.isnan(z), 1.0, np.nan)
-    if np.isnan(z).any():
-        fig_carpet.add_trace(go.Heatmap(
-            z=miss_layer,
-            x=all_plot_cols,
-            colorscale=[[0, "black"], [1, "black"]],
-            showscale=False,
-            hoverongaps=False,
-            hovertemplate="Column: %{x}<br>missing<extra></extra>",
-        ), row=1, col=2)
-
-    # site boundary lines on both panels
-    for by in boundary_y:
-        for col_i in [1, 2]:
-            fig_carpet.add_hline(y=by, line_color="black",
-                                  line_width=1.0, opacity=0.6, row=1, col=col_i)
-
-    n_feat  = len(all_plot_cols)
-    height  = max(400, min(len(plot_df) * 4, 900))
-    covar_label = f" | first {len(covariate_cols)} columns = covariates (Age, Sex, ...)" if covariate_cols else ""
-    _title_text = (f"Raw data matrix — {len(plot_df)} participants × {n_feat} columns "
-                   f"(sorted by {site_col}; z-scored){covar_label}")
-    _title = (dict(text=_title_text, y=0.995, yanchor="top")
-              if modality_groups else _title_text)
-    fig_carpet.update_layout(
-        title=_title,
-        xaxis=dict(showticklabels=False, showgrid=False),
-        xaxis2=dict(showticklabels=n_feat <= 80, tickangle=45,
-                    tickfont=dict(size=7)),
-        yaxis=dict(tickmode="array", tickvals=ytick_vals, ticktext=ytick_text,
-                   tickfont=dict(size=9), autorange="reversed"),
-        height=height,
-        showlegend=False,
-        plot_bgcolor="white", paper_bgcolor="white",
-        font=dict(color="black", family="Arial"),
-        margin={"l": 110, "b": 90, "r": 60, **({"t": 70} if modality_groups else {})},
-    )
-
-    pct_missing = 100 * np.isnan(mat).sum() / mat.size
-    mod_note = ("Top strip = modality group (colored, separated by vertical lines). "
-                if modality_groups else "")
-    st.plotly_chart(fig_carpet, use_container_width=True)
-  except Exception as _preview_err:
-    st.error(f"Preview could not be generated: {_preview_err}")
+st.toggle("Show missing values only", key="preview_missing_only",
+          help="Shows only where values are missing (black) and present (grey), "
+               "like the vis_miss plot of the R package naniar. Applies to both previews.")
+_preview_excluded = [d.get("Feature") for d in st.session_state.get("_excl_feat_list", [])
+                     if d.get("Feature") in df.columns]
+_show_matrix_preview(
+    df, "all", list(feature_cols) + [f for f in _preview_excluded if f not in feature_cols],
+    "Before exclusions",
+    marked=("Excluded for missingness", _preview_excluded) if _preview_excluded else None)
 
 # ── Missing value assessment ────────────────────────────────────────────────
 st.markdown("---")
@@ -1028,6 +892,14 @@ if excluded_sites:
         f"Excluding {len(excluded_sites)} batch(es): {', '.join(str(s) for s in excluded_sites)}. "
         f"Remaining participants: {int((~df[site_col].isin(excluded_sites)).sum())}."
     )
+
+if _preview_excluded or excluded_sites:
+    st.markdown("**Data preview after exclusions**")
+    st.caption("The same view as the data preview above, without the excluded features and batches. "
+               "The \"Show missing values only\" switch above applies here too.")
+    _show_matrix_preview(
+        df[~df[site_col].isin(excluded_sites)] if excluded_sites else df,
+        ("without", tuple(sorted(map(str, excluded_sites)))), feature_cols, "After exclusions")
 
 st.divider()
 st.subheader("Evaluation and report options")
