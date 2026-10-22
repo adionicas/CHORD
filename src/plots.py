@@ -1009,8 +1009,8 @@ def plot_data_matrix(
     marked_block: tuple | None = None,
     missing_only: bool = False,
     title: str = "Data matrix",
+    max_cells: int = 250_000,
     max_rows: int = 600,
-    max_cols: int = 300,
 ):
     """
     Carpet plot of the data: one row per participant, sorted by batch, with a
@@ -1069,8 +1069,11 @@ def plot_data_matrix(
     mat = d[cols].to_numpy(dtype=float)
     miss = np.isnan(mat)
 
-    # display blocks: rows within batches, columns within groups
-    row_blocks = [(a, b) for a, b, _ in _proportional_blocks([site_n[s] for s in site_order], max_rows)]
+    # display blocks: rows within batches, columns within groups; tables up to
+    # max_cells are shown at full resolution
+    n_rows_show = len(d) if len(d) * len(cols) <= max_cells else min(len(d), max_rows)
+    max_cols = max(len(cov) + 1, max_cells // max(n_rows_show, 1))
+    row_blocks = [(a, b) for a, b, _ in _proportional_blocks([site_n[s] for s in site_order], n_rows_show)]
     feat_blocks = _proportional_blocks([len(c) for _, c in groups], max(1, max_cols - len(cov)))
     col_blocks = [(i, i + 1) for i in range(len(cov))] + [(len(cov) + a, len(cov) + b) for a, b, _ in feat_blocks]
     blocks_per_group = [sum(1 for *_, g in feat_blocks if g == gi) for gi in range(len(groups))]
@@ -1113,6 +1116,7 @@ def plot_data_matrix(
             hoverongaps=False,
             hovertemplate="Column: %{x}<br>z: %{z:.2f}<extra></extra>",
         )
+        miss_layer = np.where(np.isnan(zz), 1.0, np.nan)
 
     # batch strip
     block_site = [sites[a] for a, _ in row_blocks]
@@ -1133,6 +1137,11 @@ def plot_data_matrix(
                         shared_yaxes=True, horizontal_spacing=0.003)
     fig.add_trace(strip, row=1, col=1)
     fig.add_trace(main, row=1, col=2)
+    if not missing_only and np.isnan(miss_layer).sum() < miss_layer.size:
+        fig.add_trace(go.Heatmap(
+            z=miss_layer, x=x_labels, colorscale=[[0, "black"], [1, "black"]], showscale=False,
+            hoverongaps=False, hovertemplate="Column: %{x}<br>missing<extra></extra>",
+        ), row=1, col=2)
 
     # batch labels and boundaries
     ytv, ytt, start = [], [], 0
@@ -1141,9 +1150,8 @@ def plot_data_matrix(
             ytv.append((start + i - 1) / 2)
             ytt.append(f"{block_site[start]} (n={site_n[block_site[start]]})")
             if i < len(block_site):
-                for col_i in (1, 2):
-                    fig.add_hline(y=i - 0.5, line_color="white" if not missing_only else "black",
-                                  line_width=1.0, opacity=0.8, row=1, col=col_i)
+                fig.add_hline(y=i - 0.5, line_color="white" if not missing_only else "#555555",
+                              line_width=1.0, opacity=0.8, row=1, col=2)
             start = i
 
     # covariates | features separator, and group bands with labels
@@ -1166,29 +1174,33 @@ def plot_data_matrix(
                 fig.add_shape(type="rect", xref="x2", yref="paper", x0=x0 - 0.5, x1=x1 - 0.5,
                               y0=1.002, y1=1.028, fillcolor=color, line_width=0, layer="above")
                 fig.add_annotation(xref="x2", yref="paper", x=(x0 + x1 - 1) / 2, y=1.035,
-                                   text=f"{g} ({len(c)})", showarrow=False, xanchor="center",
-                                   yanchor="bottom", font=dict(size=9, color=color))
+                                   text=f"{g} ({len(c)})", showarrow=False, textangle=-45,
+                                   xanchor="left", yanchor="bottom", font=dict(size=9, color="#333333"))
             x0 = x1
 
     what = (f"missing values in black ({100 * miss.mean():.1f}% of cells), present in grey"
             if missing_only and miss.size else
             "missing values in black, present in grey" if missing_only else
             "z-scored per column, missing in black")
+    longest = max((len(f"{g} ({len(c)})") for g, c in groups if g is not None), default=0)
+    top = 70 + int(4.2 * longest) if show_bands else 60
+    no_ticks = dict(showgrid=False, zeroline=False, showline=False, ticks="")
     fig.update_layout(
         title=dict(text=f"{title}: {len(d)} participants x {len(feats)} features"
                         f"{f' + {len(cov)} covariates' if cov else ''} (sorted by batch; {what})",
                    y=0.995, yanchor="top"),
-        xaxis=dict(showticklabels=False, showgrid=False),
+        xaxis=dict(showticklabels=False, range=[-0.5, 0.5], **no_ticks),
         # fixed range: the group labels above the bands would otherwise widen the axis
         xaxis2=dict(showticklabels=len(col_blocks) <= 80, tickangle=45, tickfont=dict(size=7),
-                    range=[-0.5, len(col_blocks) - 0.5]),
+                    range=[-0.5, len(col_blocks) - 0.5], **no_ticks),
         yaxis=dict(tickmode="array", tickvals=ytv, ticktext=ytt, tickfont=dict(size=9),
-                   autorange="reversed"),
-        height=max(400, min(len(row_blocks) * 4, 900)),
+                   range=[len(row_blocks) - 0.5, -0.5], **no_ticks),
+        yaxis2=dict(showticklabels=False, range=[len(row_blocks) - 0.5, -0.5], **no_ticks),
+        height=max(400, min(len(row_blocks) * 4, 900)) + (top - 60),
         showlegend=False,
-        plot_bgcolor="black", paper_bgcolor="white",
+        plot_bgcolor="white", paper_bgcolor="white",
         font=dict(color="black", family="Arial"),
-        margin={"l": 110, "b": 90, "r": 60, "t": 80 if show_bands else 60},
+        margin={"l": 110, "b": 90, "r": 60, "t": top},
     )
 
     notes = []
