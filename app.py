@@ -3,6 +3,8 @@ CHORD — Multisite Harmonization Assessment
 Streamlit web application
 """
 
+import re
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -129,9 +131,23 @@ def _guess(cols, keywords):
                 return c
     return cols[0] if cols else None
 
+def _guess_optional(cols, keywords):
+    """
+    Find an optional column (age, sex) by name. A keyword must begin a part of
+    the name (parts split at non-letters and non-digits), so "Age_at_scan" and
+    "sex" match but "AverageFA" does not; returns None when nothing matches,
+    instead of falling back to the first column.
+    """
+    for kw in keywords:
+        for c in cols:
+            parts = re.split(r"[^a-z0-9]+", str(c).lower())
+            if any(p.startswith(kw) for p in parts if p):
+                return c
+    return None
+
 default_site = _guess(all_cols, ["site", "scanner", "batch", "center"])
-default_age  = _guess(all_cols, ["age", "Age"])
-default_sex  = _guess(all_cols, ["sex", "Sex", "gender"])
+default_age  = _guess_optional(all_cols, ["age"])
+default_sex  = _guess_optional(all_cols, ["sex", "gender"])
 
 CUSTOM = "— type custom name below —"
 
@@ -222,6 +238,11 @@ with cov_c2:
 # Final covariate lists passed to ComBat
 continuous_covariates = ([age_col] if (inc_age and age_col) else []) + extra_cont_add
 categorical_covariates = ([sex_col] if (inc_sex and sex_col) else []) + extra_cat_add
+
+# Age and sex as actually used (None when not detected or unchecked); the
+# ANCOVA batch-effect model uses the same ones as ComBat
+age_used = age_col if (inc_age and age_col) else None
+sex_used = sex_col if (inc_sex and sex_col) else None
 
 # Also expose for downstream use
 extra_continuous  = extra_cont_add
@@ -1122,8 +1143,9 @@ st.caption(
     "missing values are less of a problem, because each feature is harmonized on its own available data, "
     "so no imputation or pattern grouping is needed (this is the per-feature option). If Empirical Bayes "
     "is used, which is the default, the tool imputes missing feature values with each feature's median "
-    "for harmonization only, and the imputed values are never reported. Keep this median default, or "
-    "choose complete cases only, or grouping features by shared missing pattern."
+    "for harmonization only, and the imputed values are never reported. This median default suits data "
+    "with few missing values; for scattered missing data, grouping features by shared missing pattern "
+    "keeps every observed value. Complete cases only is also available."
 )
 
 _MISS_OPTS = {
@@ -1133,7 +1155,7 @@ _MISS_OPTS = {
     "Per-feature, feature-wise (no Empirical Bayes)":                "per_feature",
 }
 missing_mode_label = st.selectbox(
-    "Missing-value handling", list(_MISS_OPTS.keys()), index=0, key="missing_mode",
+    "Missing-value handling", list(_MISS_OPTS.keys()), index=1, key="missing_mode",
     help="Complete case drops any participant missing a feature in the run. "
          "Median imputation fills missing values with each feature's median, "
          "harmonizes with Empirical Bayes, then restores the missing cells to "
@@ -1156,13 +1178,13 @@ st.table(pd.DataFrame([
      "What it does": "Drops any participant missing any feature in the run",
      "Empirical Bayes": "Yes",
      "Participants used": "Only participants complete on all features"},
-    {"Method": "Median imputation",
-     "What it does": "Fills each missing value with that feature's median, harmonizes, then restores the originally missing cells to blank",
+    {"Method": "Median imputation (default)",
+     "What it does": "Fills each missing value with that feature's median, harmonizes, then restores the originally missing cells to blank; suits data with few missing values",
      "Empirical Bayes": "Yes",
      "Participants used": "All participants"},
     {"Method": "Missing-pattern grouping",
-     "What it does": "Harmonizes together the features missing in the same participants, one Empirical Bayes run per pattern",
-     "Empirical Bayes": "Yes",
+     "What it does": "Harmonizes together the features missing in the same participants, one Empirical Bayes run per pattern; suits scattered missing data",
+     "Empirical Bayes": "Yes, except for a feature whose missing pattern no other feature shares",
      "Participants used": "Each participant, for the features they have"},
     {"Method": "Per-feature",
      "What it does": "Harmonizes each feature on its own complete cases, one feature at a time",
@@ -1320,9 +1342,9 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
         anc_before = anc_ebt = anc_ebf = None
         if include_cohens_f:
             progress.progress(80, "Computing ANCOVA batch effects...")
-            anc_before = ancova_site_effect(df_harm, feature_cols, site_col, age_col, sex_col, "Before")
-            anc_ebt    = ancova_site_effect(harm_ebt, feature_cols, site_col, age_col, sex_col, "EB=TRUE")  if harm_ebt is not None else None
-            anc_ebf    = ancova_site_effect(harm_ebf, feature_cols, site_col, age_col, sex_col, "EB=FALSE") if harm_ebf is not None else None
+            anc_before = ancova_site_effect(df_harm, feature_cols, site_col, age_used, sex_used, "Before")
+            anc_ebt    = ancova_site_effect(harm_ebt, feature_cols, site_col, age_used, sex_used, "EB=TRUE")  if harm_ebt is not None else None
+            anc_ebf    = ancova_site_effect(harm_ebf, feature_cols, site_col, age_used, sex_used, "EB=FALSE") if harm_ebf is not None else None
 
         # Per-variable associations for the results tabs. Each checkbox controls
         # only its own tabs: the preserved-covariate toggle contributes Age, Sex,
@@ -1482,7 +1504,10 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
             fig_spearman=None, fig_age=fig_age, fig_cohens_f=fig_anc,
             extra_continuous=extra_continuous,
             extra_categorical=extra_categorical,
-            include_age=include_age_corr,
+            covariates_cont=continuous_covariates,
+            covariates_cat=categorical_covariates,
+            ancova_covars=[c for c in (age_used, sex_used) if c],
+            include_age=(include_age_corr and bool(age_col)),
             include_cohens_f=include_cohens_f,
             include_icc_by_site=include_icc_by_site,
             include_extra_assoc=(include_extra_assoc and len(extra_assoc_df) > 0),
@@ -1500,7 +1525,10 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
             github_url=GITHUB_URL,
             extra_continuous=extra_continuous,
             extra_categorical=extra_categorical,
-            include_age=include_age_corr,
+            covariates_cont=continuous_covariates,
+            covariates_cat=categorical_covariates,
+            ancova_covars=[c for c in (age_used, sex_used) if c],
+            include_age=(include_age_corr and bool(age_col)),
             include_cohens_f=include_cohens_f,
             include_icc_by_site=include_icc_by_site,
             include_extra_assoc=(include_extra_assoc and len(extra_assoc_df) > 0),

@@ -319,9 +319,9 @@ TEMPLATE = """<!DOCTYPE html>
     (Comprehensive Harmonization Open-platform with Reporting and Diagnostics;
     [GitHub URL]).
     ComBat harmonization [1, 2] was applied using the <em>neuroCombat</em> Python package
-    (v0.2.12), with {{ site_col }} as the batch variable and {{ age_col }} (continuous)
-    and {{ sex_col }} (categorical) included as biological covariates to preserve their
-    associated variability.
+    (v0.2.12), with {{ site_col }} as the batch variable{% if covariate_text %} and {{ covariate_text }}
+    included as biological covariates to preserve their associated variability{% else %}, without
+    biological covariates{% endif %}.
     {% if run_ebf %}
     Two ComBat configurations were compared: with Empirical Bayes (EB) estimation,
     which pools information across features to stabilize batch effect parameter estimates [1],
@@ -330,19 +330,23 @@ TEMPLATE = """<!DOCTYPE html>
     ComBat was applied with Empirical Bayes estimation, which pools information
     across features to stabilize batch effect parameter estimates [1].
     {% endif %}
-    Harmonization effectiveness was evaluated using five complementary metrics:
+    {% set m = namespace(i=1) %}
+    Harmonization effectiveness was evaluated using the following metrics:
     (1) batch mean <em>z</em>-score deviation from the grand mean before and after harmonization,
     assessing residual batch-related variability;
-    (2) analysis of covariance (ANCOVA, Type II sums of squares; covariates: {{ age_col }}, {{ sex_col }})
+    {% if include_cohens_f %}{% set m.i = m.i + 1 %}
+    ({{ m.i }}) analysis of covariance (ANCOVA, Type II sums of squares{% if ancova_cov_text %}; covariates: {{ ancova_cov_text }}{% endif %})
     with batch as the grouping factor, quantifying batch effect size as Cohen's <em>f</em> [4];
-    (3) the within-batch consistency form of the intraclass correlation coefficient, ICC(3,1) [9, 10],
+    {% endif %}{% set m.i = m.i + 1 %}
+    ({{ m.i }}) the within-batch consistency form of the intraclass correlation coefficient, ICC(3,1) [9, 10],
     computed between pre- and post-harmonization values within each batch for each feature and summarized
     across batches as the median with the interquartile range, the primary metric, interpreted with the
     thresholds of Koo and Li [5] as poor (&lt; 0.50), moderate (0.50&#8211;0.75), good (0.75&#8211;0.90),
-    excellent (&#8805; 0.90); and
-    (4) Pearson correlation between {{ age_col }} and each imaging feature before and after
-    harmonization, with false discovery rate correction (Benjamini&#8211;Hochberg) [6],
-    to assess preservation of biologically relevant age-related variability.
+    excellent (&#8805; 0.90){% if include_age %}; and
+    {% set m.i = m.i + 1 %}({{ m.i }}) Pearson correlation between {{ age_col }} and each imaging feature before and after
+    harmonization, {% if fdr_note and fdr_note.startswith('No multiple') %}without correction for multiple
+    comparisons{% else %}with false discovery rate correction (Benjamini&#8211;Hochberg) [6]{% endif %},
+    to assess preservation of biologically relevant age-related variability{% endif %}.
     All metrics are reported in the Supplementary Material.
     [1] Johnson et al., <em>Biostatistics</em>, 2007.
     [2] Fortin et al., <em>NeuroImage</em>, 2017.
@@ -371,8 +375,8 @@ TEMPLATE = """<!DOCTYPE html>
   {% endif %}
   <b>{{ n_retained }}</b> participants were retained for harmonization.
   {% endif %}
-  The batch variable was <em>{{ site_col }}</em>; covariates preserved during
-  harmonization were <em>{{ age_col }}</em> (continuous) and <em>{{ sex_col }}</em> (categorical){% if extra_continuous %}, {{ extra_continuous | join(", ") }} (continuous){% endif %}{% if extra_categorical %}, {{ extra_categorical | join(", ") }} (categorical){% endif %}.
+  The batch variable was <em>{{ site_col }}</em>; {% if covariate_text %}covariates preserved during
+  harmonization were {{ covariate_text }}{% else %}no biological covariates were included{% endif %}.
 </p>
 
 <p class="table-title">Table S1. Sample characteristics by batch.</p>
@@ -418,9 +422,11 @@ TEMPLATE = """<!DOCTYPE html>
 
 <p>
   In the present analysis, <em>{{ site_col }}</em> was used as the batch
-  variable. <em>{{ age_col }}</em> (continuous) and <em>{{ sex_col }}</em>
-  (categorical) were included as biological covariates to preserve their
-  associated variability following harmonization.
+  variable. {% if covariate_text %}{{ covariate_text }} {{ 'were' if n_covariates != 1 else 'was' }}
+  included as biological {{ 'covariates' if n_covariates != 1 else 'covariate' }} to preserve
+  {{ 'their' if n_covariates != 1 else 'its' }} associated variability following harmonization.{% else %}No
+  biological covariates were included, so ComBat removed batch effects without explicitly preserving
+  any covariate.{% endif %}
   {% if run_ebf %}
   Both ComBat configurations were applied: with Empirical Bayes estimation
   (EB=TRUE) and without (EB=FALSE), enabling a direct comparison of their
@@ -529,7 +535,7 @@ TEMPLATE = """<!DOCTYPE html>
   Successful harmonization should reduce batch mean <em>z</em>-scores toward zero.
   {% if include_cohens_f %}
   Additionally, for each imaging feature a one-way analysis of covariance (ANCOVA) model
-  was fitted with batch as the grouping factor and age and sex as covariates,
+  was fitted with batch as the grouping factor{% if ancova_cov_text %} and {{ ancova_cov_text }} as covariates{% endif %},
   using Type II sums of squares. The proportion of variance attributable to batch
   was expressed as partial eta-squared (&#951;<sup>2</sup><sub>p</sub>), and
   converted to Cohen's <em>f</em> using the formula
@@ -641,7 +647,7 @@ TEMPLATE = """<!DOCTYPE html>
   denote conventional effect size benchmarks: small &#8805; 0.10, medium &#8805; 0.25,
   large &#8805; 0.40 (Cohen, 1988), allowing direct reading of effect size category
   both before (x-axis) and after (y-axis) harmonization.
-  ANCOVA models included age and sex as covariates (Type II sums of squares).
+  ANCOVA models included {% if ancova_cov_text %}{{ ancova_cov_text }} as covariates{% else %}no covariates{% endif %} (Type II sums of squares).
   Statistical significance of the batch effect is the uncorrected ANCOVA
   <em>p</em>-value (<em>p</em> &lt; 0.05), not corrected for multiple comparisons.
   Marker fill encodes the before-harmonization status (filled = <em>p</em> &lt; 0.05,
@@ -785,7 +791,7 @@ TEMPLATE = """<!DOCTYPE html>
   between raw and harmonized values within each batch, summarized across batches as the median with the
   interquartile range (Q1 to Q3). Interpreted with Koo &amp; Li (2016) [<a href="#ref5">5</a>] thresholds,
   &lt; 0.50 poor, 0.50&#8211;0.75 moderate, 0.75&#8211;0.90 good, &#8805; 0.90 excellent.
-  Cohen's <em>f</em> = batch effect size from ANCOVA (Age + Sex as covariates, Type II SS).
+  Cohen's <em>f</em> = batch effect size from ANCOVA ({% if ancova_cov_text %}{{ ancova_cov_text }} as covariates, {% endif %}Type II SS).
   Cohen's <em>f</em> before = pre-harmonization batch effect; Cohen's <em>f</em> after = post-harmonization batch effect.
 </p>
 
@@ -836,6 +842,30 @@ TEMPLATE = """<!DOCTYPE html>
 # ─────────────────────────────────────────────────────────────────────────────
 # Methods paragraph — plain text for the Streamlit UI
 # ─────────────────────────────────────────────────────────────────────────────
+def _join_and(items):
+    """'a', 'a and b', 'a, b and c'."""
+    items = [str(i) for i in items if i]
+    if len(items) < 2:
+        return "".join(items)
+    return ", ".join(items[:-1]) + " and " + items[-1]
+
+
+def _covariate_texts(age_col, sex_col, extra_continuous, extra_categorical,
+                     covariates_cont, covariates_cat, ancova_covars):
+    """
+    The ComBat covariates as text, for example "Age (continuous) and Sex
+    (categorical)", their number, and the ANCOVA covariates as text. When the
+    lists actually used are not given, age and sex plus the extras are assumed.
+    """
+    cont = (list(covariates_cont) if covariates_cont is not None
+            else [age_col] + list(extra_continuous or []))
+    cat  = (list(covariates_cat) if covariates_cat is not None
+            else [sex_col] + list(extra_categorical or []))
+    parts = [f"{c} (continuous)" for c in cont if c] + [f"{c} (categorical)" for c in cat if c]
+    anc = [c for c in (ancova_covars if ancova_covars is not None else [age_col, sex_col]) if c]
+    return _join_and(parts), len(parts), _join_and(anc)
+
+
 def build_methods_paragraph(
     site_col: str,
     age_col: str,
@@ -850,8 +880,14 @@ def build_methods_paragraph(
     include_extra_assoc: bool = False,
     assoc_cont_vars: list | None = None,
     assoc_cat_vars: list | None = None,
+    covariates_cont: list | None = None,
+    covariates_cat: list | None = None,
+    ancova_covars: list | None = None,
 ) -> str:
     """Return a plain-text methods paragraph for copy-paste into a manuscript."""
+    cov_text, _, anc_text = _covariate_texts(
+        age_col, sex_col, extra_continuous, extra_categorical,
+        covariates_cont, covariates_cat, ancova_covars)
     if run_ebf:
         eb_sentence = (
             f"Two ComBat configurations were compared: with Empirical Bayes (EB) estimation, "
@@ -887,8 +923,9 @@ def build_methods_paragraph(
 
     if include_cohens_f:
         metrics.append(
-            f"({metric_idx}) analysis of covariance (ANCOVA, Type II sums of squares; "
-            f"covariates: {age_col}, {sex_col}) with batch as the grouping factor, "
+            f"({metric_idx}) analysis of covariance (ANCOVA, Type II sums of squares"
+            + (f"; covariates: {anc_text}" if anc_text else "")
+            + f") with batch as the grouping factor, "
             f"quantifying batch effect size as Cohen's f (Cohen, 1988)"
         )
         metric_idx += 1
@@ -914,12 +951,10 @@ def build_methods_paragraph(
         f"Scanner-related batch effects were corrected and evaluated using CHORD "
         f"(Comprehensive Harmonization Open-platform with Reporting and Diagnostics; {github_url}). "
         f"ComBat harmonization (Johnson et al., 2007; Fortin et al., 2017) was applied using the "
-        f"neuroCombat Python package (v0.2.12), with {site_col} as the batch variable and "
-        f"{age_col} (continuous) and {sex_col} (categorical)"
-        + (f", {', '.join(extra_continuous)} (continuous)" if extra_continuous else "")
-        + (f", and {', '.join(extra_categorical)} (categorical)" if extra_categorical else "")
-        + f" included as biological covariates to preserve their associated variability. "
-        f"{eb_sentence} "
+        f"neuroCombat Python package (v0.2.12), with {site_col} as the batch variable"
+        + (f" and {cov_text} included as biological covariates to preserve their associated variability. "
+           if cov_text else ", without biological covariates. ")
+        + f"{eb_sentence} "
         f"Harmonization effectiveness was evaluated using the following metrics: "
         + "; ".join(metrics)
         + ". All metrics are reported in the Supplementary Material."
@@ -962,6 +997,9 @@ def generate_report(
     excl_counts=None,
     no_eb_features=None,
     blank_features=None,
+    covariates_cont=None,
+    covariates_cat=None,
+    ancova_covars=None,
     fig_icc_ci=None,
 ) -> str:
 
@@ -989,6 +1027,10 @@ def generate_report(
         )
     else:
         modality_group_desc = ""
+
+    covariate_text, n_covariates, ancova_cov_text = _covariate_texts(
+        age_col, sex_col, extra_continuous, extra_categorical,
+        covariates_cont, covariates_cat, ancova_covars)
 
     # why participants were not harmonized, one phrase per reason
     excl_reasons = []
@@ -1018,6 +1060,9 @@ def generate_report(
         excl_info           = excl_info,
         excl_feat_table     = _excl_feat_block(excl_feat_list, bool(modality_groups)),
         excl_reasons        = excl_reasons,
+        covariate_text      = covariate_text,
+        n_covariates        = n_covariates,
+        ancova_cov_text     = ancova_cov_text,
         no_eb_features      = no_eb_features or [],
         blank_features      = blank_features or [],
         site_col           = site_col,
