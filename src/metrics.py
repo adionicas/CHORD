@@ -37,29 +37,40 @@ def demographic_summary(
         s = sex_series.dropna().astype(str).str.strip().str.lower()
         return int(s.isin(female_tokens).sum())
 
+    # Age and sex are optional. When their column is absent, the corresponding
+    # cell reports "N/A" rather than raising.
+    def _age_stats(grp):
+        if not age_col or age_col not in grp.columns:
+            return "N/A", "N/A"
+        av = grp[age_col].dropna()
+        if len(av) == 0:
+            return "N/A", "N/A"
+        return f"{av.mean():.2f} ({av.std():.2f})", f"{av.min():.1f}–{av.max():.1f}"
+
+    def _female_str(grp, n):
+        if not sex_col or sex_col not in grp.columns or n == 0:
+            return "N/A"
+        nf = _n_female(grp[sex_col])
+        return f"{nf} ({100 * nf / n:.1f}%)"
+
     for site in sorted(df[site_col].dropna().unique().astype(str)):
-        grp      = df[df[site_col].astype(str) == site]
-        n        = len(grp)
-        age_vals = grp[age_col].dropna()
-        nf       = _n_female(grp[sex_col])
+        grp    = df[df[site_col].astype(str) == site]
+        am, ar = _age_stats(grp)
         rows.append({
-            "Site":            site,
-            "N":               n,
-            "Age mean (SD)":   f"{age_vals.mean():.2f} ({age_vals.std():.2f})" if len(age_vals) > 0 else "N/A",
-            "Age range":       f"{age_vals.min():.1f}–{age_vals.max():.1f}" if len(age_vals) > 0 else "N/A",
-            "Female n (%)":    f"{nf} ({100 * nf / n:.1f}%)",
+            "Site":          site,
+            "N":             len(grp),
+            "Age mean (SD)": am,
+            "Age range":     ar,
+            "Female n (%)":  _female_str(grp, len(grp)),
         })
 
-    # Overall
-    age_all = df[age_col].dropna()
-    nf_all  = _n_female(df[sex_col])
-    n_all   = len(df)
+    am, ar = _age_stats(df)
     rows.append({
         "Site":          "Total",
-        "N":             n_all,
-        "Age mean (SD)": f"{age_all.mean():.2f} ({age_all.std():.2f})" if len(age_all) > 0 else "N/A",
-        "Age range":     f"{age_all.min():.1f}–{age_all.max():.1f}" if len(age_all) > 0 else "N/A",
-        "Female n (%)":  f"{nf_all} ({100 * nf_all / n_all:.1f}%)",
+        "N":             len(df),
+        "Age mean (SD)": am,
+        "Age range":     ar,
+        "Female n (%)":  _female_str(df, len(df)),
     })
     return pd.DataFrame(rows)
 
@@ -185,11 +196,51 @@ def compute_icc(
 # ---------------------------------------------------------------------------
 # 4. Age correlation — Pearson r per feature, FDR corrected
 # ---------------------------------------------------------------------------
+def _apply_significance(res, use_fdr=True, feature_group=None):
+    """
+    Add significance columns to a per-feature association table from its
+    'p_value' column. When use_fdr is True, Benjamini-Hochberg correction is
+    applied within each modality group given by feature_group (a mapping from
+    feature name to group name); when feature_group is None the correction is
+    applied across all features together. When use_fdr is False the uncorrected
+    p-value is used. Adds: p_fdr (NaN when uncorrected), sig_fdr (the significance
+    flag actually used), correction (label), and n_hyp (the number of hypotheses
+    in the correction group used for that feature's decision).
+    """
+    res = res.copy()
+    if len(res) == 0:
+        return res
+    res["p_fdr"]   = np.nan
+    res["sig_fdr"] = False
+    res["n_hyp"]   = 0
+    if use_fdr:
+        res["correction"] = "FDR (Benjamini-Hochberg)"
+        if feature_group:
+            grp = res["feature"].map(feature_group).fillna("(ungrouped)")
+        else:
+            grp = pd.Series("all", index=res.index)
+        for _, idx in res.groupby(grp).groups.items():
+            sub_p = res.loc[idx, "p_value"]
+            if len(sub_p) == 0:
+                continue
+            _, p_fdr, _, _ = multipletests(sub_p, method="fdr_bh")
+            res.loc[idx, "p_fdr"]   = p_fdr
+            res.loc[idx, "sig_fdr"] = p_fdr < 0.05
+            res.loc[idx, "n_hyp"]   = len(sub_p)
+    else:
+        res["correction"] = "none (uncorrected)"
+        res["sig_fdr"]    = res["p_value"] < 0.05
+        res["n_hyp"]      = len(res)
+    return res
+
+
 def age_correlations(
     df: pd.DataFrame,
     features: list,
     age_col: str,
     label: str = "",
+    use_fdr: bool = True,
+    feature_group: dict | None = None,
 ) -> pd.DataFrame:
     rows = []
     for f in features:
@@ -200,11 +251,7 @@ def age_correlations(
         rows.append({"feature": f, "r": float(r), "p_value": float(p),
                      "n": len(d), "harmonization": label})
     res = pd.DataFrame(rows)
-    if len(res) > 0:
-        _, p_fdr, _, _ = multipletests(res["p_value"], method="fdr_bh")
-        res["p_fdr"]   = p_fdr
-        res["sig_fdr"] = p_fdr < 0.05
-    return res
+    return _apply_significance(res, use_fdr=use_fdr, feature_group=feature_group)
 
 
 # ---------------------------------------------------------------------------
@@ -221,14 +268,19 @@ def ancova_site_effect(
 ) -> pd.DataFrame:
     rows = []
     for f in features:
-        cols_needed = [f, site_col, age_col, sex_col]
+        cols_needed = [f, site_col] + ([age_col] if age_col else []) + ([sex_col] if sex_col else [])
         d = df[cols_needed].dropna()
         if len(d) < 10 or d[site_col].nunique() < 2:
             continue
         try:
             safe_f = f.replace(" ", "_").replace("-", "_").replace(".", "_")
             d = d.rename(columns={f: safe_f})
-            formula = f"{safe_f} ~ C({site_col}) + {age_col} + C({sex_col})"
+            terms = [f"C({site_col})"]
+            if age_col:
+                terms.append(f"{age_col}")
+            if sex_col:
+                terms.append(f"C({sex_col})")
+            formula = f"{safe_f} ~ " + " + ".join(terms)
             model   = smf.ols(formula, data=d).fit()
             aov     = sm.stats.anova_lm(model, typ=2)
             site_key = f"C({site_col})"
@@ -292,6 +344,43 @@ def compute_icc_by_site(df_raw, df_harm, features, site_col):
     return pd.DataFrame(rows)
 
 
+def compute_icc_within_summary(df_raw, df_harm, features, site_col, by=None):
+    """
+    Within-batch ICC(3,1) summarized per feature.
+
+    The consistency-form ICC(3,1) between raw and harmonized values is computed
+    inside each batch (compute_icc_by_site) and then summarized across batches for
+    each feature as the median and the interquartile range. The overall, pooled
+    ICC is intentionally not used, because pooling across batches conflates the
+    batch effects that harmonization removes.
+
+    ``by`` may be a precomputed compute_icc_by_site result, to avoid recomputing it.
+
+    Returns one row per feature. Column names match compute_icc so downstream
+    tables and figures reuse the same structure, with icc3 = across-batch median
+    and icc3_lower / icc3_upper = the first and third quartiles (the interquartile
+    range), and n = the number of batches contributing.
+    """
+    cols = ["feature", "icc3", "icc3_lower", "icc3_upper", "n"]
+    if by is None:
+        by = compute_icc_by_site(df_raw, df_harm, features, site_col)
+    if by is None or len(by) == 0:
+        return pd.DataFrame(columns=cols)
+    rows = []
+    for f, sub in by.groupby("feature"):
+        vals = sub["icc3"].dropna()
+        if len(vals) == 0:
+            continue
+        rows.append({
+            "feature":    f,
+            "icc3":       float(vals.median()),
+            "icc3_lower": float(vals.quantile(0.25)),
+            "icc3_upper": float(vals.quantile(0.75)),
+            "n":          int(len(vals)),
+        })
+    return pd.DataFrame(rows, columns=cols)
+
+
 # ---------------------------------------------------------------------------
 # 7. Spearman by site
 # ---------------------------------------------------------------------------
@@ -311,6 +400,8 @@ def compute_extra_associations(
     continuous_covariates: list,
     categorical_covariates: list,
     label: str = "",
+    use_fdr: bool = True,
+    feature_group: dict | None = None,
 ) -> pd.DataFrame:
     def _safe(s):
         return s.replace(" ", "_").replace("-", "_").replace(".", "_").replace("/", "_")
@@ -396,10 +487,7 @@ def compute_extra_associations(
     parts = []
     for var in res["variable"].unique():
         sub = res[res["variable"] == var].copy()
-        _, p_fdr, _, _ = multipletests(sub["p_value"], method="fdr_bh")
-        sub["p_fdr"]   = p_fdr
-        sub["sig_fdr"] = p_fdr < 0.05
-        parts.append(sub)
+        parts.append(_apply_significance(sub, use_fdr=use_fdr, feature_group=feature_group))
     return pd.concat(parts, ignore_index=True)
 
 

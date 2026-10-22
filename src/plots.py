@@ -548,7 +548,7 @@ def plot_icc_by_site(
                 x_all.extend([site_pos[site] + j for j in jitter])
                 y_all.extend(cd["icc3"].values)
                 text_all.extend([
-                    f"<b>{feat}</b><br>ICC3: {icc:.3f}<br>Batch: {site}"
+                    f"<b>{feat}</b><br>ICC(3,1): {icc:.3f}<br>Batch: {site}"
                     for feat, icc in zip(cd["feature"].values, cd["icc3"].values)
                 ])
 
@@ -607,16 +607,16 @@ def plot_icc_by_site(
 
     legend_y = -0.16 - 0.052 * n_key_lines
     bottom   = (140 + 22 * n_key_lines) if use_numbers else 150
-    fig.update_yaxes(title_text="ICC3", range=[0, 1.08], row=1, col=1)
+    fig.update_yaxes(title_text="ICC(3,1)", range=[0, 1.08], row=1, col=1)
     fig.update_layout(
-        title="Within-batch consistency by batch: ICC3 - Koo & Li (2016)",
+        title="Within-batch consistency by batch, ICC(3,1) (Koo & Li 2016)",
         height=520 + (18 * n_key_lines if use_numbers else 0), **WHITE_BG,
         margin=dict(r=40, b=bottom),
         legend=dict(
             orientation="h",
             yanchor="top", y=legend_y,
             xanchor="center", x=0.5,
-            title_text="ICC3 category",
+            title_text="ICC(3,1) category",
         ),
     )
     return fig
@@ -814,6 +814,14 @@ def plot_single_association(assoc_df: pd.DataFrame, variable: str) -> go.Figure 
 
     vtype   = sub_all["var_type"].iloc[0]
     eff_lbl = "Pearson r" if vtype == "continuous" else "Cohen's f"
+    # significance labelling reflects whether FDR correction was applied
+    _corr = str(sub_all["correction"].iloc[0]) if "correction" in sub_all.columns else "FDR (Benjamini-Hochberg)"
+    _fdr  = _corr.startswith("FDR")
+    _sig  = "FDR significant" if _fdr else "Significant (uncorrected)"
+    LBL_NS, LBL_NEW    = "Not significant (neither)", f"{_sig} after only"
+    LBL_LOST, LBL_BOTH = f"{_sig} before only", f"{_sig} before and after"
+    _pcol = "p_fdr" if _fdr else "p_value"
+    _plab = "FDR-corrected p (after)" if _fdr else "Uncorrected p (after)"
     # linear-model statistic surfaced in the hover, per variable type
     lm_col  = "beta" if vtype == "continuous" else "eta_sq"
     lm_name = ("Linear-model coefficient (after)" if vtype == "continuous"
@@ -831,15 +839,15 @@ def plot_single_association(assoc_df: pd.DataFrame, variable: str) -> go.Figure 
             columns={"effect_size": "eff_b", "sig_fdr": "sig_b"})
         _after = sub_all[sub_all["harmonization"] == cond]
         a_cols = ["feature", "effect_size", "sig_fdr"]
-        if "p_fdr" in _after.columns:
-            a_cols.append("p_fdr")
+        if _pcol in _after.columns:
+            a_cols.append(_pcol)
         if lm_col in _after.columns:
             a_cols.append(lm_col)
         a = _after[a_cols].rename(columns={"effect_size": "eff_a", "sig_fdr": "sig_a"})
         merged = b.merge(a, on="feature")
         if len(merged) == 0:
             continue
-        _has_lm = (lm_col in merged.columns) and ("p_fdr" in merged.columns)
+        _has_lm = (lm_col in merged.columns) and (_pcol in merged.columns)
 
         ns      = merged[~merged["sig_b"] & ~merged["sig_a"]]
         new_sig = merged[~merged["sig_b"] &  merged["sig_a"]]
@@ -847,18 +855,18 @@ def plot_single_association(assoc_df: pd.DataFrame, variable: str) -> go.Figure 
         both    = merged[ merged["sig_b"] &  merged["sig_a"]]
 
         for grp, lbl, mc, sym, sz, op in [
-            (ns,      "Not significant (neither)",        GREY,   "circle",  7,  0.40),
-            (new_sig, "FDR significant after only",       color,  "circle",  9,  0.85),
-            (lost,    "FDR significant before only",      ORANGE, "diamond", 9,  0.85),
-            (both,    "FDR significant before and after", PURPLE, "square",  9,  0.85),
+            (ns,      LBL_NS,   GREY,   "circle",  7,  0.40),
+            (new_sig, LBL_NEW,  color,  "circle",  9,  0.85),
+            (lost,    LBL_LOST, ORANGE, "diamond", 9,  0.85),
+            (both,    LBL_BOTH, PURPLE, "square",  9,  0.85),
         ]:
             if len(grp) == 0:
                 continue
             if _has_lm:
-                cdata = grp[[lm_col, "p_fdr"]].to_numpy()
+                cdata = grp[[lm_col, _pcol]].to_numpy()
                 htmpl = ("<b>%{text}</b><br>Before: %{x:.3f}<br>After: %{y:.3f}<br>"
                          + lm_name + ": %{customdata[0]:.3f}<br>"
-                         "FDR-corrected p (after): %{customdata[1]:.3g}<extra></extra>")
+                         + _plab + ": %{customdata[1]:.3g}<extra></extra>")
             else:
                 cdata = None
                 htmpl = "<b>%{text}</b><br>Before: %{x:.3f}<br>After: %{y:.3f}<extra></extra>"
@@ -884,10 +892,10 @@ def plot_single_association(assoc_df: pd.DataFrame, variable: str) -> go.Figure 
         fig.update_yaxes(title_text=f"{eff_lbl} (after)", row=1, col=col_i)
 
     for lbl, mc, sym in [
-        ("Not significant (neither)",        GREY,      "circle"),
-        ("FDR significant after only",       AFTER_EBT, "circle"),
-        ("FDR significant before only",      ORANGE,    "diamond"),
-        ("FDR significant before and after", PURPLE,    "square"),
+        (LBL_NS,   GREY,      "circle"),
+        (LBL_NEW,  AFTER_EBT, "circle"),
+        (LBL_LOST, ORANGE,    "diamond"),
+        (LBL_BOTH, PURPLE,    "square"),
     ]:
         fig.add_trace(go.Scatter(
             x=[None], y=[None], mode="markers", name=lbl, legendgroup=lbl,
@@ -910,11 +918,12 @@ def plot_single_association(assoc_df: pd.DataFrame, variable: str) -> go.Figure 
 
 def plot_icc_ci_compare(icc_ebt, icc_ebf):
     """
-    ICC(C,1) 95% confidence intervals per feature for EB=TRUE vs EB=FALSE, drawn
-    as coloured vertical segments side by side so their overlap is visible.
-    Features are sorted by the EB=TRUE ICC so the plot reads as two ordered
-    bands; where the two coloured segments overlap in height, the confidence
-    intervals overlap.
+    Within-batch ICC(3,1) per feature for EB=TRUE vs EB=FALSE. Each marker is the
+    across-batch median and the segment is the interquartile range (Q1 to Q3),
+    drawn as coloured vertical segments side by side so their overlap is visible.
+    Features are sorted by the EB=TRUE median so the plot reads as two ordered
+    bands; where the two coloured segments overlap in height, the interquartile
+    ranges overlap.
     """
     if (icc_ebt is None or icc_ebf is None
             or len(icc_ebt) == 0 or len(icc_ebf) == 0):
@@ -937,7 +946,7 @@ def plot_icc_ci_compare(icc_ebt, icc_ebf):
                      color="rgba(42,110,187,0.35)", thickness=1.0, width=0),
         mode="markers", marker=dict(color=AFTER_EBT, size=3),
         name="EB=TRUE", text=m["feature"],
-        hovertemplate="<b>%{text}</b><br>EB=TRUE ICC: %{y:.3f}<extra></extra>",
+        hovertemplate="<b>%{text}</b><br>EB=TRUE within-batch ICC(3,1) median: %{y:.3f}<extra></extra>",
     ))
     fig.add_trace(go.Scatter(
         x=x + 0.2, y=m["icc3_f"],
@@ -947,14 +956,14 @@ def plot_icc_ci_compare(icc_ebt, icc_ebf):
                      color="rgba(42,157,143,0.35)", thickness=1.0, width=0),
         mode="markers", marker=dict(color=AFTER_EBF, size=3),
         name="EB=FALSE", text=m["feature"],
-        hovertemplate="<b>%{text}</b><br>EB=FALSE ICC: %{y:.3f}<extra></extra>",
+        hovertemplate="<b>%{text}</b><br>EB=FALSE within-batch ICC(3,1) median: %{y:.3f}<extra></extra>",
     ))
     for yval in [0.50, 0.75, 0.90]:
         fig.add_hline(y=yval, line_dash="dash", line_color=GREY, opacity=0.4, line_width=0.8)
     fig.update_layout(
-        title="ICC(C,1) 95% confidence intervals: EB=TRUE vs EB=FALSE (per feature)",
-        xaxis_title="feature (sorted by EB=TRUE ICC)",
-        yaxis_title="ICC3",
+        title="Within-batch ICC(3,1) per feature, median and interquartile range, EB=TRUE versus EB=FALSE",
+        xaxis_title="feature (sorted by EB=TRUE median)",
+        yaxis_title="ICC(3,1)",
         height=520, **WHITE_BG,
         xaxis=dict(showticklabels=False),
         yaxis=dict(range=[0, 1.05]),
