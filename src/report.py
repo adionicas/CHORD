@@ -188,9 +188,9 @@ def _comparison_table(icc_ebt, icc_ebf, anc_ebt, anc_ebf, spm_ebt, spm_ebf):
     """Side-by-side after-harmonization comparison: EB=TRUE vs EB=FALSE, one row per feature."""
     frames = {}
     if icc_ebt is not None and len(icc_ebt) > 0:
-        frames["ICC3 (EB=TRUE)"] = icc_ebt.set_index("feature")["icc3"]
+        frames["ICC(3,1) median (EB=TRUE)"] = icc_ebt.set_index("feature")["icc3"]
     if icc_ebf is not None and len(icc_ebf) > 0:
-        frames["ICC3 (EB=FALSE)"] = icc_ebf.set_index("feature")["icc3"]
+        frames["ICC(3,1) median (EB=FALSE)"] = icc_ebf.set_index("feature")["icc3"]
     if anc_ebt is not None and len(anc_ebt) > 0:
         frames["Cohen's f after (EB=TRUE)"] = anc_ebt.set_index("feature")["cohens_f"]
     if anc_ebf is not None and len(anc_ebf) > 0:
@@ -210,8 +210,8 @@ def _summary_table(icc_df, spm_df, anc_before, anc_after, label):
     frames = []
     if icc_df is not None and len(icc_df) > 0:
         frames.append(icc_df[["feature", "icc3", "icc3_lower", "icc3_upper", "n"]]
-                      .rename(columns={"icc3": "ICC3", "icc3_lower": "ICC3 lower 95% CI",
-                                       "icc3_upper": "ICC3 upper 95% CI"})
+                      .rename(columns={"icc3": "ICC(3,1) median", "icc3_lower": "ICC(3,1) Q1",
+                                       "icc3_upper": "ICC(3,1) Q3", "n": "n batches"})
                       .set_index("feature"))
     if spm_df is not None and len(spm_df) > 0:
         frames.append(spm_df[["feature", "spearman_r"]]
@@ -335,9 +335,11 @@ TEMPLATE = """<!DOCTYPE html>
     assessing residual batch-related variability;
     (2) analysis of covariance (ANCOVA, Type II sums of squares; covariates: {{ age_col }}, {{ sex_col }})
     with batch as the grouping factor, quantifying batch effect size as Cohen's <em>f</em> [4];
-    (3) intraclass correlation coefficient (ICC3, two-way mixed effects, consistency) between
-    pre- and post-harmonization values for each feature, interpreted according to Koo and Li [5]:
-    poor (&lt; 0.50), moderate (0.50&#8211;0.75), good (0.75&#8211;0.90), excellent (&#8805; 0.90); and
+    (3) the within-batch consistency form of the intraclass correlation coefficient, ICC(3,1) [9, 10],
+    computed between pre- and post-harmonization values within each batch for each feature and summarized
+    across batches as the median with the interquartile range, the primary metric, interpreted with the
+    thresholds of Koo and Li [5] as poor (&lt; 0.50), moderate (0.50&#8211;0.75), good (0.75&#8211;0.90),
+    excellent (&#8805; 0.90); and
     (4) Pearson correlation between {{ age_col }} and each imaging feature before and after
     harmonization, with false discovery rate correction (Benjamini&#8211;Hochberg) [6],
     to assess preservation of biologically relevant age-related variability.
@@ -348,6 +350,7 @@ TEMPLATE = """<!DOCTYPE html>
     [4] Cohen, 1988.
     [5] Koo &amp; Li, <em>J Chiropr Med</em>, 2016.
     [6] Benjamini &amp; Hochberg, <em>J R Stat Soc B</em>, 1995.
+    [9] Shrout &amp; Fleiss, <em>Psychol Bull</em>, 1979. [10] McGraw &amp; Wong, <em>Psychol Methods</em>, 1996.
   </p>
 </div>
 
@@ -519,16 +522,22 @@ TEMPLATE = """<!DOCTYPE html>
 <h3>S3.2 Within-Batch Consistency</h3>
 <p>
   Within-batch consistency was evaluated as the degree to which the rank ordering
-  of participants was preserved following harmonization, using two approaches.
-  First, intraclass correlation coefficients (ICC) were computed between
-  pre-harmonization (raw) and post-harmonization values for each feature,
-  modeled as a two-way mixed-effects, consistency model (ICC3; equivalently denoted ICC(C,1) in McGraw &amp; Wong, 1996) [<a href="#ref5">5</a>]. ICC values were interpreted according to Koo and
-  Li (2016) [<a href="#ref5">5</a>]: &lt; 0.50 = poor consistency,
-  0.50&#8211;0.75 = moderate, 0.75&#8211;0.90 = good, &#8805; 0.90 = excellent.
-  High ICC values indicate that the relative standing of participants is
-  well preserved after harmonization, which is an important criterion for
-  ensuring that harmonization does not inadvertently remove meaningful
-  within-batch biological variability [<a href="#ref3">3</a>].
+  of participants was preserved following harmonization. The consistency form of the
+  intraclass correlation coefficient, ICC(3,1), equivalently ICC(C,1) in McGraw and
+  Wong (1996) [<a href="#ref10">10</a>] and a two-way mixed effects, single rating model
+  (Shrout and Fleiss, 1979) [<a href="#ref9">9</a>], was computed between the raw and harmonized
+  values within each batch, for each feature. The consistency form is used because
+  harmonization deliberately shifts each batch's mean and scale to remove batch effects,
+  so an absolute-agreement coefficient would treat that intended shift as disagreement and
+  would therefore penalize the correction itself, whereas the consistency form measures
+  whether the relative ordering of participants is preserved. For each feature the
+  within-batch values were summarized across batches as the median and the interquartile
+  range. Values were interpreted with the thresholds of Koo and Li (2016) [<a href="#ref5">5</a>],
+  where values below 0.50 are poor, 0.50 to 0.75 moderate, 0.75 to 0.90 good, and 0.90 or
+  above excellent. High values indicate that the relative standing of participants within
+  each batch is well preserved after harmonization, which is the criterion ensuring that
+  harmonization does not remove meaningful within-batch biological variability
+  [<a href="#ref3">3</a>].
 </p>
 
 {% if include_age %}
@@ -626,9 +635,10 @@ TEMPLATE = """<!DOCTYPE html>
 
 <h3>S4.2 Within-Batch Consistency</h3>
 <p>
-  ICC3 was computed between raw and harmonized values for
+  The within-batch ICC(3,1), summarized per feature as the across-batch median, was computed
+  between raw and harmonized values for
   {{ icc_ebt.n_total }} features. Following harmonization with EB=TRUE,
-  the mean (SD) ICC was {{ icc_ebt.mean }} ({{ icc_ebt.sd }})
+  the mean (SD) of these per-feature within-batch medians was {{ icc_ebt.mean }} ({{ icc_ebt.sd }})
   (median = {{ icc_ebt.median }}, range {{ icc_ebt.min }}&#8211;{{ icc_ebt.max }}).
   {{ icc_ebt.n_excellent }} features ({{ pct(icc_ebt.n_excellent, icc_ebt.n_total) }}%)
   showed excellent consistency (&#8805; 0.90),
@@ -639,7 +649,7 @@ TEMPLATE = """<!DOCTYPE html>
   {{ icc_ebt.n_poor }} features ({{ pct(icc_ebt.n_poor, icc_ebt.n_total) }}%)
   showed poor consistency (&lt; 0.50).
   {% if run_ebf and icc_ebf.n_total %}
-  Following harmonization with EB=FALSE, the mean (SD) ICC was
+  Following harmonization with EB=FALSE, the mean (SD) of these per-feature within-batch medians was
   {{ icc_ebf.mean }} ({{ icc_ebf.sd }})
   (median = {{ icc_ebf.median }}, range {{ icc_ebf.min }}&#8211;{{ icc_ebf.max }}).
   {{ icc_ebf.n_excellent }} features ({{ pct(icc_ebf.n_excellent, icc_ebf.n_total) }}%)
@@ -654,9 +664,9 @@ TEMPLATE = """<!DOCTYPE html>
 {% set ns.fig = ns.fig + 1 %}
 <div class="fig-wrap">{{ fig_icc_site }}</div>
 <p class="fig-caption">
-  <b>Figure S{{ ns.fig }}.</b> Within-batch consistency by batch: ICC3 (two-way mixed effects, consistency) between raw and harmonized values,
+  <b>Figure S{{ ns.fig }}.</b> Within-batch consistency by batch, ICC(3,1) (two-way mixed effects, consistency) between raw and harmonized values,
   computed separately for each batch. Batch labels include participant count (n).
-  Each box shows the distribution of ICC3 values across all features within that batch.
+  Each box shows the distribution of ICC(3,1) values across all features within that batch.
   Batches with smaller sample sizes may show lower consistency, particularly when
   harmonization is performed without Empirical Bayes estimation [<a href="#ref3">3</a>, <a href="#ref8">8</a>].
   Colored bands denote Koo and Li (2016) [<a href="#ref5">5</a>] thresholds.
@@ -667,14 +677,13 @@ TEMPLATE = """<!DOCTYPE html>
 {% set ns.fig = ns.fig + 1 %}
 <div class="fig-wrap">{{ fig_icc_ci }}</div>
 <p class="fig-caption">
-  <b>Figure S{{ ns.fig }}.</b> ICC(C,1) 95% confidence intervals under EB=TRUE versus EB=FALSE,
-  for the same features summarised in the figure above. Each feature contributes two vertical
-  segments, its 95% confidence interval for the raw-versus-harmonized ICC(C,1) under EB=TRUE and
-  under EB=FALSE, drawn at a shared position on the x-axis so the two configurations are compared
-  for the identical feature. Features are ordered by their EB=TRUE ICC. These are overall ICC(C,1)
-  values computed across all participants, not within-batch values. Where a feature's two intervals
-  overlap in height, their confidence intervals overlap, indicating the two configurations do not
-  differ meaningfully for that feature.
+  <b>Figure S{{ ns.fig }}.</b> Within-batch ICC(3,1) per feature under EB=TRUE versus EB=FALSE,
+  for the same features summarised in the figure above. Each feature contributes two markers, the
+  across-batch median of its within-batch ICC(3,1) under EB=TRUE and under EB=FALSE, each with a
+  vertical segment spanning the interquartile range across batches, drawn at a shared position on the
+  x-axis so the two configurations are compared for the identical feature. Features are ordered by
+  their EB=TRUE median. Where a feature's two segments overlap in height, the interquartile ranges
+  overlap, indicating the two configurations do not differ meaningfully for that feature.
 </p>
 {% endif %}
 
@@ -684,13 +693,14 @@ TEMPLATE = """<!DOCTYPE html>
 <p>
   Before harmonization, {{ age_before.n_sig }} of {{ age_before.n_total }} features
   ({{ age_before.pct_sig }}%) showed a statistically significant association with
-  {{ age_col }} at FDR-corrected &#945; &lt; .05.
+  {{ age_col }} at {% if fdr_note and fdr_note.startswith('No multiple') %}an uncorrected{% else %}FDR-corrected{% endif %} &#945; &lt; .05.
   Following harmonization with EB=TRUE, {{ age_ebt.n_sig }} features
   ({{ age_ebt.pct_sig }}%) showed significant age associations.
   {% if run_ebf and age_ebf.n_total %}
   Following harmonization with EB=FALSE, {{ age_ebf.n_sig }} features
   ({{ age_ebf.pct_sig }}%) showed significant age associations.
   {% endif %}
+  {% if fdr_note %}{{ fdr_note }}{% if 'Benjamini' in fdr_note %} [<a href="#ref6">6</a>]{% endif %}{% endif %}
   The relationship between age associations before and after harmonization is
   shown in Figure S{{ ns.fig }}.
 </p>
@@ -724,7 +734,7 @@ TEMPLATE = """<!DOCTYPE html>
   For continuous variables, Pearson r between the variable and each feature is shown;
   models controlled for the ComBat covariates (excluding the variable itself).
   For categorical variables, Cohen's f (derived from partial eta-squared, OLS Type II) is shown.
-  FDR correction (Benjamini&#8211;Hochberg) was applied across features per variable [<a href="#ref6">6</a>].
+  {% if fdr_note %}{{ fdr_note }}{% if 'Benjamini' in fdr_note %} [<a href="#ref6">6</a>]{% endif %}{% else %}FDR correction (Benjamini&#8211;Hochberg) was applied across features per variable [<a href="#ref6">6</a>].{% endif %}
   Each additional variable is shown in its own figure below.
 </p>
 {% for item in extra_assoc_figs %}
@@ -746,19 +756,21 @@ TEMPLATE = """<!DOCTYPE html>
 <!-- ─────────────────────────────────────── S5 ──────────────────────────── -->
 <h2>S5. Feature-Level Results</h2>
 
-<p class="table-title">Table S2. Feature-level harmonization metrics — EB=TRUE.</p>
+<p class="table-title">Table S2. Feature-level harmonization metrics, EB=TRUE.</p>
 {{ table_ebt }}
 <p class="table-note">
   <em>Note.</em>
-  ICC3 = intraclass correlation coefficient (two-way mixed effects, consistency; Shrout &amp; Fleiss type 3)
-  between raw and harmonized values (Koo &amp; Li, 2016):
+  ICC(3,1) = the consistency form of the intraclass correlation coefficient (two-way mixed effects, single rating;
+  Shrout &amp; Fleiss, 1979 [<a href="#ref9">9</a>]; equivalently ICC(C,1), McGraw &amp; Wong, 1996 [<a href="#ref10">10</a>])
+  between raw and harmonized values within each batch, summarized across batches as the median with the
+  interquartile range (Q1 to Q3). Interpreted with Koo &amp; Li (2016) [<a href="#ref5">5</a>] thresholds,
   &lt; 0.50 poor, 0.50&#8211;0.75 moderate, 0.75&#8211;0.90 good, &#8805; 0.90 excellent.
   Cohen's <em>f</em> = batch effect size from ANCOVA (Age + Sex as covariates, Type II SS).
   Cohen's <em>f</em> before = pre-harmonization batch effect; Cohen's <em>f</em> after = post-harmonization batch effect.
 </p>
 
 {% if run_ebf %}
-<p class="table-title">Table S3. Feature-level harmonization metrics — EB=FALSE.</p>
+<p class="table-title">Table S3. Feature-level harmonization metrics, EB=FALSE.</p>
 {{ table_ebf }}
 <p class="table-note">
   <em>Note.</em> See Table S2 note for metric descriptions.
@@ -768,7 +780,7 @@ TEMPLATE = """<!DOCTYPE html>
 {{ table_compare }}
 <p class="table-note">
   <em>Note.</em> Each row is one feature. Paired columns allow direct comparison of the two ComBat configurations.
-  ICC3 = intraclass correlation coefficient (two-way mixed effects, consistency; higher is better).
+  ICC(3,1) median = across-batch median of the within-batch consistency-form intraclass correlation coefficient (higher is better).
   Cohen's <em>f</em> after = post-harmonization batch effect size (lower is better).
   Spearman <em>r</em> = rank correlation between raw and harmonized values (higher is better).
 </p>
@@ -782,9 +794,11 @@ TEMPLATE = """<!DOCTYPE html>
   <li id="ref3">Onicas AI, Ware AL, Harris AD, et al. Multisite harmonization of structural DTI networks in children: an A-CAP study. <em>Frontiers in Neurology</em>. 2022. doi:10.3389/fneur.2022.850642</li>
   <li id="ref8">Onicas AI, Keleher F, Bickart KC, MacDonald CL, Brown A, Cook L, Rivara FP, Gioia GA, Giza CC, Dennis EL. ComBat harmonization with and without empirical Bayes estimation for resting-state functional connectivity in pediatric mild traumatic brain injury: a CARE4Kids study. <em>ResearchSquare</em> [Preprint]. 2026. doi:10.21203/rs.3.rs-9418750</li>
   <li id="ref4">Cohen J. <em>Statistical Power Analysis for the Behavioral Sciences</em>. 2nd ed. Erlbaum; 1988.</li>
-  <li id="ref5">Koo TK, Li MY. A guideline of selecting and reporting intraclass correlation coefficients for reliability research. <em>Journal of Chiropractic Medicine</em>. 2016;15(2):155&#8211;163.</li>
+  <li id="ref5">Koo TK, Li MY. A guideline of selecting and reporting intraclass correlation coefficients for reliability research. <em>Journal of Chiropractic Medicine</em>. 2016;15(2):155&#8211;163. doi:10.1016/j.jcm.2016.02.012</li>
   <li id="ref6">Benjamini Y, Hochberg Y. Controlling the false discovery rate: a practical and powerful approach to multiple testing. <em>Journal of the Royal Statistical Society Series B</em>. 1995;57(1):289&#8211;300.</li>
   <li id="ref7">Fortin J-P, Cullen N, Sheline YI, et al. Harmonization of cortical thickness measurements across scanners and sites. <em>NeuroImage</em>. 2018;167:104&#8211;120.</li>
+  <li id="ref9">Shrout PE, Fleiss JL. Intraclass correlations: uses in assessing rater reliability. <em>Psychological Bulletin</em>. 1979;86(2):420&#8211;428. doi:10.1037/0033-2909.86.2.420</li>
+  <li id="ref10">McGraw KO, Wong SP. Forming inferences about some intraclass correlation coefficients. <em>Psychological Methods</em>. 1996;1(1):30&#8211;46. doi:10.1037/1082-989X.1.1.30</li>
 </ol>
 
 <div class="footer">
@@ -838,12 +852,16 @@ def build_methods_paragraph(
 
     if include_icc_by_site:
         metrics.append(
-            f"({metric_idx}) intraclass correlation coefficient (ICC3, two-way mixed effects, consistency) "
-            f"computed within each batch between pre- and post-harmonization values for each feature, "
-            f"interpreted according to Koo and Li (2016): "
+            f"({metric_idx}) the consistency form of the intraclass correlation coefficient, ICC(3,1) "
+            f"(two-way mixed effects, single rating; Shrout and Fleiss, 1979; equivalently ICC(C,1), "
+            f"McGraw and Wong, 1996), computed within each batch between pre- and post-harmonization "
+            f"values for each feature and summarized across batches as the median with the interquartile range, "
+            f"interpreted with the thresholds of Koo and Li (2016) as "
             f"poor (< 0.50), moderate (0.50-0.75), good (0.75-0.90), excellent (>= 0.90); "
             f"this is the primary recommended metric as it directly assesses whether harmonization "
-            f"preserved within-batch biological variability"
+            f"preserved within-batch biological variability. The consistency form is used because "
+            f"harmonization intentionally shifts batch means and scales, so an absolute-agreement "
+            f"coefficient would penalize that intended correction"
         )
         metric_idx += 1
 
@@ -913,6 +931,7 @@ def generate_report(
     extra_assoc_df=None,
     fig_extra_assoc=None,
     extra_assoc_figs=None,
+    fdr_note=None,
     assoc_cont_vars=None,
     assoc_cat_vars=None,
     modality_groups=None,
@@ -999,6 +1018,7 @@ def generate_report(
             {"variable": d["variable"], "html": _fig_html(d["fig"])}
             for d in (extra_assoc_figs or []) if d.get("fig") is not None
         ],
+        fdr_note = fdr_note or "",
         table_ebt       = _summary_table(icc_ebt, spm_ebt, anc_before, anc_ebt, "EB=TRUE"),
         table_ebf       = _summary_table(icc_ebf, spm_ebf, anc_before, anc_ebf, "EB=FALSE") if run_ebf else "",
         table_compare   = _comparison_table(icc_ebt, icc_ebf, anc_ebt, anc_ebf, spm_ebt, spm_ebf) if run_ebf else "",

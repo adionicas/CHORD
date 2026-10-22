@@ -12,7 +12,8 @@ from src.harmonize import (run_combat, run_combat_grouped, run_combat_per_featur
 from src.metrics   import (site_mean_deviation, spearman_raw_vs_harm,
                             compute_icc, age_correlations, ancova_site_effect,
                             demographic_summary,
-                            compute_icc_by_site, compute_spearman_by_site,
+                            compute_icc_by_site, compute_icc_within_summary,
+                            compute_spearman_by_site,
                             compute_extra_associations)
 from src.plots     import (plot_site_deviation, plot_spearman, plot_icc,
                            plot_age_correlations, plot_cohens_f,
@@ -52,25 +53,16 @@ with st.sidebar:
     st.markdown("""
 **CHORD** performs ComBat harmonization of multisite neuroimaging data and produces a standardized evaluation report.
 
-Input: a table of imaging features with batch, age, and sex columns. Output: the harmonized table and an evaluation report.
+Input: a table in which each row is a participant, containing a batch column and one or more imaging feature columns; biological covariates to be preserved during harmonization, typically age and sex, may be included but are not required. Output: the harmonized feature table and an evaluation report.
 
 **Recommended metrics (default ON):**
 - Batch mean deviation (z-score), always included
-- Within-batch consistency by batch (ICC3), primary recommended metric
+- Within-batch consistency by batch (ICC(3,1)), primary recommended metric
 - Batch effect size (ANCOVA, Cohen's f)
 
 **Optional metrics:**
 - Age associations (Pearson r, FDR-corrected). Optional: can be confounded by head motion, and are uninformative when the age range is narrow
 - Additional variable associations (OLS) — e.g. injury severity, time since injury
-
-**Why ICC by batch is the primary metric:**
-Within-batch ICC measures whether harmonization preserved the internal variability of each batch's data. A high ICC means the rank ordering of participants is intact after batch correction, that is, changing batch means and scales did not distort within-batch biological variability.
-
-**ICC thresholds** — Koo & Li (2016):
-- < 0.50: Poor
-- 0.50–0.75: Moderate
-- 0.75–0.90: Good
-- ≥ 0.90: Excellent
     """)
     st.divider()
     if "YOUR_USERNAME" not in GITHUB_URL:
@@ -161,34 +153,48 @@ def _col_selector(label, all_cols, default, key):
         return None
     return sel
 
-c1, c2, c3 = st.columns(3)
-with c1:
-    site_col = _col_selector("Site / Batch column", all_cols, default_site, "site")
-with c2:
-    age_col  = _col_selector("Age column",          all_cols, default_age,  "age")
-with c3:
-    sex_col  = _col_selector("Sex column",           all_cols, default_sex,  "sex")
+site_col = _col_selector("Site / Batch column", all_cols, default_site, "site")
+st.caption(
+    "Use your study's batch column. If every site used a single scanner with no hardware or "
+    "software changes, the site column can serve as the batch. If a site used more than one "
+    "scanner, or scanners were upgraded during data collection, define the batch as the "
+    "combination of site and scanner. If known hardware or software version changes occurred "
+    "during data collection and were traced, this can also be reflected in the batch variable, "
+    "meaning the batch variable would reflect a combination of site, scanner and "
+    "hardware/software version upgrades."
+)
 
-if None in (site_col, age_col, sex_col):
+if site_col is None:
     st.stop()
+
+# Age and sex are optional covariates, not required columns. They are detected
+# automatically here and offered, pre-selected, in the covariate section below.
+age_col = default_age if (default_age and default_age in all_cols) else None
+sex_col = default_sex if (default_sex and default_sex in all_cols) else None
 
 # ── Covariates to preserve in the ComBat model ────────────────────────────
 st.markdown("**Covariates to preserve in the ComBat model**")
 st.caption(
     "ComBat harmonization can preserve the biological variability of key variables "
-    "of interest, for example Age and Sex, while removing batch-related variance. "
-    "Only the Site/Batch column is strictly required. Everything else is optional."
+    "of interest, for example age and sex, while removing batch-related variance. "
+    "Only the batch column is strictly required; every covariate is optional. Age and sex "
+    "are detected automatically and pre-selected when present, and can be unchecked, for "
+    "example in a study with a single sex or no age variability."
 )
 
 other_candidates = [c for c in all_cols if c not in {site_col, age_col, sex_col}]
 
 cov_c1, cov_c2 = st.columns(2)
 with cov_c1:
-    st.markdown("**Continuous covariates** *(numeric values — e.g. Age, days since injury)*")
-    inc_age = st.checkbox(
-        f"Include **{age_col}** (auto-detected)",
-        value=True, key="inc_age",
-    )
+    st.markdown("**Continuous covariates** *(numeric values, for example age, days since injury)*")
+    if age_col is not None:
+        inc_age = st.checkbox(
+            f"Include **{age_col}** (auto-detected age)",
+            value=True, key="inc_age",
+        )
+    else:
+        inc_age = False
+        st.caption("No age column was auto-detected. Add one below if your study has age.")
     extra_cont_add = st.multiselect(
         "Add more continuous covariates",
         options=[c for c in other_candidates if c in num_cols],
@@ -196,11 +202,15 @@ with cov_c1:
         placeholder="e.g. days since injury, TSI …",
     )
 with cov_c2:
-    st.markdown("**Categorical covariates** *(group labels — e.g. Sex, diagnosis, group)*")
-    inc_sex = st.checkbox(
-        f"Include **{sex_col}** (auto-detected)",
-        value=True, key="inc_sex",
-    )
+    st.markdown("**Categorical covariates** *(group labels, for example sex, diagnosis, group)*")
+    if sex_col is not None:
+        inc_sex = st.checkbox(
+            f"Include **{sex_col}** (auto-detected sex)",
+            value=True, key="inc_sex",
+        )
+    else:
+        inc_sex = False
+        st.caption("No sex column was auto-detected. Add one below if your study has sex.")
     extra_cat_add = st.multiselect(
         "Add more categorical covariates",
         options=other_candidates,
@@ -209,18 +219,18 @@ with cov_c2:
     )
 
 # Final covariate lists passed to ComBat
-continuous_covariates = ([age_col] if inc_age else []) + extra_cont_add
-categorical_covariates = ([sex_col] if inc_sex else []) + extra_cat_add
+continuous_covariates = ([age_col] if (inc_age and age_col) else []) + extra_cont_add
+categorical_covariates = ([sex_col] if (inc_sex and sex_col) else []) + extra_cat_add
 
-# Also expose for downstream use (diagnostics always use age/sex if present)
+# Also expose for downstream use
 extra_continuous  = extra_cont_add
 extra_categorical = extra_cat_add
 
 # Summary box
 all_covars_display = (
-    [f"{age_col} (continuous)" for _ in [1] if inc_age]
+    ([f"{age_col} (continuous)"] if (inc_age and age_col) else [])
     + [f"{c} (continuous)" for c in extra_cont_add]
-    + [f"{sex_col} (categorical)" for _ in [1] if inc_sex]
+    + ([f"{sex_col} (categorical)"] if (inc_sex and sex_col) else [])
     + [f"{c} (categorical)" for c in extra_cat_add]
 )
 if all_covars_display:
@@ -257,8 +267,7 @@ st.markdown(f"**Step 2b — Select feature columns to harmonize** ({len(auto_fea
 
 # ── Option 1: Range by column name (primary) ──────────────────────────────
 st.markdown("**Option 1 — Select a range**")
-use_col_num = st.checkbox("Use column numbers instead of names", value=False,
-                          help="Check this if column names are not informative enough to use as range boundaries")
+use_col_num = st.session_state.get("range_use_col_num", False)
 
 if not use_col_num:
     na_c1, na_c2 = st.columns(2)
@@ -300,6 +309,9 @@ else:
     num_preview = all_df_cols[from_num-1:to_num]
     st.caption(f"Columns {from_num}–{to_num}: "
                f"{', '.join(num_preview[:5])}{'…' if len(num_preview) > 5 else ''}")
+
+st.checkbox("Use column numbers instead of names", value=False, key="range_use_col_num",
+            help="Check this if column names are not informative enough to use as range boundaries")
 
 # ── Option 2: Exclude by keyword ──────────────────────────────────────────
 st.markdown("**Option 2 — Exclude columns whose name contains a keyword**")
@@ -380,7 +392,7 @@ with st.expander(f"View all {len(feature_cols)} selected feature names in full")
             grid[j].markdown(f"`{idx}.` {name}")
 
 sites = df[site_col].dropna().unique()
-st.info(f"Batches: **{', '.join(sorted(sites.astype(str)))}** ({len(sites)} batches) | Features: **{len(feature_cols)}**")
+st.info(f"Batches (n = {len(sites)}): **{', '.join(sorted(sites.astype(str)))}**")
 
 st.divider()
 st.subheader("Step 2c. Multiple imaging modalities or measure types (optional)")
@@ -684,10 +696,6 @@ if st.button("Generate data matrix preview", use_container_width=False):
     mod_note = ("Top strip = modality group (colored, separated by vertical lines). "
                 if modality_groups else "")
     st.plotly_chart(fig_carpet, use_container_width=True)
-    st.caption(f"Left strip = batch identity (colored). {mod_note}"
-               f"Main panel = z-scored feature values (red = high, blue = low, black = missing). "
-               f"Missing: {np.isnan(mat).sum():,} cells ({pct_missing:.1f}%). "
-               f"Horizontal lines = batch boundaries.")
   except Exception as _preview_err:
     st.error(f"Preview could not be generated: {_preview_err}")
 
@@ -695,11 +703,14 @@ if st.button("Generate data matrix preview", use_container_width=False):
 st.markdown("---")
 st.markdown("**Missing value assessment (optional)**")
 st.caption(
-    "Counts missing values per variable among the selected features and the "
-    "covariates. neuroCombat requires complete data within each ComBat run, so a "
-    "participant missing a value is excluded from that variable's run. Use this "
-    "to see which variables drive the missingness."
+    "Two kinds of missingness matter for harmonization, and this section shows them "
+    "separately. neuroCombat requires a complete feature matrix when Empirical Bayes is "
+    "used, because Empirical Bayes pools information across features, so a participant with "
+    "any missing feature is dropped from that run. When Empirical Bayes is not used, features "
+    "can be harmonized one at a time and this completeness requirement is relaxed."
 )
+
+st.markdown("**Missingness in the model variables (for example, batch, age, sex, and added covariates)**")
 
 # ── Model-variable (demographic) missingness — always shown ──
 # A participant missing the site, age, sex, or any added covariate is dropped
@@ -724,6 +735,7 @@ if _n_model_incomplete > 0:
 else:
     st.caption("All participants have complete batch, age, sex, and added covariates.")
 
+st.markdown("**Missingness in the imaging features**")
 if st.button("Assess missing values"):
     try:
         assess_cols = [c for c in [age_col, sex_col] + extra_continuous + extra_categorical
@@ -825,7 +837,7 @@ if _excluded_so_far:
     _ex_df = pd.DataFrame(_excluded_so_far)
     _ex_df["Measure group"] = _ex_df["Feature"].map(_grp_excl)
     _ex_df = _ex_df[["Feature", "Measure group", "Missing (%)"]]
-    st.markdown(f"**Excluded so far: {len(_ex_df)} feature(s)** (removed from the selection)")
+    st.markdown(f"**Excluded: {len(_ex_df)} feature(s)** (removed from the selection)")
     st.dataframe(_ex_df, use_container_width=True, hide_index=True)
     st.button("Undo all exclusions (restore to selection)", on_click=_undo_all_exclusions)
 
@@ -877,7 +889,7 @@ else:
         ]).sort_values("Features over threshold", ascending=False).reset_index(drop=True)
         st.dataframe(summ, use_container_width=True, hide_index=True)
         # detailed list of the features over threshold, with their measure
-        with st.expander(f"View the {len(over)} features over threshold and their measure"):
+        with st.expander(f"View the {len(over)} features over missingness threshold"):
             over_df = pd.DataFrame({
                 "Variable":           list(over.index),
                 "Measure / modality": [col_to_measure[c] for c in over.index],
@@ -890,9 +902,10 @@ else:
             on_click=_exclude_high_missing_features, args=(list(over.index), miss_thr, over.to_dict()),
         )
 
-# ── Data summary table ────────────────────────────────────────────────────
+# ── Sample summary and batch exclusion ────────────────────────────────────
 st.markdown("---")
-st.markdown("**Sample summary table (optional)**")
+st.subheader("Sample summary and batch exclusion (optional)")
+st.markdown("**Sample summary table**")
 st.caption(
     "Builds a descriptive table of your sample broken down by batch, so you can "
     "check how participants are distributed across batches before harmonizing "
@@ -948,8 +961,7 @@ if gen_summary and summary_vars:
     except Exception as _sum_err:
         st.error(f"Summary could not be generated: {_sum_err}")
 
-st.divider()
-st.subheader("Batch exclusion (optional)")
+st.markdown("**Batch exclusion**")
 st.caption(
     "Exclude batches before harmonization, for example batches that are too small "
     "or whose distribution differs substantially from the rest. The table below "
@@ -999,7 +1011,7 @@ st.divider()
 st.subheader("Evaluation and report options")
 st.caption(
     "Select which metrics to compute and include in the supplementary report. "
-    "Within-batch consistency by batch (ICC3) is the primary recommended metric; it directly measures "
+    "Within-batch consistency by batch (ICC(3,1)) is the primary recommended metric; it directly measures "
     "whether harmonization preserved the internal variability of each batch's data (that is, that changing "
     "batch means and scales did not distort within-batch biological signal). "
     "Age correlations are optional because they may be confounded by motion in pediatric fMRI samples, "
@@ -1009,12 +1021,16 @@ st.caption(
 eval_c1, eval_c2 = st.columns(2)
 with eval_c1:
     include_icc_by_site = st.checkbox(
-        "Within-batch consistency by batch (ICC3), recommended",
+        "Within-batch consistency by batch (ICC(3,1)), recommended",
         value=True, key="inc_icc_site",
         help=(
-            "ICC(C,1) between raw and harmonized values computed within each batch. "
-            "This is the primary metric for assessing whether harmonization preserved within-batch "
-            "biological variability. Minimum 3 participants per batch required (pingouin constraint)."
+            "ICC(3,1), the consistency form of the intraclass correlation coefficient, between raw and "
+            "harmonized values computed within each batch. The consistency form is used because "
+            "harmonization intentionally shifts batch means and scales; an absolute-agreement ICC would "
+            "penalize that intended correction, whereas the consistency form measures whether the relative "
+            "ordering of participants is preserved. This is the primary metric for assessing whether "
+            "harmonization preserved within-batch biological variability. Minimum 3 participants per batch "
+            "required (pingouin constraint)."
         ),
     )
     include_cohens_f = st.checkbox(
@@ -1047,6 +1063,17 @@ with eval_c2:
             "covariates passed to ComBat, excluding the variable being evaluated."
         ),
     )
+
+use_fdr = st.checkbox(
+    "Apply FDR correction (Benjamini-Hochberg) to the association p-values",
+    value=True, key="use_fdr",
+    help=(
+        "When on, age and additional-variable associations are corrected for multiple comparisons "
+        "with the Benjamini-Hochberg false discovery rate; when multiple imaging modalities are "
+        "defined, the correction is applied within each modality. When off, the uncorrected p-value "
+        "is used. The report states the correction method and the number of hypotheses per correction group."
+    ),
+)
 
 assoc_cont_vars, assoc_cat_vars = [], []
 if include_extra_assoc:
@@ -1087,6 +1114,15 @@ if bool(_feat_na.any().any()):
         f"per-feature option runs without it."
     )
 
+st.caption(
+    "How missing feature values are handled depends on Empirical Bayes. If Empirical Bayes is not used, "
+    "missing values are less of a problem, because each feature is harmonized on its own available data, "
+    "so no imputation or pattern grouping is needed (this is the per-feature option). If Empirical Bayes "
+    "is used, which is the default, the tool imputes missing feature values with each feature's median "
+    "for harmonization only, and the imputed values are never reported. Keep this median default, or "
+    "choose complete cases only, or grouping features by shared missing pattern."
+)
+
 _MISS_OPTS = {
     "Complete case (drop participants missing any feature in a run)": "complete",
     "Impute missing with median, keep Empirical Bayes":              "impute",
@@ -1106,6 +1142,26 @@ missing_mode_label = st.selectbox(
 missing_mode = _MISS_OPTS[missing_mode_label]
 per_feature = (missing_mode == "per_feature")
 
+st.markdown("**What each method does**")
+st.table(pd.DataFrame([
+    {"Method": "Complete case",
+     "What it does": "Drops any participant missing any feature in the run",
+     "Empirical Bayes": "Yes",
+     "Participants used": "Only participants complete on all features"},
+    {"Method": "Median imputation",
+     "What it does": "Fills each missing value with that feature's median, harmonizes, then restores the originally missing cells to blank",
+     "Empirical Bayes": "Yes",
+     "Participants used": "All participants"},
+    {"Method": "Missing-pattern grouping",
+     "What it does": "Harmonizes together the features missing in the same participants, one Empirical Bayes run per pattern",
+     "Empirical Bayes": "Yes",
+     "Participants used": "Each participant, for the features they have"},
+    {"Method": "Per-feature",
+     "What it does": "Harmonizes each feature on its own complete cases, one feature at a time",
+     "Empirical Bayes": "No",
+     "Participants used": "Each participant, for the features they have"},
+]))
+
 # How many participants remain under the chosen handling (after any site exclusion)
 _work = df[~df[site_col].isin(excluded_sites)] if excluded_sites else df
 _cov_cols = [site_col] + continuous_covariates + categorical_covariates
@@ -1119,11 +1175,18 @@ elif missing_mode == "impute":
 else:  # pattern / per_feature
     _retained = int((_cov_ok & _feat_ok_any).sum())
 _dropped = len(_work) - _retained
+_cov_drop = int((~_cov_ok).sum())
+_feat_drop = max(_dropped - _cov_drop, 0)
+_drop_parts = []
+if _cov_drop:
+    _drop_parts.append(f"{_cov_drop} are missing a model variable (batch, age, sex, or a covariate)")
+if _feat_drop:
+    _drop_parts.append(f"{_feat_drop} have missing feature values under this method")
+_drop_expl = " and ".join(_drop_parts) if _drop_parts else "none for these reasons"
 st.info(
     f"Participants with this method: **{len(_work)}** in the data "
     f"(after batch exclusion) → **{_retained}** retained, **{_dropped}** dropped. "
-    f"Of those dropped, {int((~_cov_ok).sum())} are missing a model variable "
-    f"(batch/age/sex/covariate) and the rest are dropped by the feature-missing rule."
+    f"Of the {_dropped} dropped, {_drop_expl}."
 )
 
 eb_options = {
@@ -1204,28 +1267,31 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
 
         spm_ebt, spm_ebf = None, None  # Spearman removed; ICC3 is sufficient for consistency
 
-        progress.progress(50, "Computing ICC (overall)...")
-        icc_parts = []
-        if harm_ebt is not None:
-            ic = compute_icc(df_harm, harm_ebt, feature_cols); ic["harmonization"] = "EB=TRUE";  icc_parts.append(ic)
-        if harm_ebf is not None:
-            ic = compute_icc(df_harm, harm_ebf, feature_cols); ic["harmonization"] = "EB=FALSE"; icc_parts.append(ic)
-        icc_all = pd.concat(icc_parts, ignore_index=True) if icc_parts else pd.DataFrame()
-        icc_ebt = icc_parts[0] if run_ebt and icc_parts else None
-        icc_ebf = icc_parts[-1] if run_ebf and len(icc_parts) > (1 if run_ebt else 0) else (icc_parts[0] if not run_ebt and icc_parts else None)
+        progress.progress(55, "Computing within-batch ICC(3,1)...")
+        # ICC(3,1) is computed within each batch, per feature per batch. The
+        # overall, pooled ICC is intentionally not computed. The per-batch values
+        # feed the by-batch distribution figure and are summarized per feature as
+        # median [IQR] across batches for the feature-level tables.
+        icc_site_ebt = (compute_icc_by_site(df_harm, harm_ebt, feature_cols, site_col)
+                        if harm_ebt is not None else None)
+        icc_site_ebf = (compute_icc_by_site(df_harm, harm_ebf, feature_cols, site_col)
+                        if harm_ebf is not None else None)
+        icc_ebt = (compute_icc_within_summary(df_harm, harm_ebt, feature_cols, site_col, by=icc_site_ebt)
+                   if harm_ebt is not None else None)
+        icc_ebf = (compute_icc_within_summary(df_harm, harm_ebf, feature_cols, site_col, by=icc_site_ebf)
+                   if harm_ebf is not None else None)
+        icc_all = pd.DataFrame()  # overall ICC removed; ICC is within-batch only
 
-        icc_site_ebt = icc_site_ebf = None
-        if include_icc_by_site:
-            progress.progress(67, "Computing ICC (by batch)...")
-            icc_site_ebt = compute_icc_by_site(df_harm, harm_ebt, feature_cols, site_col) if harm_ebt is not None else None
-            icc_site_ebf = compute_icc_by_site(df_harm, harm_ebf, feature_cols, site_col) if harm_ebf is not None else None
+        # When multiple modalities are defined, FDR is applied within each modality.
+        _feature_group = ({f: g for g, feats in modality_groups.items() for f in feats}
+                          if modality_groups else None)
 
         age_all = pd.DataFrame()
-        if include_age_corr:
+        if include_age_corr and age_col:
             progress.progress(74, "Computing age correlations...")
-            age_parts = [age_correlations(df_harm, feature_cols, age_col, "Before harmonization")]
-            if harm_ebt is not None: age_parts.append(age_correlations(harm_ebt, feature_cols, age_col, "After (EB=TRUE)"))
-            if harm_ebf is not None: age_parts.append(age_correlations(harm_ebf, feature_cols, age_col, "After (EB=FALSE)"))
+            age_parts = [age_correlations(df_harm, feature_cols, age_col, "Before harmonization", use_fdr=use_fdr, feature_group=_feature_group)]
+            if harm_ebt is not None: age_parts.append(age_correlations(harm_ebt, feature_cols, age_col, "After (EB=TRUE)", use_fdr=use_fdr, feature_group=_feature_group))
+            if harm_ebf is not None: age_parts.append(age_correlations(harm_ebf, feature_cols, age_col, "After (EB=FALSE)", use_fdr=use_fdr, feature_group=_feature_group))
             age_all = pd.concat(age_parts, ignore_index=True)
 
         anc_before = anc_ebt = anc_ebf = None
@@ -1256,15 +1322,18 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
             progress.progress(82, "Computing per-variable associations...")
             u_parts = [compute_extra_associations(
                 df_harm, feature_cols, eval_cont, eval_cat,
-                continuous_covariates, categorical_covariates, "Before harmonization")]
+                continuous_covariates, categorical_covariates, "Before harmonization",
+                use_fdr=use_fdr, feature_group=_feature_group)]
             if harm_ebt is not None:
                 u_parts.append(compute_extra_associations(
                     harm_ebt, feature_cols, eval_cont, eval_cat,
-                    continuous_covariates, categorical_covariates, "After (EB=TRUE)"))
+                    continuous_covariates, categorical_covariates, "After (EB=TRUE)",
+                    use_fdr=use_fdr, feature_group=_feature_group))
             if harm_ebf is not None:
                 u_parts.append(compute_extra_associations(
                     harm_ebf, feature_cols, eval_cont, eval_cat,
-                    continuous_covariates, categorical_covariates, "After (EB=FALSE)"))
+                    continuous_covariates, categorical_covariates, "After (EB=FALSE)",
+                    use_fdr=use_fdr, feature_group=_feature_group))
             u_ne = [p for p in u_parts if len(p) > 0]
             assoc_unified_df = pd.concat(u_ne, ignore_index=True) if u_ne else pd.DataFrame()
 
@@ -1295,7 +1364,7 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
                                     anc_ebt if anc_ebt is not None else pd.DataFrame(),
                                     anc_ebf)
 
-        fig_icc = plot_icc(icc_all) if len(icc_all) > 0 else None
+        fig_icc = None  # overall ICC bar chart removed; ICC is within-batch only
 
         fig_icc_ci = None
         if run_ebf and icc_ebt is not None and icc_ebf is not None:
@@ -1314,7 +1383,7 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
             icc_site_ebt if icc_site_ebt is not None else pd.DataFrame(),
             icc_site_ebf,
             site_n=site_n,
-        ) if _have_site_icc else None
+        ) if (_have_site_icc and include_icc_by_site) else None
 
         fig_extra_assoc = None
         extra_assoc_figs = []
@@ -1342,6 +1411,16 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
         } if _k else None
         excl_info = st.session_state.get("_excl_info")
         excl_feat_list = st.session_state.get("_excl_feat_list", [])
+        if not use_fdr:
+            fdr_note = ("No multiple-comparison correction was applied to the association p-values; "
+                        "uncorrected p-values are reported.")
+        elif modality_groups:
+            _grp_sizes = "; ".join(f"{g}, {len(feats)} features" for g, feats in modality_groups.items())
+            fdr_note = ("Benjamini-Hochberg false discovery rate correction was applied within each modality, "
+                        f"across the features within that modality ({_grp_sizes}).")
+        else:
+            fdr_note = ("Benjamini-Hochberg false discovery rate correction was applied across all "
+                        f"{len(feature_cols)} features.")
         html_report = generate_report(
             df_raw=df, site_col=site_col, age_col=age_col, sex_col=sex_col,
             feature_cols=feature_cols, n_retained=n_retained,
@@ -1371,6 +1450,7 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
             extra_assoc_figs=extra_assoc_figs,
             assoc_cont_vars=assoc_cont_vars,
             assoc_cat_vars=assoc_cat_vars,
+            fdr_note=fdr_note,
         )
 
         methods_para = build_methods_paragraph(
@@ -1454,7 +1534,12 @@ if st.session_state.get("results_ready"):
 
     with tabs[tab_idx]:
         st.plotly_chart(st.session_state["fig_site"], use_container_width=True)
-        st.caption("Each point = one (batch, feature) pair. Batch means should cluster near zero after harmonization.")
+        st.caption(
+            "Each point = one (batch, feature) pair. Batch means should cluster near zero after harmonization. "
+            "Each feature is standardized to a z-score for display only, so that features measured on different "
+            "scales, for example when several measures are harmonized together, can be shown on one axis. This "
+            "standardization affects only the figure; ComBat harmonizes the raw feature values."
+        )
     tab_idx += 1
 
     if _inc_cohens_f:
@@ -1471,7 +1556,7 @@ if st.session_state.get("results_ready"):
             if st.session_state.get("fig_icc_site"):
                 st.plotly_chart(st.session_state["fig_icc_site"], use_container_width=True)
                 st.caption(
-                    "Each box = distribution of ICC3 across features for that batch. "
+                    "Each box = distribution of ICC(3,1) across features for that batch. "
                     "Within-batch ICC is the primary recommended metric; it measures whether harmonization "
                     "preserved the rank ordering of participants within each batch, indicating that "
                     "within-batch biological variability was not distorted by batch correction. "
