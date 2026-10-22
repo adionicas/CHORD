@@ -529,14 +529,9 @@ if use_modality:
             )
 
         if groups:
-            preview = pd.DataFrame([
-                {"Group (token)": g, "Columns matched": len(cols)}
-                for g, cols in groups.items()
-            ])
-            st.dataframe(preview, hide_index=True, use_container_width=True)
-            with st.expander("View all columns in each group"):
-                for g, cols in groups.items():
-                    st.markdown(f"**{g}** ({len(cols)} columns)")
+            st.markdown(f"**{len(groups)} groups** (click a group to show its columns)")
+            for g, cols in groups.items():
+                with st.expander(f"{g}: {len(cols)} column{'s' if len(cols) != 1 else ''} (show)"):
                     st.write(", ".join(cols))
 
         if unassigned:
