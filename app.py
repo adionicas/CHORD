@@ -100,6 +100,7 @@ if uploaded is not None:
     try:
         df = pd.read_csv(uploaded) if uploaded.name.endswith(".csv") else pd.read_excel(uploaded)
         data_key = f"upload:{uploaded.name}:{uploaded.size}"
+        data_stem = uploaded.name.rsplit(".", 1)[0]   # downloads are named after the loaded table
         st.session_state["use_demo"] = False
     except Exception as e:
         st.error(f"Could not read file: {e}")
@@ -107,6 +108,7 @@ elif st.session_state.get("use_demo"):
     try:
         df = pd.read_csv("example_data.csv")
         data_key = "example_data.csv"
+        data_stem = "example_data"
         st.info("Loaded synthetic example dataset (215 participants, 6 batches, 20 FA features, not real patient data)")
     except FileNotFoundError:
         st.error("Example data file not found.")
@@ -1602,7 +1604,7 @@ if st.session_state.get("results_ready"):
         st.download_button(
             label="⬇  Report (HTML)",
             data=st.session_state["html_report"],
-            file_name="harmonization_report.html",
+            file_name=f"{data_stem}_harmonization_report.html",
             mime="text/html",
             type="primary",
             use_container_width=True,
@@ -1613,7 +1615,7 @@ if st.session_state.get("results_ready"):
             st.download_button(
                 label="⬇  Harmonized data — EB=TRUE",
                 data=st.session_state["harm_csv_ebt"],
-                file_name="harmonized_EBT.csv",
+                file_name=f"{data_stem}_harmonized_EBT.csv",
                 mime="text/csv",
                 use_container_width=True,
             )
@@ -1622,7 +1624,7 @@ if st.session_state.get("results_ready"):
             st.download_button(
                 label="⬇  Harmonized data — EB=FALSE",
                 data=st.session_state["harm_csv_ebf"],
-                file_name="harmonized_EBF.csv",
+                file_name=f"{data_stem}_harmonized_EBF.csv",
                 mime="text/csv",
                 use_container_width=True,
             )
