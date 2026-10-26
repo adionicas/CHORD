@@ -21,6 +21,12 @@ BEFORE_COLOR = ORANGE
 AFTER_EBT    = BLUE
 AFTER_EBF    = GREEN
 
+# A legend under the plot is anchored to the bottom of the whole figure (not to the
+# plot area), with its own space reserved in the bottom margin, so it never runs into
+# the x-axis tick labels or the axis title, whatever their size.
+BOTTOM_LEGEND = dict(orientation="h", yref="container", yanchor="bottom", y=0.01,
+                     xanchor="center", x=0.5)
+
 WHITE_BG = dict(
     plot_bgcolor  = "white",
     paper_bgcolor = "white",
@@ -298,9 +304,9 @@ def plot_age_correlations(age_df: pd.DataFrame) -> go.Figure:
     fig.update_yaxes(title_text="Pearson r (after harmonization)", row=1, col=1)
     fig.update_layout(
         title="Age associations: Pearson r before vs after harmonization (each point = one feature)",
-        height=490, **WHITE_BG,
-        legend=dict(orientation="h", yanchor="top", y=-0.18,
-                    xanchor="center", x=0.5),
+        height=520, **WHITE_BG,
+        legend=BOTTOM_LEGEND,
+        margin=dict(b=130),
     )
     return fig
 
@@ -586,7 +592,7 @@ def plot_icc_by_site(
             tickvals=list(range(len(sites))),
             ticktext=([str(i + 1) for i in range(n_sites)] if use_numbers
                       else [_site_label(s) for s in sites]),
-            tickangle=0 if use_numbers else 45,
+            tickangle=0,
             tickfont=dict(size=tick_size),
             row=1, col=col_i,
         )
@@ -607,19 +613,13 @@ def plot_icc_by_site(
             showarrow=False, align="left", font=dict(size=8, color="black"),
         )
 
-    legend_y = -0.16 - 0.052 * n_key_lines
-    bottom   = (140 + 22 * n_key_lines) if use_numbers else 150
+    bottom   = (150 + 22 * n_key_lines) if use_numbers else 140
     fig.update_yaxes(title_text="ICC(3,1)", range=[0, 1.08], row=1, col=1)
     fig.update_layout(
         title="Within-batch consistency by batch, ICC(3,1) (Koo & Li 2016)",
         height=520 + (18 * n_key_lines if use_numbers else 0), **WHITE_BG,
         margin=dict(r=40, b=bottom),
-        legend=dict(
-            orientation="h",
-            yanchor="top", y=legend_y,
-            xanchor="center", x=0.5,
-            title_text="ICC(3,1) category",
-        ),
+        legend=dict(BOTTOM_LEGEND, title_text="ICC(3,1) category"),
     )
     return fig
 
@@ -784,10 +784,9 @@ def plot_extra_associations(assoc_df: pd.DataFrame) -> go.Figure | None:
 
     fig.update_layout(
         title="Additional variable associations: effect size before vs after harmonization",
-        height=300 * n_rows + 140, **WHITE_BG,
-        legend=dict(orientation="h", yanchor="top", y=-0.09 / max(n_rows, 1) - 0.03,
-                    xanchor="center", x=0.5),
-        margin=dict(b=90),
+        height=300 * n_rows + 170, **WHITE_BG,
+        legend=BOTTOM_LEGEND,
+        margin=dict(b=130),
     )
     return fig
 
@@ -858,7 +857,9 @@ def plot_single_association(assoc_df: pd.DataFrame, variable: str) -> go.Figure 
 
         for grp, lbl, mc, sym, sz, op in [
             (ns,      LBL_NS,   GREY,   "circle",  7,  0.40),
-            (new_sig, LBL_NEW,  color,  "circle",  9,  0.85),
+            # one colour in every panel for "significant after only", so the
+            # legend (built from the first panel) matches the markers everywhere
+            (new_sig, LBL_NEW,  AFTER_EBT, "circle",  9,  0.85),
             (lost,    LBL_LOST, ORANGE, "diamond", 9,  0.85),
             (both,    LBL_BOTH, PURPLE, "square",  9,  0.85),
         ]:
@@ -911,9 +912,9 @@ def plot_single_association(assoc_df: pd.DataFrame, variable: str) -> go.Figure 
 
     fig.update_layout(
         title=f"{variable} association ({eff_lbl}) before versus after harmonization",
-        height=470, **WHITE_BG,
-        legend=dict(orientation="h", yanchor="top", y=-0.16, xanchor="center", x=0.5),
-        margin=dict(b=90),
+        height=500, **WHITE_BG,
+        legend=BOTTOM_LEGEND,
+        margin=dict(b=130),
     )
     return fig
 
