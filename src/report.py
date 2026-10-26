@@ -9,6 +9,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 from jinja2 import Template
+from src.naming import measure_keys
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -130,14 +131,9 @@ def _excl_feat_block(excl_feat_list, multimodal):
     d = pd.DataFrame(excl_feat_list)
     name_col = "Feature" if "Feature" in d.columns else d.columns[0]
     if multimodal:
-        def _measure(c):
-            if "." in c:
-                return c.rsplit(".", 1)[1]
-            if "_" in c:
-                return c.split("_", 1)[0] + "_"
-            return "(unknown)"
+        _guess = measure_keys(d[name_col].astype(str).tolist())
         d = d.copy()
-        d["Measure group"] = d[name_col].astype(str).map(_measure)
+        d["Measure group"] = d[name_col].astype(str).map(_guess)
         rows = []
         for meas, g in d.groupby("Measure group"):
             rows.append({
@@ -154,33 +150,18 @@ def _excl_feat_block(excl_feat_list, multimodal):
 
 
 def _feature_group_block(feature_cols, modality_groups):
-    """S1.1 table: all harmonized features grouped by measure group (one row per
-    measure, the ROI list in a single cell), mirroring Table S1a. Falls back to a
-    pill list when the features do not split into two or more groups."""
+    """S1.1: the harmonized features. When the run used modality groups, one row
+    per group (as the user defined them) with its features in one cell;
+    otherwise a plain list, because no grouping was applied."""
     if not feature_cols:
         return ""
-
-    def _measure(c):
-        if modality_groups:
-            for g, cols in modality_groups.items():
-                if c in cols:
-                    return g
-        if "." in c:
-            return c.rsplit(".", 1)[1]
-        if "_" in c:
-            return c.split("_", 1)[0] + "_"
-        return "(feature)"
-
-    grouped = {}
-    for c in feature_cols:
-        grouped.setdefault(_measure(c), []).append(c)
-    if len(grouped) <= 1:
+    if not modality_groups:
         return _format_feature_list(feature_cols)
     rows = [{
-        "Measure group":   meas,
-        "n features":      len(cols),
-        "ROIs (features)": ", ".join(cols),
-    } for meas, cols in grouped.items()]
+        "Modality group": g,
+        "n features":     len([c for c in cols if c in set(feature_cols)]),
+        "Features":       ", ".join(c for c in cols if c in set(feature_cols)),
+    } for g, cols in modality_groups.items()]
     return _df_table(pd.DataFrame(rows))
 
 
