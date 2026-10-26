@@ -140,7 +140,7 @@ with st.expander("Preview data", expanded=True):
 # STEP 2 — Configure
 # ─────────────────────────────────────────────────────────────────────────────
 st.divider()
-st.subheader("Step 2 — Configure columns")
+st.subheader("Step 2 — Configure the ComBat model")
 
 all_cols = df.columns.tolist()
 num_cols = df.select_dtypes(include="number").columns.tolist()
@@ -232,13 +232,8 @@ with cov_c1:
         )
     else:
         inc_age = False
-        st.caption("No age column was auto-detected. Add one below if your study has age.")
-    extra_cont_add = st.multiselect(
-        "Add more continuous covariates",
-        options=[c for c in other_candidates if c in num_cols],
-        key="extra_cont",
-        placeholder="e.g. days since injury, TSI …",
-    )
+        st.caption("No age column was auto-detected. Add one with \"Add more covariates\" "
+                   "if your study has age.")
 with cov_c2:
     st.markdown("**Categorical covariates** *(group labels, for example sex, diagnosis, group)*")
     if sex_col is not None:
@@ -248,13 +243,27 @@ with cov_c2:
         )
     else:
         inc_sex = False
-        st.caption("No sex column was auto-detected. Add one below if your study has sex.")
-    extra_cat_add = st.multiselect(
-        "Add more categorical covariates",
-        options=other_candidates,
-        key="extra_cat",
-        placeholder="e.g. Group, Diagnosis, Handedness …",
-    )
+        st.caption("No sex column was auto-detected. Add one with \"Add more covariates\" "
+                   "if your study has sex.")
+
+# Further covariates only when asked for
+extra_cont_add, extra_cat_add = [], []
+if st.checkbox("Add more covariates", key="add_more_covariates"):
+    add_c1, add_c2 = st.columns(2)
+    with add_c1:
+        extra_cont_add = st.multiselect(
+            "More continuous covariates",
+            options=[c for c in other_candidates if c in num_cols],
+            key="extra_cont",
+            placeholder="e.g. days since injury, TSI …",
+        )
+    with add_c2:
+        extra_cat_add = st.multiselect(
+            "More categorical covariates",
+            options=other_candidates,
+            key="extra_cat",
+            placeholder="e.g. Group, Diagnosis, Handedness …",
+        )
 
 # Final covariate lists passed to ComBat
 continuous_covariates = ([age_col] if (inc_age and age_col) else []) + extra_cont_add
@@ -281,6 +290,46 @@ if all_covars_display:
         f"ComBat model: batch = **{site_col}**  |  covariates = "
         + ", ".join(f"**{c}**" for c in all_covars_display)
     )
+
+
+def _by_batch_table(data, batch_col, variables):
+    """
+    One row per batch plus an Overall row (participants with a batch value):
+    N, then for each variable mean (SD) and range when numeric, or n (%) per
+    category (the six most common) otherwise.
+    """
+    data = data[data[batch_col].notna()]
+    rows = []
+    for label in sorted(data[batch_col].unique().astype(str)) + ["Overall"]:
+        sub = data if label == "Overall" else data[data[batch_col].astype(str) == label]
+        row = {"Batch": label, "N": len(sub)}
+        for var in variables:
+            vals = sub[var].dropna()
+            if len(vals) == 0:
+                row[var] = "—"
+            elif pd.api.types.is_numeric_dtype(data[var]):
+                row[var] = f"{vals.mean():.2f} ({vals.std():.2f}); {vals.min():g} to {vals.max():g}"
+            else:
+                vc = vals.astype(str).value_counts()
+                row[var] = "  |  ".join(f"{v}: {n} ({100 * n / len(vals):.0f}%)"
+                                        for v, n in vc.head(6).items())
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+# ── Demographic table by batch (optional, before choosing the features) ────
+if st.toggle("Show a demographic table by batch", key="show_demo_table"):
+    _demo_vars = st.multiselect(
+        "Variables to describe (your covariates to start with; any other column can be added)",
+        options=[c for c in df.columns if c != site_col],
+        default=[c for c in [age_col if inc_age else None, sex_col if inc_sex else None]
+                 + extra_cont_add + extra_cat_add if c],
+        key="demo_table_vars",
+    )
+    st.dataframe(_by_batch_table(df, site_col, _demo_vars), use_container_width=True, hide_index=True)
+    _no_batch = int(df[site_col].isna().sum())
+    st.caption("Numeric variables: mean (SD); range. Categories: n (%)."
+               + (f" {_no_batch} participant(s) without a batch value are not in the table." if _no_batch else ""))
 else:
     st.warning(
         f"ComBat model: batch = **{site_col}** only, no covariates. "
@@ -306,7 +355,9 @@ if "sel_features" not in st.session_state or \
         not set(st.session_state["sel_features"]).issubset(set(auto_features)):
     st.session_state["sel_features"] = []
 
-st.markdown(f"**Step 2b — Select feature columns to harmonize** ({len(auto_features)} numeric columns available)")
+st.divider()
+st.subheader("Step 3 — Select the features to harmonize")
+st.caption(f"{len(auto_features)} numeric columns are available.")
 
 # ── Range of feature columns (the main way to select) ──────────────────────
 st.markdown("**Choose the first and last feature column**")
@@ -359,7 +410,7 @@ st.checkbox("Use column numbers instead of names", value=False, key="range_use_c
             help="Check this if column names are not informative enough to use as range boundaries")
 
 # ── Optional: exclude by keyword ───────────────────────────────────────────
-if st.toggle("Exclude columns whose name contains a keyword", key="use_keyword_exclusion"):
+if st.checkbox("Exclude columns whose name contains a keyword", key="use_keyword_exclusion"):
     ex_c1, ex_c2 = st.columns([4, 2])
     with ex_c1:
         excl_input = st.text_input(
@@ -440,8 +491,7 @@ with st.expander(f"View all {len(feature_cols)} selected feature names in full")
 sites = df[site_col].dropna().unique()
 st.info(f"Batches (n = {len(sites)}): **{', '.join(sorted(sites.astype(str)))}**")
 
-st.divider()
-st.subheader("Step 2c. Multiple imaging modalities or measure types (optional)")
+st.markdown("**Multiple imaging modalities or measure types (optional)**")
 
 st.caption(
     "Different imaging modalities or different measures (for example cortical "
@@ -563,7 +613,7 @@ if use_modality:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# STEP 3 — Run
+# STEP 4 — Run
 # ─────────────────────────────────────────────────────────────────────────────
 st.divider()
 st.subheader("Data preview")
@@ -626,7 +676,7 @@ st.markdown("**Missingness in the model variables (for example, batch, age, sex,
 
 # ── Model-variable (demographic) missingness — always shown ──
 # A participant missing the site, age, sex, or any added covariate is dropped
-# from EVERY ComBat run, whatever the feature-missing method chosen at Step 3.
+# from EVERY ComBat run, whatever the feature-missing method chosen at Step 4.
 _model_vars = [c for c in [site_col, age_col, sex_col] + extra_continuous + extra_categorical
                if c in df.columns]
 _model_miss = df[_model_vars].isna().sum()
@@ -843,28 +893,9 @@ with sum_c2:
 
 if gen_summary and summary_vars:
     try:
-        sites_list = sorted(df[site_col].dropna().unique().astype(str))
-        rows = []
-        for grp_label in sites_list + ["Overall"]:
-            sub = df if grp_label == "Overall" else df[df[site_col].astype(str) == grp_label]
-            row = {"Batch": grp_label, "N": len(sub)}
-            for var in summary_vars:
-                col_data = sub[var].dropna()
-                if len(col_data) == 0:
-                    row[var] = "—"
-                elif pd.api.types.is_numeric_dtype(df[var]):
-                    row[var] = f"{col_data.mean():.2f} ({col_data.std():.2f})"
-                else:
-                    vc = col_data.astype(str).value_counts()
-                    total = len(col_data)
-                    parts = [f"{v}: {n} ({100*n/total:.0f}%)"
-                             for v, n in vc.head(6).items()]
-                    row[var] = "  |  ".join(parts)
-            rows.append(row)
-
-        summary_df = pd.DataFrame(rows)
+        summary_df = _by_batch_table(df, site_col, summary_vars)
         st.dataframe(summary_df, use_container_width=True, hide_index=True)
-        st.caption("Continuous: mean (SD).  Categorical: n (%) per category.")
+        st.caption("Numeric variables: mean (SD); range. Categories: n (%).")
     except Exception as _sum_err:
         st.error(f"Summary could not be generated: {_sum_err}")
 
@@ -1013,7 +1044,7 @@ if include_extra_assoc:
         )
 
 st.divider()
-st.subheader("Step 3 — ComBat configuration and run")
+st.subheader("Step 4 — ComBat configuration and run")
 
 # ── Missing-value handling ──────────────────────────────────────────────────
 _feat_na = df[list(feature_cols)].isna()
@@ -1031,59 +1062,72 @@ if bool(_feat_na.any().any()):
         f"without Empirical Bayes."
     )
 
-st.caption(
-    "How missing feature values are handled depends on Empirical Bayes. If Empirical Bayes is not used, "
-    "missing values are less of a problem, because each feature is harmonized on its own available data, "
-    "so no imputation or pattern grouping is needed (this is the per-feature option). If Empirical Bayes "
-    "is used, which is the default, the tool imputes missing feature values with each feature's median "
-    "for harmonization only, and the imputed values are never reported. This median default suits data "
-    "with few missing values; for scattered missing data, grouping features by shared missing pattern "
-    "keeps every observed value. Complete cases only is also available."
-)
+# With no missing feature values the method makes no difference, so its
+# options stay behind a switch
+if not _feat_na.any().any():
+    st.success("The selected features have no missing values, so every participant with a "
+               "batch and covariates is used, whatever the missing-value method.")
+    _show_miss_opts = st.toggle("Show the missing-value options", key="show_missing_options")
+else:
+    _show_miss_opts = True
 
-_MISS_OPTS = {
-    "Complete case (drop participants missing any feature in a run)": "complete",
-    "Impute missing with median, keep Empirical Bayes":              "impute",
-    "Group features by shared missing pattern, keep Empirical Bayes": "pattern",
-    "Per-feature, feature-wise (no Empirical Bayes)":                "per_feature",
-}
-missing_mode_label = st.selectbox(
-    "Missing-value handling", list(_MISS_OPTS.keys()), index=1, key="missing_mode",
-    help="Complete case drops any participant missing a feature in the run. "
-         "Median imputation fills missing values with each feature's median, "
-         "harmonizes with Empirical Bayes, then restores the missing cells to "
-         "blank; it suits data with few missing values, because many filled-in "
-         "medians pull the batches toward each other and can under-correct the "
-         "batch effects. Pattern grouping harmonizes together the features that "
-         "are missing in the same participants, keeping Empirical Bayes within "
-         "each group; it suits scattered missing data. A feature whose missing "
-         "pattern no other feature shares is harmonized on its own, without "
-         "Empirical Bayes, which needs at least two features. Per-feature "
-         "harmonizes each feature on its own complete cases, without Empirical "
-         "Bayes.",
-)
-missing_mode = _MISS_OPTS[missing_mode_label]
-per_feature = (missing_mode == "per_feature")
+if _show_miss_opts:
+    st.caption(
+        "How missing feature values are handled depends on Empirical Bayes. If Empirical Bayes is not used, "
+        "missing values are less of a problem, because each feature is harmonized on its own available data, "
+        "so no imputation or pattern grouping is needed (this is the per-feature option). If Empirical Bayes "
+        "is used, which is the default, the tool imputes missing feature values with each feature's median "
+        "for harmonization only, and the imputed values are never reported. This median default suits data "
+        "with few missing values; for scattered missing data, grouping features by shared missing pattern "
+        "keeps every observed value. Complete cases only is also available."
+    )
 
-st.markdown("**What each method does**")
-st.table(pd.DataFrame([
-    {"Method": "Complete case",
-     "What it does": "Drops any participant missing any feature in the run",
-     "Empirical Bayes": "Yes",
-     "Participants used": "Only participants complete on all features"},
-    {"Method": "Median imputation (default)",
-     "What it does": "Fills each missing value with that feature's median, harmonizes, then restores the originally missing cells to blank; suits data with few missing values",
-     "Empirical Bayes": "Yes",
-     "Participants used": "All participants"},
-    {"Method": "Missing-pattern grouping",
-     "What it does": "Harmonizes together the features missing in the same participants, one Empirical Bayes run per pattern; suits scattered missing data",
-     "Empirical Bayes": "Yes, except for a feature whose missing pattern no other feature shares",
-     "Participants used": "Each participant, for the features they have"},
-    {"Method": "Per-feature",
-     "What it does": "Harmonizes each feature on its own complete cases, one feature at a time",
-     "Empirical Bayes": "No",
-     "Participants used": "Each participant, for the features they have"},
-]))
+    _MISS_OPTS = {
+        "Complete case (drop participants missing any feature in a run)": "complete",
+        "Impute missing with median, keep Empirical Bayes":              "impute",
+        "Group features by shared missing pattern, keep Empirical Bayes": "pattern",
+        "Per-feature, feature-wise (no Empirical Bayes)":                "per_feature",
+    }
+    missing_mode_label = st.selectbox(
+        "Missing-value handling", list(_MISS_OPTS.keys()), index=1, key="missing_mode",
+        help="Complete case drops any participant missing a feature in the run. "
+             "Median imputation fills missing values with each feature's median, "
+             "harmonizes with Empirical Bayes, then restores the missing cells to "
+             "blank; it suits data with few missing values, because many filled-in "
+             "medians pull the batches toward each other and can under-correct the "
+             "batch effects. Pattern grouping harmonizes together the features that "
+             "are missing in the same participants, keeping Empirical Bayes within "
+             "each group; it suits scattered missing data. A feature whose missing "
+             "pattern no other feature shares is harmonized on its own, without "
+             "Empirical Bayes, which needs at least two features. Per-feature "
+             "harmonizes each feature on its own complete cases, without Empirical "
+             "Bayes.",
+    )
+    missing_mode = _MISS_OPTS[missing_mode_label]
+    per_feature = (missing_mode == "per_feature")
+
+    st.markdown("**What each method does**")
+    st.table(pd.DataFrame([
+        {"Method": "Complete case",
+         "What it does": "Drops any participant missing any feature in the run",
+         "Empirical Bayes": "Yes",
+         "Participants used": "Only participants complete on all features"},
+        {"Method": "Median imputation (default)",
+         "What it does": "Fills each missing value with that feature's median, harmonizes, then restores the originally missing cells to blank; suits data with few missing values",
+         "Empirical Bayes": "Yes",
+         "Participants used": "All participants"},
+        {"Method": "Missing-pattern grouping",
+         "What it does": "Harmonizes together the features missing in the same participants, one Empirical Bayes run per pattern; suits scattered missing data",
+         "Empirical Bayes": "Yes, except for a feature whose missing pattern no other feature shares",
+         "Participants used": "Each participant, for the features they have"},
+        {"Method": "Per-feature",
+         "What it does": "Harmonizes each feature on its own complete cases, one feature at a time",
+         "Empirical Bayes": "No",
+         "Participants used": "Each participant, for the features they have"},
+    ]))
+else:
+    missing_mode = "impute"   # the default; without missing values all methods give the same result
+    per_feature = False
 
 # How many participants remain under the chosen handling (after any site exclusion)
 _work = df[~df[site_col].isin(excluded_sites)] if excluded_sites else df
@@ -1105,12 +1149,16 @@ if _cov_drop:
     _drop_parts.append(f"{_cov_drop} are missing a model variable (batch, age, sex, or a covariate)")
 if _feat_drop:
     _drop_parts.append(f"{_feat_drop} have missing feature values under this method")
-_drop_expl = " and ".join(_drop_parts) if _drop_parts else "none for these reasons"
-st.info(
-    f"Participants with this method: **{len(_work)}** in the data "
-    f"(after batch exclusion) → **{_retained}** retained, **{_dropped}** dropped. "
-    f"Of the {_dropped} dropped, {_drop_expl}."
-)
+if _dropped == 0:
+    st.info(f"All **{len(_work)}** participants are used"
+            f"{' (after batch exclusion)' if excluded_sites else ''}.")
+else:
+    _drop_expl = " and ".join(_drop_parts)
+    st.info(
+        f"Participants with this method: **{len(_work)}** in the data "
+        f"(after batch exclusion) → **{_retained}** retained, **{_dropped}** dropped. "
+        f"Of the {_dropped} dropped, {_drop_expl}."
+    )
 
 eb_options = {
     "EB=TRUE  (Empirical Bayes, recommended)":    ("ebt_only",  True,  False),
