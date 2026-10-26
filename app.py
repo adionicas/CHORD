@@ -1352,9 +1352,7 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
 
         fig_icc = None  # overall ICC bar chart removed; ICC is within-batch only
 
-        fig_icc_ci = None
-        if run_ebf and icc_ebt is not None and icc_ebf is not None:
-            fig_icc_ci = plot_icc_ci_compare(icc_ebt, icc_ebf)
+        fig_icc_ci = None  # per-feature ICC median/IQR figure left out of the report (Oni, 26 October 2026)
 
         fig_age = None
         if include_age_corr and len(age_all) > 0:
