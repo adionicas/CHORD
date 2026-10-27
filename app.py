@@ -24,7 +24,7 @@ from src.plots     import (plot_site_deviation, plot_spearman, plot_icc, plot_da
                            plot_icc_by_site, plot_spearman_by_site,
                            plot_extra_associations, plot_single_association,
                            plot_icc_ci_compare, plot_missing_by_measure,
-                           plot_missing_by_batch)
+                           plot_missing_by_batch, plot_missing_curve)
 from src.report    import generate_report, build_methods_paragraph
 
 # ── Update this URL once the repo is live ─────────────────────────────────
@@ -413,19 +413,14 @@ last_col = all_df_cols[-1]
 # Every column of the table with its number: with thousands of columns the
 # From/To lists are too long to scroll through.
 if st.toggle("Show all column names with their numbers", key="show_col_numbers"):
-    lc1, lc2 = st.columns([3, 2])
-    with lc1:
-        find = st.text_input("Find a column", key="col_number_find",
-                             placeholder="part of a column name, e.g. node100")
+    lc1, lc2 = st.columns([2, 1])
     with lc2:
-        list_from = st.radio("Start the list at", ["First column", "Last column"], horizontal=True,
-                             key="col_list_order")
+        find = st.text_input("Find a column", key="col_number_find", label_visibility="collapsed",
+                             placeholder="Find a column, e.g. node100")
     num_table = pd.DataFrame({"№": range(1, n_cols + 1), "Column": all_df_cols})
     if find.strip():
         num_table = num_table[num_table["Column"].str.contains(find.strip(), case=False, regex=False)]
-    if list_from == "Last column":
-        num_table = num_table.iloc[::-1]
-    st.caption(f"{len(num_table)} of {n_cols} columns shown.")
+    lc1.caption(f"{len(num_table)} of {n_cols} columns shown.")
     st.dataframe(num_table, hide_index=True, use_container_width=True, height=300,
                  column_config={"№": st.column_config.NumberColumn(width="small")})
 
@@ -593,6 +588,9 @@ else:
             st.button("Remove", on_click=_remove_picked, use_container_width=True,
                       disabled=not st.session_state.get("sel_remove_pick"))
         not_sel = [c for c in auto_features if c not in set(feature_cols)]
+        if not not_sel:
+            st.caption("Every available feature is selected, so there is nothing to add; the Add box "
+                       "appears once some features are not in the selection.")
         if not_sel:
             ad_c1, ad_c2 = st.columns([4, 1])
             with ad_c1:
@@ -790,6 +788,9 @@ def _show_matrix_preview(rows_df, rows_key, feats, title, marked=None, missing_o
 
 _excluded_before = [d.get("Feature") for d in st.session_state.get("_excl_feat_list", [])
                     if d.get("Feature") in df.columns]
+# participants excluded by missing percentage (row labels of the table loaded now)
+_excl_part_rows = [d["row"] for d in st.session_state.get("_excl_part_list", [])
+                   if d.get("data_key") == data_key and d.get("row") in df.index]
 _model_cols_now = [c for c in [site_col, age_col, sex_col] + extra_continuous + extra_categorical
                    if c and c in df.columns]
 _nothing_missing = not df[list(feature_cols) + _excluded_before + _model_cols_now].isna().any().any()
@@ -838,8 +839,9 @@ if _show_miss_tools:
     if _n_model_incomplete > 0:
         st.warning(
             f"{_n_model_incomplete} of {len(df)} participants are missing at least one "
-            f"model variable (batch, age, sex, or an added covariate) and are dropped "
-            f"from every ComBat run, regardless of the feature-missing method below."
+            f"model variable (batch, age, sex, or an added covariate). They are dropped "
+            f"from every ComBat run, whatever the feature-missing method below, and are "
+            f"not in the harmonized table."
         )
         _mm = pd.DataFrame({
             "Model variable": _model_vars,
@@ -849,10 +851,9 @@ if _show_miss_tools:
         _mm = _mm[_mm["Missing (n)"] > 0].sort_values("Missing (n)", ascending=False)
         st.dataframe(_mm, use_container_width=True, hide_index=True)
 
-        # Which participants these are: shown straight away when a participant ID
-        # column can be recognised from its name, otherwise on request.
-        _id_guess = _guess_id_col(df, exclude=set(_model_vars) | set(feature_cols))
-        if _id_guess or st.toggle("Show which participants these are", key="show_missing_ids"):
+        # Which participants these are, on request; the ID column is guessed from its name.
+        if st.toggle("Show which participants these are", key="show_missing_ids"):
+            _id_guess = _guess_id_col(df, exclude=set(_model_vars) | set(feature_cols))
             _id_opts = [c for c in df.columns if c not in set(feature_cols)]
             _id_col = st.selectbox(
                 "Participant ID column", _id_opts,
@@ -870,6 +871,10 @@ if _show_miss_tools:
         st.caption("All participants have complete batch, age, sex, and added covariates.")
 
     st.markdown("**Missingness in the imaging features**")
+    st.caption("\"Assess missing values\" shows how many selected features and participants have "
+               "missing values: per modality group (when groups are defined above), per feature, per "
+               "participant with a figure by batch, and a map of every missing value. It only shows "
+               "them; nothing is changed or excluded.")
     if st.button("Assess missing values"):
         st.session_state["_miss_assess_on"] = True   # stays open until hidden
     if st.session_state.get("_miss_assess_on"):
@@ -910,10 +915,13 @@ if _show_miss_tools:
 
             # ── per modality group (only when the groups are defined) ──
             st.markdown("**Missing values per modality group**")
-            if not modality_groups:
-                st.caption("Define the groups under \"Multiple imaging modalities or measure types\" above "
-                           "to see the missing values of each modality or measure type here.")
-            else:
+            st.caption("The curve gives, for every share x, how many features have more than x% of the "
+                       "participants missing" + (", one line per modality group as defined above."
+                                                 if modality_groups else
+                       ". Define the groups under \"Multiple imaging modalities or measure types\" above "
+                       "to get one line per modality or measure type."))
+            st.plotly_chart(plot_missing_curve(feat_pct, measure_of or None, a_thr), use_container_width=True)
+            if modality_groups:
                 st.caption("Each bar is one modality group as defined above; its features are counted by "
                            "the share of participants missing them.")
                 st.plotly_chart(plot_missing_by_measure(feat_pct, measure_of), use_container_width=True)
@@ -1087,6 +1095,68 @@ if _show_miss_tools:
                 on_click=_exclude_high_missing_features, args=(list(over.index), miss_thr, over.to_dict()),
             )
 
+    # ── Exclude participants by missing percentage ──────────────────────────────
+    st.markdown("**Exclude participants by missing percentage (optional)**")
+    st.caption(
+        "Optionally set a threshold to list the participants missing more than that share of the "
+        "selected features, then exclude them in one step. The box is empty by default, so nobody is "
+        "excluded until you enter a value. The share is computed over the features selected now, so "
+        "exclude features first if you want to. Excluded participants are left out of harmonization "
+        "and of the harmonized table, and the report lists them."
+    )
+    _pid_x = st.session_state.get("id_col") or _guess_id_col(df, exclude=set(_model_vars) | set(feature_cols))
+
+    def _part_label(r):
+        if _pid_x in df.columns and pd.notna(df.at[r, _pid_x]):
+            return str(df.at[r, _pid_x])
+        return f"Row {df.index.get_loc(r) + 1}"
+
+    def _exclude_participants(rows, threshold, pcts):
+        prev = [d for d in st.session_state.get("_excl_part_list", []) if d.get("data_key") == data_key]
+        for r in rows:
+            prev.append({"data_key": data_key, "row": r, "Participant": _part_label(r),
+                         "Batch": "—" if pd.isna(df.at[r, site_col]) else str(df.at[r, site_col]),
+                         "Missing (%)": round(float(pcts[r]), 1)})
+        st.session_state["_excl_part_list"] = prev
+        st.session_state["_excl_part_info"] = {"n": len(prev), "threshold": threshold}
+
+    def _undo_participant_exclusions():
+        st.session_state["_excl_part_list"] = []
+        st.session_state["_excl_part_info"] = {"n": 0, "threshold": None}
+
+    _excl_parts_now = [d for d in st.session_state.get("_excl_part_list", []) if d.get("data_key") == data_key]
+    if _excl_parts_now:
+        st.markdown(f"**Excluded: {len(_excl_parts_now)} participant(s)** (left out of harmonization)")
+        _xp = pd.DataFrame(_excl_parts_now)[["Participant", "Batch", "Missing (%)"]]
+        st.dataframe(_xp, use_container_width=True, hide_index=True, height=min(38 + 35 * len(_xp), 300))
+        st.button("Undo all participant exclusions", on_click=_undo_participant_exclusions)
+
+    pthr_col = st.columns([1, 2])[0]
+    with pthr_col:
+        part_thr = st.number_input(
+            "Missing % threshold for participants", min_value=0.0, max_value=100.0,
+            value=None, step=5.0, key="miss_part_thr", placeholder="e.g. 50",
+        )
+    if part_thr is None:
+        st.caption("Enter a percentage above to list the participants who exceed it.")
+    else:
+        _pp = df[list(feature_cols)].isna().mean(axis=1) * 100
+        _pp = _pp.drop(index=_excl_part_rows)
+        _over_p = _pp[_pp > part_thr].sort_values(ascending=False, kind="stable")
+        if len(_over_p) == 0:
+            st.caption(f"No participant misses more than {part_thr:g}% of the selected features.")
+        else:
+            st.warning(f"{len(_over_p)} of {len(_pp)} participants miss more than {part_thr:g}% "
+                       "of the selected features.")
+            with st.expander(f"View the {len(_over_p)} participants over the threshold"):
+                st.dataframe(pd.DataFrame({
+                    "Participant": [_part_label(r) for r in _over_p.index],
+                    "Batch": ["—" if pd.isna(df.at[r, site_col]) else str(df.at[r, site_col]) for r in _over_p.index],
+                    "Missing (%)": _over_p.values.round(1),
+                }), use_container_width=True, hide_index=True)
+            st.button(f"Exclude these {len(_over_p)} participant(s)", on_click=_exclude_participants,
+                      args=(list(_over_p.index), part_thr, _over_p.to_dict()))
+
     # ── How missing feature values are handled ──────────────────────────────────
     st.markdown("**How missing feature values are handled**")
     _feat_na = df[list(feature_cols)].isna()
@@ -1157,8 +1227,9 @@ if _show_miss_tools:
          "Empirical Bayes": "No",
          "Participants used": "Each participant, for the features they have"},
     ]))
-    # How many participants remain under the chosen handling (after any site exclusion)
-    _work = df
+    # How many participants remain under the chosen handling (after the participants
+    # excluded by missing percentage)
+    _work = df.drop(index=_excl_part_rows)
     _cov_cols = [site_col] + continuous_covariates + categorical_covariates
     _cov_ok = _work[_cov_cols].notna().all(axis=1)
     _feat_ok_all = _work[list(feature_cols)].notna().all(axis=1)
@@ -1182,7 +1253,9 @@ if _show_miss_tools:
     else:
         _drop_expl = " and ".join(_drop_parts)
         st.info(
-            f"Participants with this method: **{len(_work)}** in the data "
+            f"Participants with this method: **{len(_work)}** in the data"
+            + (f" (after the {len(_excl_part_rows)} excluded by missing percentage)" if _excl_part_rows else "")
+            + " "
             f"→ **{_retained}** retained, **{_dropped}** dropped. "
             f"Of the {_dropped} dropped, {_drop_expl}."
         )
@@ -1223,13 +1296,15 @@ if excluded_sites:
         f"Remaining participants: {int((~df[site_col].isin(excluded_sites)).sum())}."
     )
 
-if _preview_excluded or excluded_sites:
+if _preview_excluded or excluded_sites or _excl_part_rows:
     st.markdown("**Data preview after exclusions**")
-    st.caption("The same view as the data preview above, without the excluded features and batches. "
-               "The \"Show missing values only\" switch above applies here too.")
+    st.caption("The same view as the data preview above, without the excluded features, participants "
+               "and batches. The \"Show missing values only\" switch above applies here too.")
+    _after = df.drop(index=_excl_part_rows)
     _show_matrix_preview(
-        df[~df[site_col].isin(excluded_sites)] if excluded_sites else df,
-        ("without", tuple(sorted(map(str, excluded_sites)))), feature_cols, "After exclusions")
+        _after[~_after[site_col].isin(excluded_sites)] if excluded_sites else _after,
+        ("without", tuple(sorted(map(str, excluded_sites))), tuple(map(str, _excl_part_rows))),
+        feature_cols, "After exclusions")
 
 st.divider()
 st.subheader("Evaluation and report options")
@@ -1345,8 +1420,11 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
     progress = st.progress(0, "Starting...")
     try:
         # ── Apply site exclusion ────────────────────────────────────────────
-        if excluded_sites:
-            df_harm = df[~df[site_col].isin(excluded_sites)].copy().reset_index(drop=True)
+        _site_excl_mask = (df[site_col].isin(excluded_sites) if excluded_sites
+                           else pd.Series(False, index=df.index))
+        _part_excl_mask = pd.Series(df.index.isin(_excl_part_rows), index=df.index)
+        if excluded_sites or _excl_part_rows:
+            df_harm = df[~_site_excl_mask & ~_part_excl_mask].copy().reset_index(drop=True)
         else:
             df_harm = df
 
@@ -1554,12 +1632,39 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
         _no_cov    = (~_no_batch & df_harm[_cov_cols].isna().any(axis=1)) if _cov_cols \
                      else pd.Series(False, index=df_harm.index)
         excl_counts = {
-            "batch_excluded": len(df) - len(df_harm),
-            "batch_missing":  int(_no_batch.sum()),
-            "cov_missing":    int(_no_cov.sum()),
+            "batch_excluded":       int(_site_excl_mask.sum()),
+            "missing_pct_excluded": int((_part_excl_mask & ~_site_excl_mask).sum()),
+            "batch_missing":        int(_no_batch.sum()),
+            "cov_missing":          int(_no_cov.sum()),
         }
         excl_counts["features"] = (len(df) - n_retained - excl_counts["batch_excluded"]
+                                   - excl_counts["missing_pct_excluded"]
                                    - excl_counts["batch_missing"] - excl_counts["cov_missing"])
+        # missing values before harmonization, for the report's data preparation tables:
+        # the selected features (with those later excluded) in all uploaded participants
+        _thr_a = float(st.session_state.get("miss_assess_thr") or 10.0)
+        _feats_all = list(feature_cols) + [f for f in _excluded_before if f not in feature_cols]
+        _na_all = df[_feats_all].isna()
+        _fp_all, _pp_all = 100 * _na_all.mean(), 100 * _na_all.mean(axis=1)
+        _xi = st.session_state.get("_excl_info") or {"n": 0, "threshold": None}
+        _xpi = st.session_state.get("_excl_part_info") or {"n": 0, "threshold": None}
+        missing_overview = {
+            "threshold": _thr_a, "n_participants": len(df), "n_features": len(_feats_all),
+            "feat_any": int((_fp_all > 0).sum()), "feat_over": int((_fp_all > _thr_a).sum()),
+            "part_any": int((_pp_all > 0).sum()), "part_over": int((_pp_all > _thr_a).sum()),
+            "feat_excl": int(_xi.get("n") or 0), "feat_excl_thr": _xi.get("threshold"),
+            "part_excl": len(_excl_part_rows), "part_excl_thr": _xpi.get("threshold"),
+            "by_group": [
+                {"Modality group": g, "Features": len(gc),
+                 "With any missing": int((_fp_all[gc] > 0).sum()),
+                 f"More than {_thr_a:g}% missing": int((_fp_all[gc] > _thr_a).sum()),
+                 "Median % missing": round(float(_fp_all[gc].median()), 1)}
+                for g, gc in (modality_groups or {}).items() if gc
+            ],
+        }
+        excl_part_list = [{k: d[k] for k in ("Participant", "Batch", "Missing (%)")}
+                          for d in st.session_state.get("_excl_part_list", [])
+                          if d.get("data_key") == data_key and d.get("row") in df.index]
         # missing-data documentation for the report
         _fm   = df_harm[feature_cols].isna()
         _fpct = _fm.mean() * 100
@@ -1591,6 +1696,9 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
             excl_info=excl_info,
             excl_feat_list=excl_feat_list,
             excl_counts=excl_counts,
+            missing_overview=missing_overview,
+            excl_part_list=excl_part_list,
+            excl_part_info=st.session_state.get("_excl_part_info"),
             no_eb_features=no_eb_features,
             blank_features=blank_features,
             fig_icc_ci=fig_icc_ci,

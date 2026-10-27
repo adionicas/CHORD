@@ -17,6 +17,7 @@ BLUE   = "#2A6EBB"
 ORANGE = "#EB6400"
 GREEN  = "#2A9D8F"
 GREY   = "#6C757D"
+SEP_COLOR = "#2A6EBB"   # batch and group boundaries on the data maps (dotted, never black)
 
 BEFORE_COLOR = ORANGE
 AFTER_EBT    = BLUE
@@ -1153,13 +1154,16 @@ def plot_data_matrix(
             ytv.append((start + i - 1) / 2)
             ytt.append(f"{block_site[start]} (n={site_n[block_site[start]]})")
             if i < len(block_site):
-                fig.add_hline(y=i - 0.5, line_color="white" if not missing_only else "#555555",
-                              line_width=1.0, opacity=0.8, row=1, col=2)
+                # batch boundaries: never black like the missing values (dotted blue on
+                # the missing-value map, white on the z-scored view)
+                fig.add_hline(y=i - 0.5, line_color="white" if not missing_only else SEP_COLOR,
+                              line_dash="solid" if not missing_only else "dot",
+                              line_width=1.0 if not missing_only else 1.6, opacity=0.9, row=1, col=2)
             start = i
 
     # covariates | features separator, and group bands with labels
     if cov:
-        fig.add_vline(x=len(cov) - 0.5, line_color="#555555", line_width=2, row=1, col=2)
+        fig.add_vline(x=len(cov) - 0.5, line_color=SEP_COLOR, line_dash="dot", line_width=2, row=1, col=2)
     show_bands = any(g is not None for g, _ in groups)
     if show_bands:
         band_palette = px.colors.qualitative.Bold
@@ -1173,12 +1177,12 @@ def plot_data_matrix(
                     color = band_palette[gi_color % len(band_palette)]
                     gi_color += 1
                 if x0 > len(cov):
-                    fig.add_vline(x=x0 - 0.5, line_color="#555555", line_width=1.5, row=1, col=2)
+                    fig.add_vline(x=x0 - 0.5, line_color=SEP_COLOR, line_dash="dot", line_width=1.6, row=1, col=2)
                 fig.add_shape(type="rect", xref="x2", yref="paper", x0=x0 - 0.5, x1=x1 - 0.5,
                               y0=1.002, y1=1.028, fillcolor=color, line_width=0, layer="above")
                 fig.add_annotation(xref="x2", yref="paper", x=(x0 + x1 - 1) / 2, y=1.035,
                                    text=f"{g} ({len(c)})", showarrow=False, textangle=-45,
-                                   xanchor="left", yanchor="bottom", font=dict(size=9, color="#333333"))
+                                   xanchor="left", yanchor="bottom", font=dict(size=13, color="#333333"))
             x0 = x1
 
     what = (f"missing values in black ({100 * miss.mean():.1f}% of cells), present in grey"
@@ -1186,7 +1190,7 @@ def plot_data_matrix(
             "missing values in black, present in grey" if missing_only else
             "z-scored per column, missing in black")
     longest = max((len(f"{g} ({len(c)})") for g, c in groups if g is not None), default=0)
-    top = 70 + int(4.2 * longest) if show_bands else 60
+    top = 75 + int(5.6 * longest) if show_bands else 60
     no_ticks = dict(showgrid=False, zeroline=False, showline=False, ticks="")
     fig.update_layout(
         title=dict(text=f"{title}: {len(d)} participants x {len(feats)} features"
@@ -1194,16 +1198,16 @@ def plot_data_matrix(
                    y=0.995, yanchor="top"),
         xaxis=dict(showticklabels=False, range=[-0.5, 0.5], **no_ticks),
         # fixed range: the group labels above the bands would otherwise widen the axis
-        xaxis2=dict(showticklabels=len(col_blocks) <= 80, tickangle=45, tickfont=dict(size=7),
+        xaxis2=dict(showticklabels=len(col_blocks) <= 80, tickangle=45, tickfont=dict(size=10),
                     range=[-0.5, len(col_blocks) - 0.5], **no_ticks),
-        yaxis=dict(tickmode="array", tickvals=ytv, ticktext=ytt, tickfont=dict(size=9),
+        yaxis=dict(tickmode="array", tickvals=ytv, ticktext=ytt, tickfont=dict(size=12),
                    range=[len(row_blocks) - 0.5, -0.5], **no_ticks),
         yaxis2=dict(showticklabels=False, range=[len(row_blocks) - 0.5, -0.5], **no_ticks),
         height=max(400, min(len(row_blocks) * 4, 900)) + (top - 60),
         showlegend=False,
         plot_bgcolor="white", paper_bgcolor="white",
         font=dict(color="black", family="Arial"),
-        margin={"l": 110, "b": 90, "r": 60, "t": top},
+        margin={"l": 130, "b": 90, "r": 60, "t": top},
     )
 
     notes = []
@@ -1272,3 +1276,46 @@ def plot_missing_by_batch(participant_pct: pd.Series, batch: pd.Series) -> go.Fi
     counts.index = [f"{b} (n={int(n)})" for b, n in zip(counts.index, counts.sum(axis=1))]
     return _band_bars(counts, "Participants per batch, by share of the selected features missing",
                       "Participants in the batch (%)", "participants", percent=True)
+
+
+def plot_missing_curve(feature_pct: pd.Series, measure_of: dict | None = None,
+                       threshold: float | None = None) -> go.Figure:
+    """
+    For every share x from 0 to 100%, the features with more than x% of the
+    participants missing: one line per modality group as defined by the user,
+    or one line for all selected features when no groups are defined. The y-axis
+    is the share of the group's features, so groups of different sizes compare;
+    the hover gives the count.
+    """
+    if measure_of:
+        groups = list(dict.fromkeys(measure_of[c] for c in feature_pct.index))
+        members = {g: [c for c in feature_pct.index if measure_of[c] == g] for g in groups}
+    else:
+        groups, members = ["All selected features"], {"All selected features": list(feature_pct.index)}
+    top = float(feature_pct.max()) if len(feature_pct) else 0.0
+    x_max = min(100.0, max(5.0, top * 1.1 + 1))
+    xs = np.unique(np.concatenate([np.linspace(0, x_max, 401), feature_pct.values]))
+    xs = xs[xs <= x_max]
+    palette = px.colors.qualitative.Bold
+    fig = go.Figure()
+    for i, g in enumerate(groups):
+        p = np.sort(feature_pct[members[g]].values)
+        n_over = len(p) - np.searchsorted(p, xs, side="right")      # features with more than x% missing
+        fig.add_trace(go.Scatter(
+            x=xs, y=100 * n_over / len(p), mode="lines", line_shape="hv", name=f"{g} (n={len(p)})",
+            line=dict(color=palette[i % len(palette)], width=2.2),
+            customdata=np.stack([n_over, np.full(len(xs), len(p))], axis=1),
+            hovertemplate=(f"{g}<br>more than %{{x:.1f}}% missing: %{{customdata[0]}} of "
+                           f"%{{customdata[1]}} features<extra></extra>"),
+        ))
+    if threshold is not None and threshold <= x_max:
+        fig.add_vline(x=threshold, line_dash="dot", line_color=GREY, line_width=1.5,
+                      annotation_text=f"{threshold:g}%", annotation_position="top right")
+    fig.update_layout(
+        title="Features with more than x% of participants missing", **WHITE_BG, height=430,
+        margin=dict(l=10, r=30, t=60, b=120), legend=dict(BOTTOM_LEGEND),
+        xaxis=dict(title="Share of participants missing (x, %)", range=[0, x_max],
+                   showgrid=True, gridcolor="#EEEEEE"),
+        yaxis=dict(title="Features of the group (%)", range=[0, 102], showgrid=True, gridcolor="#EEEEEE"),
+    )
+    return fig

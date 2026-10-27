@@ -149,6 +149,61 @@ def _excl_feat_block(excl_feat_list, multimodal):
     return f'<ul style="margin:4px 0 0 18px;columns:2;font-size:10pt">{items}</ul>'
 
 
+def _data_prep_tables(excl_feat_html, overview, excl_part_list):
+    """
+    The data preparation tables after Table S1, lettered in the order shown:
+    features excluded due to missingness, missing values before harmonization,
+    missing values per modality group (when groups were defined) and participants
+    excluded due to missingness. Returns the HTML and the labels of the
+    participant and overview tables for the text.
+    """
+    parts, letters = [], iter("abcdefgh")
+    part_label = overview_label = ""
+
+    def table(title, body, note):
+        label = f"S1{next(letters)}"
+        parts.append(f'<p class="table-title">Table {label}. {title}</p>\n{body}\n'
+                     f'<p class="table-note"><em>Note.</em> {note}</p>')
+        return label
+
+    if excl_feat_html:
+        table("Features excluded due to missingness.", excl_feat_html,
+              "Features listed above were removed from the analysis before harmonization because their "
+              "missing rate exceeded the user-specified threshold. Missing (%) is computed across all "
+              "uploaded participants.")
+    if overview:
+        thr = overview["threshold"]
+
+        def excluded(n, t):
+            return f"{n} (more than {t:g}% missing)" if n and t is not None else str(n or 0)
+        ov = pd.DataFrame([
+            {"": "Features", "Total": overview["n_features"], "With any missing value": overview["feat_any"],
+             f"More than {thr:g}% missing": overview["feat_over"],
+             "Excluded by the user": excluded(overview["feat_excl"], overview["feat_excl_thr"])},
+            {"": "Participants", "Total": overview["n_participants"], "With any missing value": overview["part_any"],
+             f"More than {thr:g}% missing": overview["part_over"],
+             "Excluded by the user": excluded(overview["part_excl"], overview["part_excl_thr"])},
+        ])
+        overview_label = table(
+            "Missing values before harmonization.", _df_table(ov),
+            f"Counted over the {overview['n_features']} selected features (including any later excluded) "
+            f"in all {overview['n_participants']} uploaded participants. A feature is counted as more than "
+            f"{thr:g}% missing when it is missing in more than {thr:g}% of the participants; a participant "
+            f"when they miss more than {thr:g}% of the features.")
+        if overview.get("by_group"):
+            table("Missing values per modality group before harmonization.",
+                  _df_table(pd.DataFrame(overview["by_group"]), float_fmt=1),
+                  "Modality groups as defined by the user for harmonization; counted over all uploaded "
+                  "participants.")
+    if excl_part_list:
+        part_label = table("Participants excluded due to missingness.",
+                           _df_table(pd.DataFrame(excl_part_list), float_fmt=1),
+                           "Participants listed above were left out of harmonization because they missed "
+                           "more than the user-specified share of the selected features. Missing (%) is "
+                           "computed over the features selected at the time of exclusion.")
+    return "\n".join(parts), part_label, overview_label
+
+
 def _feature_group_block(feature_cols, modality_groups):
     """S1.1: the harmonized features. When the run used modality groups, one row
     per group (as the user defined them) with its features in one cell;
@@ -368,15 +423,7 @@ TEMPLATE = """<!DOCTYPE html>
   Sex distribution reports the number and percentage of female participants.
 </p>
 
-{% if excl_feat_table %}
-<p class="table-title">Table S1a. Features excluded due to missingness.</p>
-{{ excl_feat_table }}
-<p class="table-note">
-  <em>Note.</em> Features listed above were removed from the analysis before harmonization
-  because their missing rate exceeded the user-specified threshold.
-  Missing (%) is computed across all uploaded participants.
-</p>
-{% endif %}
+{{ data_prep_tables }}
 
 <h3>S1.1 Imaging features</h3>
 <p>
@@ -419,15 +466,29 @@ TEMPLATE = """<!DOCTYPE html>
 </p>
 
 <p>
+  {% if missing_overview %}
+  {% set mthr = '%g'|format(missing_overview.threshold) %}
+  Before harmonization, {{ missing_overview.feat_any }} of the {{ missing_overview.n_features }} selected
+  features had at least one missing value and {{ missing_overview.feat_over }}
+  {{ 'was' if missing_overview.feat_over == 1 else 'were' }} missing in more than {{ mthr }}% of the
+  participants; {{ missing_overview.part_any }} of the {{ missing_overview.n_participants }} participants
+  missed at least one feature value and {{ missing_overview.part_over }} missed more than {{ mthr }}% of
+  the features (Table {{ overview_table_label }}).
+  {% endif %}
   {% if excl_info and excl_info.n > 0 %}
-  Before harmonization, {{ excl_info.n }} feature{{ 's' if excl_info.n != 1 else '' }}
-  with a missing rate above {{ excl_info.threshold }}% {{ 'were' if excl_info.n != 1 else 'was' }}
+  {{ excl_info.n }} feature{{ 's' if excl_info.n != 1 else '' }}
+  with a missing rate above {{ '%g'|format(excl_info.threshold) }}% {{ 'were' if excl_info.n != 1 else 'was' }}
   excluded, leaving {{ n_features }} features for harmonization
   (see Table S1a for the list of excluded features and their missing rates).
   {% endif %}
+  {% if excl_part_info and excl_part_info.n > 0 %}
+  {{ excl_part_info.n }} participant{{ 's' if excl_part_info.n != 1 else '' }}
+  missing more than {{ '%g'|format(excl_part_info.threshold) }}% of the selected features
+  {{ 'were' if excl_part_info.n != 1 else 'was' }} excluded (Table {{ part_table_label }}).
+  {% endif %}
   {% if missing_summary and missing_summary.k > 0 %}
-  Of the {{ n_features }} harmonized features, {{ missing_summary.k }} contained
-  missing values (per-feature missing rate {{ missing_summary.min }}% to
+  In the participants entered into harmonization, {{ missing_summary.k }} of the {{ n_features }}
+  harmonized features contained missing values (per-feature missing rate {{ missing_summary.min }}% to
   {{ missing_summary.max }}%, {{ missing_summary.total }} missing cells in total).
   {% endif %}
   Prior to harmonization, features were examined for missing data. neuroCombat
@@ -976,6 +1037,9 @@ def generate_report(
     excl_info=None,
     excl_feat_list=None,
     excl_counts=None,
+    missing_overview=None,
+    excl_part_list=None,
+    excl_part_info=None,
     no_eb_features=None,
     blank_features=None,
     covariates_cont=None,
@@ -1018,15 +1082,27 @@ def generate_report(
     if excl_counts:
         _feat_reason = ("missing at least one selected feature" if missing_handling == "complete"
                         else "with no observed feature values")
+        _pthr = (excl_part_info or {}).get("threshold")
         for key, label in [("batch_excluded", "in batches excluded from the analysis"),
+                           ("missing_pct_excluded",
+                            f"excluded for missing more than {_pthr:g}% of the selected features"
+                            if _pthr is not None else "excluded for missing feature values"),
                            ("batch_missing",  "missing the batch variable"),
                            ("cov_missing",    "missing a covariate"),
                            ("features",       _feat_reason)]:
             if excl_counts.get(key):
                 excl_reasons.append(f"n = {excl_counts[key]} {label}")
 
+    data_prep_tables, part_table_label, overview_table_label = _data_prep_tables(
+        _excl_feat_block(excl_feat_list, bool(modality_groups)), missing_overview, excl_part_list)
+
     tmpl = Template(TEMPLATE)
     html = tmpl.render(
+        data_prep_tables     = data_prep_tables,
+        part_table_label     = part_table_label,
+        overview_table_label = overview_table_label,
+        missing_overview     = missing_overview,
+        excl_part_info       = excl_part_info,
         date            = datetime.now().strftime("%Y-%m-%d %H:%M"),
         n_participants  = len(df_raw),
         n_sites         = len(sites),
