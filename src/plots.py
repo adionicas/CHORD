@@ -1003,6 +1003,51 @@ def _proportional_blocks(sizes, max_total):
     return blocks
 
 
+def _cluster_order(X: np.ndarray, weights: np.ndarray | None = None) -> np.ndarray:
+    """Order of the rows of a 0/1 matrix that puts similar rows next to each
+    other (average-linkage clustering; weights count each column that many times)."""
+    from scipy.cluster.hierarchy import linkage, leaves_list
+    if len(X) <= 2:
+        return np.arange(len(X))
+    Xw = X * np.sqrt(weights) if weights is not None else X
+    return leaves_list(linkage(Xw, method="average", metric="euclidean"))
+
+
+def _order_cols_by_missing(d: pd.DataFrame, cols: list) -> list:
+    """Feature columns reordered so that columns missing in similar participants
+    sit together; columns with the same pattern keep their original order."""
+    if len(cols) < 3:
+        return list(cols)
+    M = d[cols].isna().to_numpy().T
+    U, inv = np.unique(M, axis=0, return_inverse=True)
+    inv = np.asarray(inv).ravel()
+    order_u = (_cluster_order(U.astype(float)) if len(U) <= 1500
+               else np.argsort(-U.sum(axis=1), kind="stable"))
+    rank = np.empty(len(U), dtype=int)
+    rank[order_u] = np.arange(len(U))
+    return [c for _, c in sorted(zip(rank[inv], cols), key=lambda t: t[0])]
+
+
+def _order_rows_by_missing(d: pd.DataFrame, site_col: str, feats: list) -> pd.DataFrame:
+    """Participants reordered within each batch so that those missing similar
+    features sit together (batches keep their order)."""
+    if not feats:
+        return d
+    M = d[feats].isna().to_numpy()
+    U, cnt = np.unique(M.T, axis=0, return_counts=True)       # one column per distinct feature pattern
+    R, w = U.T.astype(float), cnt.astype(float)
+    sites = d[site_col].astype(str).to_numpy()
+    new_idx = []
+    for s in dict.fromkeys(sites):
+        idx = np.flatnonzero(sites == s)
+        if 2 < len(idx) <= 3000 and R.shape[1] <= 2000:
+            o = _cluster_order(R[idx], w)
+        else:
+            o = np.argsort(-(R[idx] @ w), kind="stable")
+        new_idx.extend(idx[o])
+    return d.iloc[new_idx].reset_index(drop=True)
+
+
 def plot_data_matrix(
     df: pd.DataFrame,
     site_col: str,
@@ -1014,6 +1059,7 @@ def plot_data_matrix(
     title: str = "Data matrix",
     max_cells: int = 250_000,
     max_rows: int = 600,
+    order_by_missing: bool = False,
 ):
     """
     Carpet plot of the data: one row per participant, sorted by batch, with a
@@ -1029,6 +1075,10 @@ def plot_data_matrix(
 
     marked_block = (label, columns) places those feature columns last, under a
     labelled band (used to show the features excluded for missingness).
+
+    order_by_missing: participants are ordered within each batch, and features
+    within each group, so that similar missing-value patterns sit together
+    (average-linkage clustering of the missing-value indicators).
 
     Returns (figure, note); note is "" or says how the matrix was reduced.
     """
@@ -1067,6 +1117,11 @@ def plot_data_matrix(
             d[c] = d[c].astype(str).map({v: i for i, v in enumerate(uniq)}).where(d[c].notna())
     _order = {s: i for i, s in enumerate(natural_sorted(d[site_col].astype(str).unique()))}
     d = d.iloc[d[site_col].astype(str).map(_order).argsort(kind="stable")].reset_index(drop=True)
+    if order_by_missing:
+        groups = [(g, _order_cols_by_missing(d, cols_g)) for g, cols_g in groups]
+        feats = [c for _, cols_g in groups for c in cols_g]
+        cols = cov + feats
+        d = _order_rows_by_missing(d, site_col, feats)
     sites = d[site_col].astype(str).to_numpy()
     site_order = list(dict.fromkeys(sites))
     site_n = {s: int((sites == s).sum()) for s in site_order}
@@ -1100,8 +1155,8 @@ def plot_data_matrix(
             z=zz, x=x_labels, zmin=0, zmax=1,
             colorscale=[[0, "#DDDDDD"], [1, "black"]],
             showscale=reduced,
-            colorbar=dict(title="share<br>missing", thickness=12, x=1.01),
-            hovertemplate=("Column: %{x}<br>" + ("share missing: %{z:.2f}" if reduced else "missing: %{z:.0f}")
+            colorbar=dict(title="missing", thickness=12, x=1.01),
+            hovertemplate=("Column: %{x}<br>" + ("missing: %{z:.2f} of the block" if reduced else "missing: %{z:.0f}")
                            + "<extra></extra>"),
         )
     else:
@@ -1194,7 +1249,9 @@ def plot_data_matrix(
     no_ticks = dict(showgrid=False, zeroline=False, showline=False, ticks="")
     fig.update_layout(
         title=dict(text=f"{title}: {len(d)} participants x {len(feats)} features"
-                        f"{f' + {len(cov)} covariates' if cov else ''} (sorted by batch; {what})",
+                        f"{f' + {len(cov)} covariates' if cov else ''} (sorted by batch"
+                        f"{'; participants and features grouped by similar missing values' if order_by_missing else ''}"
+                        f"; {what})",
                    y=0.995, yanchor="top"),
         xaxis=dict(showticklabels=False, range=[-0.5, 0.5], **no_ticks),
         # fixed range: the group labels above the bands would otherwise widen the axis
@@ -1212,7 +1269,7 @@ def plot_data_matrix(
 
     notes = []
     if reduced:
-        how = ("each cell shows the share of missing values in its block"
+        how = ("each cell shows the fraction of its block that is missing"
                if missing_only else "each cell shows the middle participant and feature of its block")
         notes.append(f"Shown at reduced resolution ({len(d)} participants in {len(row_blocks)} rows, "
                      f"{len(cols)} columns in {len(col_blocks)}); {how}.")
@@ -1250,7 +1307,7 @@ def _band_bars(counts: pd.DataFrame, title: str, x_title: str, hover_unit: str, 
     fig.update_layout(
         barmode="stack", title=title, **WHITE_BG,
         height=170 + 30 * len(rows), margin=dict(l=10, r=30, t=60, b=110),
-        legend=dict(BOTTOM_LEGEND, title_text="Share missing", traceorder="normal"),
+        legend=dict(BOTTOM_LEGEND, title_text="Missing", traceorder="normal"),
         xaxis=dict(title=x_title, range=[0, 100] if percent else None, showgrid=True, gridcolor="#EEEEEE"),
         yaxis=dict(autorange="reversed", type="category"),
     )
@@ -1264,7 +1321,7 @@ def plot_missing_by_measure(feature_pct: pd.Series, measure_of: dict) -> go.Figu
     counts = d.groupby(["measure", "band"], observed=False, sort=False).size().unstack(fill_value=0)
     counts = counts.reindex(list(dict.fromkeys(d["measure"])))
     counts.index = [f"{m} (n={int(n)})" for m, n in zip(counts.index, counts.sum(axis=1))]
-    return _band_bars(counts, "Features per measure, by share of participants missing",
+    return _band_bars(counts, "Features per modality group, by participants missing",
                       "Features of the measure (%)", "features", percent=True)
 
 
@@ -1311,63 +1368,73 @@ def plot_missing_curve(feature_pct: pd.Series, measure_of: dict | None = None,
             marker=dict(size=7, opacity=0),          # invisible points, so a click on the line selects one
             customdata=np.stack([n_over, np.full(len(xs), len(p))], axis=1),
             hovertemplate=(f"{g}<br>more than %{{x:.1f}}% missing: %{{customdata[0]}} of "
-                           f"%{{customdata[1]}} {unit}<br>click to see them or exclude them<extra></extra>"),
+                           f"%{{customdata[1]}} {unit} (%{{y:.1f}}%)<br>click to see them or exclude them<extra></extra>"),
         ))
+    sizes = {len(members[g]) for g in groups}
+    if len(sizes) == 1:
+        n_all = sizes.pop()
+        fig.add_trace(go.Scatter(x=[0, 0], y=[0, 0], yaxis="y2", mode="lines", line=dict(width=0),
+                                 showlegend=False, hoverinfo="skip"))
+        fig.update_layout(yaxis2=dict(title=f"{unit.capitalize()} (n" + (" per group)" if len(groups) > 1 else ")"),
+                                      overlaying="y", side="right", range=[0, n_all * 1.02], showgrid=False,
+                                      rangemode="tozero"))
     if threshold is not None and threshold <= x_max:
         fig.add_vline(x=threshold, line_dash="dot", line_color=GREY, line_width=1.5,
                       annotation_text=f"{threshold:g}%", annotation_position="top right")
     if kind == "features":
-        title, x_title, y_title = ("Features with more than x% of participants missing",
-                                   "Share of participants missing (x, %)", "Features of the group (%)")
+        title, x_title = "Features with more than x% of participants missing", "Participants missing (x, %)"
+        y_title = "Features (% of each modality group)" if len(groups) > 1 else "Features (%)"
     else:
         title, x_title, y_title = ("Participants missing more than x% of the selected features",
-                                   "Share of the selected features missing (x, %)", "Participants (%)")
+                                   "Features missing (x, %)", "Participants (%)")
     fig.update_layout(
         title=title, **WHITE_BG, height=430,
-        margin=dict(l=10, r=30, t=60, b=120), legend=dict(BOTTOM_LEGEND),
+        margin=dict(l=10, r=60, t=60, b=120), legend=dict(BOTTOM_LEGEND),
         xaxis=dict(title=x_title, range=[0, x_max], showgrid=True, gridcolor="#EEEEEE"),
         yaxis=dict(title=y_title, range=[0, 102], showgrid=True, gridcolor="#EEEEEE"),
     )
     return fig
 
 
-def plot_missing_per_participant(participant_pct: pd.Series, batch: pd.Series, ids: pd.Series | None,
-                                 threshold: float, n_features: int) -> go.Figure:
+def plot_missing_by_batch_bars(batches: list, n: list, values_pct: list, over_pct: list,
+                               threshold: float, all_values_pct: float, all_over_pct: float) -> go.Figure:
     """
-    One point per participant: the share of the selected features they miss,
-    by batch (box behind the points, jitter with seed 42); points above the
-    threshold in red, a dotted line at the threshold.
+    Per batch, two bars with their value printed: the feature values missing
+    (% of the batch's values) and the participants missing more than the
+    threshold (% of the batch); dotted lines give the same for all batches, so
+    a batch that stands out is easy to see.
     """
-    b = batch.astype(str)
-    order = natural_sorted(b.unique())
-    pos = {s: i for i, s in enumerate(order)}
-    rng = np.random.default_rng(42)
+    x = [f"{b}<br>(n={k})" for b, k in zip(batches, n)]
     fig = go.Figure()
-    for s in order:
-        v = participant_pct[b == s]
-        fig.add_trace(go.Box(x=[pos[s]] * len(v), y=v.values, boxpoints=False, line_color="#555555",
-                             line_width=1.0, fillcolor="rgba(200,200,200,0.15)", width=0.5,
-                             showlegend=False, hoverinfo="skip"))
-    lab = ids.astype(str) if ids is not None else pd.Series(participant_pct.index.astype(str), index=participant_pct.index)
-    for name, mask, color in ((f"At or below {threshold:g}%", participant_pct <= threshold, "#2A6EBB"),
-                              (f"More than {threshold:g}%", participant_pct > threshold, "#E34A33")):
-        if not mask.any():
-            continue
-        xs = [pos[s] + j for s, j in zip(b[mask], rng.uniform(-0.18, 0.18, int(mask.sum())))]
-        fig.add_trace(go.Scatter(
-            x=xs, y=participant_pct[mask].values, mode="markers", name=name,
-            marker=dict(color=color, size=5, opacity=0.75),
-            customdata=np.stack([lab[mask].values, b[mask].values], axis=1),
-            hovertemplate="%{customdata[0]}<br>Batch %{customdata[1]}<br>Features missing: %{y:.1f}%<extra></extra>"))
-    fig.add_hline(y=threshold, line_dash="dot", line_color=GREY, line_width=1.5)
-    n_by = b.value_counts()
+    for name, y, color, ref in (
+            ("Feature values missing (% of the batch's values)", values_pct, "#2A6EBB", all_values_pct),
+            (f"Participants missing more than {threshold:g}% of the features (% of the batch)", over_pct,
+             "#E34A33", all_over_pct)):
+        fig.add_trace(go.Bar(x=x, y=y, name=f"{name}; all batches {ref:.1f}% (dotted line)",
+                             marker_color=color, text=[f"{v:.1f}%" for v in y],
+                             textposition="outside", cliponaxis=False,
+                             hovertemplate="%{x}<br>" + name + ": %{y:.1f}%<extra></extra>"))
+        fig.add_hline(y=ref, line_dash="dot", line_color=color, line_width=1.5)
+    top = max([*values_pct, *over_pct, all_values_pct, all_over_pct, 1.0])
     fig.update_layout(
-        title="Share of the selected features each participant misses, by batch", **WHITE_BG, height=470,
-        margin=dict(l=10, r=30, t=60, b=130), legend=dict(BOTTOM_LEGEND),
-        xaxis=dict(tickmode="array", tickvals=list(range(len(order))),
-                   ticktext=[f"{s}<br>(n={int(n_by[s])})" for s in order], tickangle=0),
-        yaxis=dict(title=f"Features missing (% of the {n_features} selected)",
-                   range=[-2, max(5.0, float(participant_pct.max()) * 1.08 if len(participant_pct) else 5.0)],
-                   showgrid=True, gridcolor="#EEEEEE"),
+        title="Missing values per batch", barmode="group", **WHITE_BG, height=470,
+        margin=dict(l=10, r=30, t=60, b=140), legend=dict(BOTTOM_LEGEND),
+        yaxis=dict(title="%", range=[0, top * 1.18], showgrid=True, gridcolor="#EEEEEE"),
+        xaxis=dict(tickangle=0),
     )
+    return fig
+
+
+def plot_missing_batch_by_group(table: pd.DataFrame) -> go.Figure:
+    """Batch by modality group grid: the feature values missing (%) in each cell."""
+    z = table.values.astype(float)
+    fig = go.Figure(go.Heatmap(
+        z=z, x=list(table.columns), y=list(table.index), colorscale="Oranges", zmin=0,
+        zmax=max(float(np.nanmax(z)) if z.size else 1.0, 1.0),
+        text=[[f"{v:.1f}%" for v in row] for row in z], texttemplate="%{text}",
+        colorbar=dict(title="missing (%)", thickness=12),
+        hovertemplate="Batch %{y}<br>%{x}: %{z:.1f}% of the values missing<extra></extra>"))
+    fig.update_layout(title="Feature values missing per batch and modality group (%)", **WHITE_BG,
+                      height=160 + 34 * len(table.index), margin=dict(l=10, r=30, t=60, b=60),
+                      yaxis=dict(autorange="reversed", type="category"), xaxis=dict(side="top"))
     return fig

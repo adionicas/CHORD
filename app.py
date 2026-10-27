@@ -25,7 +25,7 @@ from src.plots     import (plot_site_deviation, plot_spearman, plot_icc, plot_da
                            plot_extra_associations, plot_single_association,
                            plot_icc_ci_compare, plot_missing_by_measure,
                            plot_missing_by_batch, plot_missing_curve,
-                           plot_missing_per_participant)
+                           plot_missing_by_batch_bars, plot_missing_batch_by_group)
 from src.report    import generate_report, build_methods_paragraph, data_prep_sentence
 
 # ── Update this URL once the repo is live ─────────────────────────────────
@@ -217,7 +217,7 @@ def _record_participant_exclusion(entries, threshold, key_of_data):
     st.session_state["_excl_part_info"] = {"n": len(prev), "threshold": threshold}
 
 
-@st.experimental_dialog("Missing values at this share", width="large")
+@st.experimental_dialog("Missing values above this percentage", width="large")
 def _missing_at_share(x, feat_pct, part_pct, measure_of, kind="features", part_entries=None,
                       groups=None, key_of_data=None):
     """What a click on a missing-value curve shows, with a button to exclude at
@@ -257,10 +257,10 @@ def _missing_at_share(x, feat_pct, part_pct, measure_of, kind="features", part_e
                          type="primary", on_click=_record_participant_exclusion,
                          args=(_e, round(float(x), 1), key_of_data)):
                 st.rerun()
-    st.caption("Excluding records the share as the threshold; the report and the Methods paragraph state it. "
+    st.caption("Excluding records this percentage as the threshold; the report and the Methods paragraph state it. "
                "Exclusions can be undone in the exclusion steps below.")
-    if st.button(f"Only use {x:.1f}% as the threshold for the counts"):
-        st.session_state["miss_assess_thr"] = round(float(x), 1)
+    if st.button(f"Only set {x:.1f}% as the threshold under the curve"):
+        st.session_state["miss_assess_thr" if kind == "features" else "miss_assess_part_thr"] = round(float(x), 1)
         st.rerun()
 
 
@@ -399,38 +399,6 @@ else:
         "Batch effects will be removed but no biological variability is explicitly preserved."
     )
 
-# Every value of each model variable with its count, to spot odd codes (for
-# example -999, 999 or "Unknown") before they enter the model.
-if st.toggle("Show the values of each model variable", value=True, key="show_model_values"):
-    _roles = [(site_col, "batch")] + [(c, "continuous covariate") for c in continuous_covariates] \
-             + [(c, "categorical covariate") for c in categorical_covariates]
-    st.caption("Each value with the number of participants who have it; check for codes that are not "
-               "real values, such as -999, 999 or \"Unknown\", and for misspelled categories.")
-    _vcols = st.columns(min(3, len(_roles)))
-    for _i, (_c, _role) in enumerate(_roles):
-        _s = df[_c]
-        _vc = _s.value_counts(dropna=True)
-        if pd.api.types.is_numeric_dtype(_s):
-            _vc = _vc.sort_index()
-            _vals = [f"{v:g}" for v in _vc.index]
-            _desc = (f"{_s.nunique()} distinct values, {_s.min():g} to {_s.max():g}"
-                     if _s.notna().any() else "no values")
-        else:
-            _order = natural_sorted(_vc.index.astype(str))
-            _vc.index = _vc.index.astype(str)
-            _vc = _vc[_order]
-            _vals = list(_vc.index)
-            _desc = f"{_s.nunique()} distinct values"
-        _tab = pd.DataFrame({"Value": _vals, "Participants": _vc.values})
-        if _s.isna().any():
-            _tab = pd.concat([_tab, pd.DataFrame({"Value": ["(missing)"], "Participants": [int(_s.isna().sum())]})],
-                             ignore_index=True)
-        with _vcols[_i % len(_vcols)]:
-            st.markdown(f"**{_c}** ({_role}): {_desc}")
-            st.dataframe(_tab, hide_index=True, use_container_width=True,
-                         height=min(38 + 35 * len(_tab), 250))
-
-
 def _by_batch_table(data, batch_col, variables):
     """
     One row per batch plus an Overall row (participants with a batch value):
@@ -456,19 +424,53 @@ def _by_batch_table(data, batch_col, variables):
     return pd.DataFrame(rows)
 
 
-# ── Demographic table by batch (optional, before choosing the features) ────
-if st.toggle("Show a demographic table by batch", key="show_demo_table"):
+# ── Check the demographics (before choosing the features) ──────────────────
+st.markdown("**Check the demographics**")
+st.caption("Look at the batch and the covariates before harmonizing, to see whether anything in the "
+           "table needs fixing first: typos or misspelled categories, codes that are not real values "
+           "(such as -999, 999 or \"Unknown\"), unexpected ranges, or missing values.")
+if st.toggle("Check the batch and the covariates", value=True, key="show_demo_table"):
     _demo_vars = st.multiselect(
-        "Variables to describe (your covariates to start with; any other column can be added)",
+        "Variables to check (your covariates to start with; any other column can be added)",
         options=[c for c in df.columns if c != site_col],
         default=[c for c in [age_col if inc_age else None, sex_col if inc_sex else None]
                  + extra_cont_add + extra_cat_add if c],
         key="demo_table_vars",
     )
+    st.markdown("By batch")
     st.dataframe(_by_batch_table(df, site_col, _demo_vars), use_container_width=True, hide_index=True)
     _no_batch = int(df[site_col].isna().sum())
     st.caption("Numeric variables: mean (SD); range. Categories: n (%)."
                + (f" {_no_batch} participant(s) without a batch value are not in the table." if _no_batch else ""))
+
+    st.markdown("Every value, with the number of participants who have it")
+    _roles = [(site_col, "batch")] + [
+        (_c, "continuous covariate" if _c in continuous_covariates else
+             "categorical covariate" if _c in categorical_covariates else "added for checking")
+        for _c in _demo_vars]
+    _vcols = st.columns(min(3, len(_roles)))
+    for _i, (_c, _role) in enumerate(_roles):
+        _s = df[_c]
+        _vc = _s.value_counts(dropna=True)
+        if pd.api.types.is_numeric_dtype(_s):
+            _vc = _vc.sort_index()
+            _vals = [f"{v:g}" for v in _vc.index]
+            _desc = (f"{_s.nunique()} distinct values, {_s.min():g} to {_s.max():g}"
+                     if _s.notna().any() else "no values")
+        else:
+            _order = natural_sorted(_vc.index.astype(str))
+            _vc.index = _vc.index.astype(str)
+            _vc = _vc[_order]
+            _vals = list(_vc.index)
+            _desc = f"{_s.nunique()} distinct values"
+        _tab = pd.DataFrame({"Value": _vals, "Participants": _vc.values})
+        if _s.isna().any():
+            _tab = pd.concat([_tab, pd.DataFrame({"Value": ["(missing)"], "Participants": [int(_s.isna().sum())]})],
+                             ignore_index=True)
+        with _vcols[_i % len(_vcols)]:
+            st.markdown(f"**{_c}** ({_role}): {_desc}")
+            st.dataframe(_tab, hide_index=True, use_container_width=True,
+                         height=min(38 + 35 * len(_tab), 250))
 
 exclude_meta  = {site_col, age_col, sex_col} | set(extra_cont_add) | set(extra_cat_add)
 auto_features = [c for c in num_cols if c not in exclude_meta]
@@ -500,13 +502,19 @@ st.caption(f"{len(auto_features)} numeric columns are available.")
 # ── Range of feature columns (the main way to select) ──────────────────────
 st.markdown("**Choose the first and last feature column**")
 st.caption(
-    "Every column in the range is selected: from one column to another, or from one column to the "
-    "last column of the table (tick \"To the last column\"). \"Show all column names with their "
-    "numbers\" lists every column with its number. Pick the columns by name, or switch on \"Use "
-    "column numbers instead of names\" to pick them by number, for example from column 5 to the last "
-    "column. The name lists hold only the columns that can be features (numeric, and not the batch "
-    "or a covariate chosen in Step 2); type part of a name in a box to find it. After choosing, you "
-    "can review and edit the selected features below, or remove columns by keyword."
+    "Three ways to choose the features:\n"
+    "- **By name:** pick the first and the last feature column; every column between them is selected. "
+    "Tick \"To the last column\" to go to the end of the table, and type part of a name in a box to find it.\n"
+    "- **By number:** switch on \"Use column numbers instead of names\", for example from column 5 to the last "
+    "column. \"Show all column names with their numbers\" lists every column with its number, to see where "
+    "your features start and end.\n"
+    "- **By keyword:** further down, select the columns whose name contains a keyword, or exclude them from "
+    "the columns you chose.\n\n"
+    "The name lists hold only the columns that can be features (numeric, and not the batch or a covariate "
+    "chosen in Step 2). You can review the selected features below. If the selected features include more "
+    "than one modality or measure type (for example FA and MD, or thickness and volume), tick the option "
+    "under \"Multiple imaging modalities or measure types\" right after choosing them, so that each is "
+    "harmonized on its own."
 )
 n_cols   = len(all_df_cols)
 last_col = all_df_cols[-1]
@@ -612,84 +620,63 @@ else:
     feature_cols = list(st.session_state["sel_features"])
     st.markdown(f"**Currently selected: {n_sel} features** — review or edit below")
     st.caption(f"From {feature_cols[0]} to {feature_cols[-1]}. Too many to show one by one (more than "
-               f"{MAX_CHIPS}): open \"View all {n_sel} selected feature names in full\" below to see them, "
-               "and tick \"Remove or add features one by one\" to change the selection.")
+               f"{MAX_CHIPS}): open \"View all {n_sel} selected feature names in full\" below to see them; "
+               "change the selection with the range above or by keyword below.")
 
-    def _remove_picked():
-        drop = set(st.session_state.get("sel_remove_pick", []))
-        st.session_state["sel_features"] = [c for c in st.session_state["sel_features"] if c not in drop]
-        st.session_state["sel_remove_pick"] = []
 
-    def _add_picked():
-        add = set(st.session_state.get("sel_add_pick", [])) | set(st.session_state["sel_features"])
-        st.session_state["sel_features"] = [c for c in auto_features if c in add]
-        st.session_state["sel_add_pick"] = []
-
-    if st.checkbox("Remove or add features one by one", key="edit_large_selection"):
-        rm_c1, rm_c2 = st.columns([4, 1])
-        with rm_c1:
-            st.multiselect("Remove features from the selection", options=feature_cols, key="sel_remove_pick",
-                           placeholder="type part of a name to find features to remove")
-        with rm_c2:
-            st.markdown("<br>", unsafe_allow_html=True)
-            st.button("Remove", on_click=_remove_picked, use_container_width=True,
-                      disabled=not st.session_state.get("sel_remove_pick"))
-        not_sel = [c for c in auto_features if c not in set(feature_cols)]
-        if not not_sel:
-            st.caption("Every available feature is selected, so there is nothing to add; the Add box "
-                       "appears once some features are not in the selection.")
-        if not_sel:
-            ad_c1, ad_c2 = st.columns([4, 1])
-            with ad_c1:
-                st.multiselect("Add features to the selection", options=not_sel, key="sel_add_pick",
-                               placeholder="type part of a name to find features to add")
-            with ad_c2:
-                st.markdown("<br>", unsafe_allow_html=True)
-                st.button("Add", on_click=_add_picked, use_container_width=True,
-                          disabled=not st.session_state.get("sel_add_pick"))
-
-if not feature_cols:
-    st.info("No features selected yet. Choose the first and last feature column above, "
-            "or pick features in the list.")
-    st.stop()
 
 # ── Full name preview ──────────────────────────────────────────────────────
-with st.expander(f"View all {len(feature_cols)} selected feature names in full"):
-    if len(feature_cols) > MAX_CHIPS:
-        # many features: one scrollable numbered table instead of one line per name
-        st.dataframe(pd.DataFrame({"№": range(1, len(feature_cols) + 1), "Feature": feature_cols}),
-                     hide_index=True, use_container_width=True, height=300,
-                     column_config={"№": st.column_config.NumberColumn(width="small")})
-    else:
-        # show as a compact numbered list in 3 columns
-        cols_per_row = 3
-        rows = [feature_cols[i:i+cols_per_row] for i in range(0, len(feature_cols), cols_per_row)]
-        for i, row in enumerate(rows):
-            grid = st.columns(cols_per_row)
-            for j, name in enumerate(row):
-                idx = i * cols_per_row + j + 1
-                grid[j].markdown(f"`{idx}.` {name}")
+if feature_cols:
+    with st.expander(f"View all {len(feature_cols)} selected feature names in full"):
+        if len(feature_cols) > MAX_CHIPS:
+            # many features: one scrollable numbered table instead of one line per name
+            st.dataframe(pd.DataFrame({"№": range(1, len(feature_cols) + 1), "Feature": feature_cols}),
+                         hide_index=True, use_container_width=True, height=300,
+                         column_config={"№": st.column_config.NumberColumn(width="small")})
+        else:
+            # show as a compact numbered list in 3 columns
+            cols_per_row = 3
+            rows = [feature_cols[i:i+cols_per_row] for i in range(0, len(feature_cols), cols_per_row)]
+            for i, row in enumerate(rows):
+                grid = st.columns(cols_per_row)
+                for j, name in enumerate(row):
+                    idx = i * cols_per_row + j + 1
+                    grid[j].markdown(f"`{idx}.` {name}")
 
-# ── Optional: exclude by keyword ───────────────────────────────────────────
-if st.checkbox("Exclude columns whose name contains a keyword", key="use_keyword_exclusion"):
-    ex_c1, ex_c2 = st.columns([4, 2])
+# ── Optional: select or exclude by keyword ─────────────────────────────────
+if st.checkbox("Select or exclude columns by keyword", key="use_keyword_exclusion"):
+    st.caption("\"Select matching\" selects every available column whose name contains a keyword (it "
+               "replaces the selection); \"Exclude matching\" removes those columns from the selection. "
+               "Separate several keywords with commas.")
+    ex_c1, ex_c2, ex_c3 = st.columns([4, 1, 1])
     with ex_c1:
         excl_input = st.text_input(
-            "Exclude keyword(s)", key="excl_keywords",
-            placeholder='e.g.  unassigned   or   unassigned, reward, LIM',
+            "Keyword(s)", key="excl_keywords",
+            placeholder='e.g.  FA_   or   unassigned, reward, LIM',
             label_visibility="collapsed",
         )
+
+    def _keywords():
+        text = st.session_state.get("excl_keywords", "")
+        return [k.strip().lower() for k in text.split(",") if k.strip()]
+
+    def _select_keyword_matches():
+        if _keywords():
+            st.session_state["sel_features"] = [c for c in auto_features
+                                                if any(kw in c.lower() for kw in _keywords())]
+
+    def _exclude_keyword_matches():
+        if _keywords():
+            st.session_state["sel_features"] = [
+                c for c in st.session_state.get("sel_features", [])
+                if not any(kw in c.lower() for kw in _keywords())]
     with ex_c2:
-        st.markdown("<br>", unsafe_allow_html=True)
-        def _exclude_keyword_matches():
-            text = st.session_state.get("excl_keywords", "")
-            keywords = [k.strip().lower() for k in text.split(",") if k.strip()]
-            if keywords:
-                st.session_state["sel_features"] = [
-                    c for c in st.session_state.get("sel_features", [])
-                    if not any(kw in c.lower() for kw in keywords)]
+        st.button("Select matching", use_container_width=True, on_click=_select_keyword_matches)
+    with ex_c3:
         st.button("Exclude matching", use_container_width=True, on_click=_exclude_keyword_matches)
     if excl_input.strip():
+        _n_match_all = sum(any(kw in c.lower() for kw in _keywords()) for c in auto_features)
+        st.caption(f"{_n_match_all} of the {len(auto_features)} available columns contain it.")
         import re as _re2
         keywords     = [k.strip().lower() for k in excl_input.split(",") if k.strip()]
         would_remove = [c for c in st.session_state.get("sel_features", [])
@@ -724,6 +711,11 @@ if st.checkbox("Exclude columns whose name contains a keyword", key="use_keyword
                 st.caption(f"… and {len(would_remove) - 60} more.")
         else:
             st.caption("No currently selected columns match that keyword.")
+
+if not feature_cols:
+    st.info("No features selected yet. Choose the first and last feature column above, pick features "
+            "in the list, or select them by keyword.")
+    st.stop()
 
 sites = df[site_col].dropna().unique()
 st.info(f"Batches (n = {len(sites)}): **{', '.join(natural_sorted(sites.astype(str)))}**")
@@ -862,13 +854,13 @@ st.caption("Overview of the selected features, one row per participant sorted by
 
 @st.cache_data(show_spinner=False, max_entries=8)
 def _matrix_figure(data_key, rows_key, site_col, covariate_cols, feats, groups, marked,
-                   missing_only, title, _rows_df):
+                   missing_only, title, _rows_df, order_by_missing=False):
     """Cached data-matrix figure; the table itself (_rows_df) is identified by the keys."""
     return plot_data_matrix(
         _rows_df, site_col, list(covariate_cols), list(feats),
         modality_groups={g: list(c) for g, c in groups} if groups else None,
         marked_block=(marked[0], list(marked[1])) if marked else None,
-        missing_only=missing_only, title=title)
+        missing_only=missing_only, title=title, order_by_missing=order_by_missing)
 
 
 def _show_matrix_preview(rows_df, rows_key, feats, title, marked=None, missing_only=None):
@@ -880,7 +872,8 @@ def _show_matrix_preview(rows_df, rows_key, feats, title, marked=None, missing_o
             data_key, rows_key, site_col, tuple(covs), tuple(feats), groups,
             (marked[0], tuple(marked[1])) if marked else None,
             bool(st.session_state.get("preview_missing_only", False)) if missing_only is None
-            else missing_only, title, rows_df)
+            else missing_only, title, rows_df,
+            bool(st.session_state.get("preview_order_missing", False)))
         st.plotly_chart(fig, use_container_width=True)
         if note:
             st.caption(note)
@@ -898,9 +891,17 @@ _model_cols_now = [c for c in [site_col, age_col, sex_col] + extra_continuous + 
 _nothing_missing = not df[list(feature_cols) + _excluded_before + _model_cols_now].isna().any().any()
 
 # always offered, also when nothing is missing (an all-grey view confirms it)
-st.toggle("Show missing values only", key="preview_missing_only",
-          help="Shows only where values are missing (black) and present (grey), "
-               "like the vis_miss plot of the R package naniar. Applies to both previews.")
+_pv1, _pv2 = st.columns(2)
+with _pv1:
+    st.toggle("Show missing values only", key="preview_missing_only",
+              help="Shows only where values are missing (black) and present (grey), "
+                   "like the vis_miss plot of the R package naniar. Applies to both previews.")
+with _pv2:
+    st.toggle("Group participants and features with similar missing values", key="preview_order_missing",
+              help="Orders the participants within each batch, and the features within each modality "
+                   "group, so that similar missing-value patterns sit together (clustering of the missing "
+                   "values). Batches and groups keep their order. Applies to both previews and to the map "
+                   "of missing values.")
 _preview_excluded = [d.get("Feature") for d in st.session_state.get("_excl_feat_list", [])
                      if d.get("Feature") in df.columns]
 _show_matrix_preview(
@@ -922,7 +923,11 @@ else:
 if _show_miss_tools:
     st.markdown("**Missing value assessment (optional)**")
     st.caption(
-        "Two kinds of missingness matter for harmonization, and this section shows them "
+        "This section is also useful for cleaning the data in general: it shows which participants "
+        "and features have missing values, so you can spot problems in the table (for example a "
+        "processing step that failed, a measure missing for a whole site, or participants with almost "
+        "no data) and decide what to fix or exclude before harmonizing. For harmonization itself, "
+        "two kinds of missingness matter, and this section shows them "
         "separately. neuroCombat requires a complete feature matrix when Empirical Bayes is "
         "used, because Empirical Bayes pools information across features, so a participant with "
         "any missing feature is dropped from that run. When Empirical Bayes is not used, features "
@@ -1005,62 +1010,88 @@ if _show_miss_tools:
             feat_pct = 100 * feat_isna.mean()
             part_pct = 100 * feat_isna.mean(axis=1)
             # ── features by share missing: the curve, then the threshold under it ──
-            st.markdown("**How many features and participants are above each share missing**")
-            st.caption("The first curve gives, for every share x, the features with more than x% of the "
+            st.markdown("**How many features and participants are above each percentage missing**")
+            st.caption("The first curve gives, for every percentage x, the features with more than x% of the "
                        "participants missing" + (", one line per modality group as defined above"
                                                  if modality_groups else
                        " (define the groups under \"Multiple imaging modalities or measure types\" above "
                        "to get one line per modality or measure type)")
                        + "; the second, the participants missing more than x% of the selected features. "
-                       "Click a point on a line to see who or what is above that share, and to exclude them "
-                       "with that share as the threshold.")
-            _a_thr_now = float(st.session_state.get("miss_assess_thr", 10.0) or 0.0)
+                       "Set a threshold in the box under each curve, or click a point on a line to see who or "
+                       "what is above it; both can exclude them with that threshold.")
+            _f_thr_now = float(st.session_state.get("miss_assess_thr", 10.0) or 0.0)
+            _p_thr_now = float(st.session_state.get("miss_assess_part_thr", 10.0) or 0.0)
             _ck = st.session_state.get("_miss_curve_n", 0)
             _pid_c = st.session_state.get("id_col") or _guess_id_col(df, exclude=set(_model_vars) | set(feats_l))
+            _excl_rows_set = set(_excl_part_rows)
+
+            def _part_entries(rows):
+                return [{"data_key": data_key, "row": r,
+                         "Participant": (str(df.at[r, _pid_c]) if _pid_c in df.columns
+                                         else f"Row {df.index.get_loc(r) + 1}"),
+                         "Batch": "—" if pd.isna(df.at[r, site_col]) else str(df.at[r, site_col]),
+                         "Features missing (%)": round(float(part_pct[r]), 1)}
+                        for r in rows if r not in _excl_rows_set]
+
             _clicked = None
-            _ev_f = st.plotly_chart(plot_missing_curve(feat_pct, measure_of or None, _a_thr_now),
+            # features
+            _ev_f = st.plotly_chart(plot_missing_curve(feat_pct, measure_of or None, _f_thr_now),
                                     use_container_width=True, on_select="rerun", selection_mode="points",
                                     key=f"miss_curve_f_{_ck}")
             _pts = (_ev_f or {}).get("selection", {}).get("points", []) if _ev_f else []
             if _pts:
                 _clicked = ("features", float(_pts[0]["x"]))
-            _ev_p = st.plotly_chart(plot_missing_curve(part_pct, None, _a_thr_now, kind="participants"),
+            fc1, fc2 = st.columns([1, 3])
+            with fc1:
+                a_thr = st.number_input("Threshold: participants missing (%)", min_value=0.0, max_value=100.0,
+                                        value=10.0, step=1.0, key="miss_assess_thr")
+            _f_over = feat_pct[feat_pct > a_thr].sort_values(ascending=False)
+            with fc2:
+                st.markdown(
+                    f"<br>**Features:** {int((feat_pct > 0).sum())} of {len(feats_l)} "
+                    f"({100 * (feat_pct > 0).mean():.1f}%) have at least one missing value; "
+                    f"**{len(_f_over)} ({100 * len(_f_over) / max(len(feats_l), 1):.1f}%)** have more than "
+                    f"{a_thr:g}% of the participants missing.", unsafe_allow_html=True)
+                if len(_f_over):
+                    st.button(f"Exclude these {len(_f_over)} feature(s)", key="curve_excl_feats",
+                              on_click=_record_feature_exclusion,
+                              args=(list(_f_over.index), a_thr, _f_over.to_dict(), modality_groups))
+            # participants
+            _ev_p = st.plotly_chart(plot_missing_curve(part_pct, None, _p_thr_now, kind="participants"),
                                     use_container_width=True, on_select="rerun", selection_mode="points",
                                     key=f"miss_curve_p_{_ck}")
             _pts = (_ev_p or {}).get("selection", {}).get("points", []) if _ev_p else []
             if _pts:
                 _clicked = ("participants", float(_pts[0]["x"]))
+            pc1, pc2 = st.columns([1, 3])
+            with pc1:
+                p_thr = st.number_input("Threshold: features missing (%)", min_value=0.0, max_value=100.0,
+                                        value=10.0, step=1.0, key="miss_assess_part_thr")
+            _p_over = part_pct[(part_pct > p_thr) & ~part_pct.index.isin(_excl_part_rows)]
+            with pc2:
+                st.markdown(
+                    f"<br>**Participants:** **{int((part_pct > p_thr).sum())} of {n_total} "
+                    f"({100 * (part_pct > p_thr).mean():.1f}%)** miss more than {p_thr:g}% of the features"
+                    + (f" ({int((part_pct > p_thr).sum()) - len(_p_over)} of them already excluded)"
+                       if int((part_pct > p_thr).sum()) != len(_p_over) else "") + ".",
+                    unsafe_allow_html=True)
+                if len(_p_over):
+                    st.button(f"Exclude these {len(_p_over)} participant(s)", key="curve_excl_parts",
+                              on_click=_record_participant_exclusion,
+                              args=(_part_entries(_p_over.index), p_thr, data_key))
             if _clicked:
                 # new chart keys clear the click, so the window opens once per click
                 st.session_state["_miss_curve_n"] = _ck + 1
-                _entries = None
-                if _clicked[0] == "participants":
-                    _rows_over = part_pct[part_pct > _clicked[1]].index
-                    _entries = [{"data_key": data_key, "row": r,
-                                 "Participant": (str(df.at[r, _pid_c]) if _pid_c in df.columns
-                                                 else f"Row {df.index.get_loc(r) + 1}"),
-                                 "Batch": "—" if pd.isna(df.at[r, site_col]) else str(df.at[r, site_col]),
-                                 "Features missing (%)": round(float(part_pct[r]), 1)}
-                                for r in _rows_over if r not in set(_excl_part_rows)]
+                _entries = (_part_entries(part_pct[part_pct > _clicked[1]].index)
+                            if _clicked[0] == "participants" else None)
                 _missing_at_share(_clicked[1], feat_pct, part_pct, measure_of, kind=_clicked[0],
                                   part_entries=_entries, groups=modality_groups, key_of_data=data_key)
-
-            thr_c = st.columns([1, 3])[0]
-            with thr_c:
-                a_thr = st.number_input("Threshold for the counts below (%)", min_value=0.0, max_value=100.0,
-                                        value=10.0, step=5.0, key="miss_assess_thr")
-            st.markdown(
-                f"- **Features:** {int((feat_pct > 0).sum())} of {len(feats_l)} have at least one missing "
-                f"value; {int((feat_pct > a_thr).sum())} have more than {a_thr:g}% missing.\n"
-                f"- **Participants:** {int((part_pct > 0).sum())} of {n_total} miss at least one feature; "
-                f"{int((part_pct > a_thr).sum())} miss more than {a_thr:g}% of the features."
-            )
 
             # ── per modality group (only when the groups are defined) ──
             if modality_groups:
                 st.markdown("**Missing values per modality group**")
                 st.caption("Each bar is one modality group as defined above; its features are counted by "
-                           "the share of participants missing them.")
+                           "how many of the participants miss them (%).")
                 st.plotly_chart(plot_missing_by_measure(feat_pct, measure_of), use_container_width=True)
             _per_meas = []
             for m in (measures if modality_groups else []):
@@ -1111,9 +1142,9 @@ if _show_miss_tools:
                 _in = _has_batch & (df[site_col].astype(str) == b)
                 _na_b, _pp_b = feat_isna[_in], part_pct[_in]
                 _row = {"Batch": b, "Participants (n)": int(_in.sum()),
-                        "Participants missing any feature (n)": int((_pp_b > 0).sum()),
-                        "Participants missing any feature (% of the batch)": round(100 * float((_pp_b > 0).mean()), 1),
-                        f"Participants missing more than {a_thr:g}% of the features (n)": int((_pp_b > a_thr).sum()),
+                        f"Participants missing more than {p_thr:g}% of the features (n)": int((_pp_b > p_thr).sum()),
+                        f"Participants missing more than {p_thr:g}% of the features (% of the batch)":
+                            round(100 * float((_pp_b > p_thr).mean()), 1),
                         "Feature values missing (% of the batch's values)": round(100 * float(_na_b.values.mean()), 2),
                         "Features with any missing value in the batch (n)": int(_na_b.any().sum())}
                 for m in (measures if modality_groups else []):
@@ -1123,12 +1154,17 @@ if _show_miss_tools:
             st.dataframe(pd.DataFrame(_bt), use_container_width=True, hide_index=True)
             if (~_has_batch).any():
                 st.caption(f"{int((~_has_batch).sum())} participant(s) without a batch value are not in this table.")
-            st.caption("Each point is one participant: the share of the selected features they miss, by batch. "
-                       "Points above the dotted line miss more than the threshold above.")
-            st.plotly_chart(plot_missing_per_participant(
-                part_pct[_has_batch], df.loc[_has_batch, site_col],
-                df.loc[_has_batch, _pid] if _pid in df.columns else None, a_thr, len(feats_l)),
-                use_container_width=True)
+            _btab = pd.DataFrame(_bt)
+            st.plotly_chart(plot_missing_by_batch_bars(
+                list(_btab["Batch"]), list(_btab["Participants (n)"]),
+                list(_btab["Feature values missing (% of the batch's values)"]),
+                list(_btab[f"Participants missing more than {p_thr:g}% of the features (% of the batch)"]),
+                p_thr, 100 * float(feat_isna[_has_batch].values.mean()),
+                100 * float((part_pct[_has_batch] > p_thr).mean())), use_container_width=True)
+            if modality_groups:
+                _grid = _btab.set_index("Batch")[[f"{m}: values missing (%)" for m in measures]]
+                _grid.columns = measures
+                st.plotly_chart(plot_missing_batch_by_group(_grid), use_container_width=True)
 
             # ── per participant ──
             st.markdown("**Missing values per participant**")
@@ -1796,6 +1832,7 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
         # missing values before harmonization, for the report's data preparation tables:
         # the selected features (with those later excluded) in all uploaded participants
         _thr_a = float(st.session_state.get("miss_assess_thr") or 10.0)
+        _thr_p = float(st.session_state.get("miss_assess_part_thr") or 10.0)
         _feats_all = list(feature_cols) + [f for f in _excluded_before if f not in feature_cols]
         _na_all = df[_feats_all].isna()
         _fp_all, _pp_all = 100 * _na_all.mean(), 100 * _na_all.mean(axis=1)
@@ -1804,7 +1841,8 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
         missing_overview = {
             "threshold": _thr_a, "n_participants": len(df), "n_features": len(_feats_all),
             "feat_any": int((_fp_all > 0).sum()), "feat_over": int((_fp_all > _thr_a).sum()),
-            "part_any": int((_pp_all > 0).sum()), "part_over": int((_pp_all > _thr_a).sum()),
+            "part_any": int((_pp_all > 0).sum()), "part_over": int((_pp_all > _thr_p).sum()),
+            "part_threshold": _thr_p,
             "feat_excl": int(_xi.get("n") or 0), "feat_excl_thr": _xi.get("threshold"),
             "part_excl": len(_excl_part_rows), "part_excl_thr": _xpi.get("threshold"),
             "by_group": [

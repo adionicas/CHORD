@@ -173,23 +173,24 @@ def _data_prep_tables(excl_feat_html, overview, excl_part_list):
               "across all uploaded participants.")
     if overview:
         thr = overview["threshold"]
+        pthr = overview.get("part_threshold", thr)
 
         def excluded(n, t):
             return f"{n} (more than {t:g}% missing)" if n and t is not None else str(n or 0)
         ov = pd.DataFrame([
             {"": "Features", "Total": overview["n_features"], "With any missing value": overview["feat_any"],
-             f"More than {thr:g}% missing": overview["feat_over"],
+             "Above the threshold": f"{overview['feat_over']} (participants missing more than {thr:g}%)",
              "Excluded by the user": excluded(overview["feat_excl"], overview["feat_excl_thr"])},
-            {"": "Participants", "Total": overview["n_participants"], "With any missing value": overview["part_any"],
-             f"More than {thr:g}% missing": overview["part_over"],
+            {"": "Participants", "Total": overview["n_participants"], "With any missing value": "",
+             "Above the threshold": f"{overview['part_over']} (features missing more than {pthr:g}%)",
              "Excluded by the user": excluded(overview["part_excl"], overview["part_excl_thr"])},
         ])
         overview_label = table(
             "Missing values before harmonization.", _df_table(ov),
             f"Counted over the {overview['n_features']} selected features (including any later excluded) "
-            f"in all {overview['n_participants']} uploaded participants. A feature is counted as more than "
-            f"{thr:g}% missing when it is missing in more than {thr:g}% of the participants; a participant "
-            f"when they miss more than {thr:g}% of the features.")
+            f"in all {overview['n_participants']} uploaded participants. A feature is above the threshold "
+            f"when it is missing in more than {thr:g}% of the participants; a participant when they miss "
+            f"more than {pthr:g}% of the features.")
         if overview.get("by_group"):
             table("Missing values per modality group before harmonization.",
                   _df_table(pd.DataFrame(overview["by_group"]), float_fmt=1),
@@ -468,12 +469,12 @@ TEMPLATE = """<!DOCTYPE html>
 <p>
   {% if missing_overview %}
   {% set mthr = '%g'|format(missing_overview.threshold) %}
+  {% set pthr = '%g'|format(missing_overview.part_threshold or missing_overview.threshold) %}
   Before harmonization, {{ missing_overview.feat_any }} of the {{ missing_overview.n_features }} selected
   features had at least one missing value and {{ missing_overview.feat_over }}
   {{ 'was' if missing_overview.feat_over == 1 else 'were' }} missing in more than {{ mthr }}% of the
-  participants; {{ missing_overview.part_any }} of the {{ missing_overview.n_participants }} participants
-  missed at least one feature value and {{ missing_overview.part_over }} missed more than {{ mthr }}% of
-  the features (Table {{ overview_table_label }}).
+  participants, and {{ missing_overview.part_over }} of the {{ missing_overview.n_participants }} participants
+  missed more than {{ pthr }}% of the features (Table {{ overview_table_label }}).
   {% endif %}
   {% if excl_info and excl_info.n > 0 %}
   {{ excl_info.n }} feature{{ 's' if excl_info.n != 1 else '' }}
