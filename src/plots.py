@@ -1438,3 +1438,29 @@ def plot_missing_batch_by_group(table: pd.DataFrame) -> go.Figure:
                       height=160 + 34 * len(table.index), margin=dict(l=10, r=30, t=60, b=60),
                       yaxis=dict(autorange="reversed", type="category"), xaxis=dict(side="top"))
     return fig
+
+
+def plot_missing_present_by_batch(batches: list, n: list, values_pct: list) -> go.Figure:
+    """Per batch, one bar split into the feature values missing (black, at the
+    bottom so batches compare) and present (grey), as % of the batch's values."""
+    x = [f"{b}<br>(n={k})" for b, k in zip(batches, n)]
+    miss = [float(v) for v in values_pct]
+    fig = go.Figure()
+    fig.add_trace(go.Bar(x=x, y=miss, name="Missing", marker_color="#222222",
+                         text=[f"{v:.1f}%" if v >= 8 else "" for v in miss], textposition="inside",
+                         insidetextfont=dict(color="white"),
+                         hovertemplate="%{x}<br>missing: %{y:.1f}% of the batch's feature values<extra></extra>"))
+    fig.add_trace(go.Bar(x=x, y=[100 - v for v in miss], name="Present", marker_color="#DDDDDD",
+                         hovertemplate="%{x}<br>present: %{y:.1f}% of the batch's feature values<extra></extra>"))
+    small = [(xi, v) for xi, v in zip(x, miss) if v < 8]       # too thin for a label inside: label above
+    if small:
+        fig.add_trace(go.Scatter(x=[s[0] for s in small], y=[s[1] + 2 for s in small], mode="text",
+                                 text=[f"{s[1]:.1f}%" for s in small], textposition="top center",
+                                 textfont=dict(color="black"), showlegend=False, hoverinfo="skip"))
+    fig.update_layout(
+        title="Missing and present feature values per batch", barmode="stack", **WHITE_BG, height=430,
+        margin=dict(l=10, r=30, t=60, b=120), legend=dict(BOTTOM_LEGEND),
+        yaxis=dict(title="Feature values of the batch (%)", range=[0, 100], showgrid=True, gridcolor="#EEEEEE"),
+        xaxis=dict(tickangle=0),
+    )
+    return fig

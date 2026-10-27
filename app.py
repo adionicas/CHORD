@@ -8,6 +8,7 @@ import re
 import streamlit as st
 import pandas as pd
 import numpy as np
+import plotly.graph_objects as go
 
 from src.naming    import measure_keys, natural_sorted
 from src.harmonize import (run_combat, run_combat_grouped, run_combat_per_feature,
@@ -25,7 +26,8 @@ from src.plots     import (plot_site_deviation, plot_spearman, plot_icc, plot_da
                            plot_extra_associations, plot_single_association,
                            plot_icc_ci_compare, plot_missing_by_measure,
                            plot_missing_by_batch, plot_missing_curve,
-                           plot_missing_by_batch_bars, plot_missing_batch_by_group)
+                           plot_missing_by_batch_bars, plot_missing_batch_by_group,
+                           plot_missing_present_by_batch)
 from src.report    import generate_report, build_methods_paragraph, data_prep_sentence
 
 # ── Update this URL once the repo is live ─────────────────────────────────
@@ -399,27 +401,47 @@ else:
         "Batch effects will be removed but no biological variability is explicitly preserved."
     )
 
-def _by_batch_table(data, batch_col, variables):
+def _fmt_num(v):
+    """A number with at most two decimals, without trailing zeros (8.39, 18.22, 9)."""
+    return f"{v:.2f}".rstrip("0").rstrip(".") if pd.notna(v) else "—"
+
+
+def _fmt_val(v):
+    """A category label: whole numbers without decimals (1, not 1.0)."""
+    return f"{v:g}" if isinstance(v, (int, float, np.number)) else str(v)
+
+
+def _by_batch_table(data, batch_col, variables, categorical=None):
     """
     One row per batch plus an Overall row (participants with a batch value):
-    N, then for each variable mean (SD) and range when numeric, or n (%) per
-    category (the six most common) otherwise.
+    N, then for each variable mean (SD) and range when it is continuous, or n (%)
+    per category when it is in ``categorical`` (as the user set it; by default
+    the categorical covariates) or is not a number, and always the missing
+    values, n (%).
     """
+    categorical = set(categorical_covariates if categorical is None else categorical)
     data = data[data[batch_col].notna()]
     rows = []
     for label in natural_sorted(data[batch_col].unique().astype(str)) + ["Overall"]:
         sub = data if label == "Overall" else data[data[batch_col].astype(str) == label]
         row = {"Batch": label, "N": len(sub)}
         for var in variables:
-            vals = sub[var].dropna()
+            col = sub[var]
+            vals = col.dropna()
+            n_miss = int(col.isna().sum())
+            miss_txt = f"missing: {n_miss} ({100 * n_miss / len(sub):.0f}%)" if len(sub) else "missing: 0"
             if len(vals) == 0:
-                row[var] = "—"
-            elif pd.api.types.is_numeric_dtype(data[var]):
-                row[var] = f"{vals.mean():.2f} ({vals.std():.2f}); {vals.min():g} to {vals.max():g}"
+                row[var] = miss_txt
+            elif var not in categorical and pd.api.types.is_numeric_dtype(data[var]):
+                row[var] = (f"{vals.mean():.2f} ({vals.std():.2f}); {_fmt_num(vals.min())} to "
+                            f"{_fmt_num(vals.max())}  |  {miss_txt}")
             else:
-                vc = vals.astype(str).value_counts()
-                row[var] = "  |  ".join(f"{v}: {n} ({100 * n / len(vals):.0f}%)"
-                                        for v, n in vc.head(6).items())
+                vc = vals.map(_fmt_val).value_counts()
+                order = natural_sorted(vc.index)
+                parts = [f"{v}: {vc[v]} ({100 * vc[v] / len(sub):.0f}%)" for v in order[:8]]
+                if len(order) > 8:
+                    parts.append(f"+ {len(order) - 8} more")
+                row[var] = "  |  ".join(parts + [miss_txt])
         rows.append(row)
     return pd.DataFrame(rows)
 
@@ -430,47 +452,89 @@ st.caption("Look at the batch and the covariates before harmonizing, to see whet
            "table needs fixing first: typos or misspelled categories, codes that are not real values "
            "(such as -999, 999 or \"Unknown\"), unexpected ranges, or missing values.")
 if st.toggle("Check the batch and the covariates", value=True, key="show_demo_table"):
-    _demo_vars = st.multiselect(
-        "Variables to check (your covariates to start with; any other column can be added)",
-        options=[c for c in df.columns if c != site_col],
-        default=[c for c in [age_col if inc_age else None, sex_col if inc_sex else None]
-                 + extra_cont_add + extra_cat_add if c],
-        key="demo_table_vars",
-    )
+    st.caption("Your covariates are listed to start with; add any other column to the list of its kind, so "
+               "that CHORD describes it the right way (a mean for continuous variables, counts for categories, "
+               "also when the categories are coded as numbers, such as sex coded 1 and 2).")
+    _dc1, _dc2 = st.columns(2)
+    with _dc1:
+        _demo_cont = st.multiselect(
+            "Continuous variables to check (numbers, such as age or time since injury)",
+            options=[c for c in df.columns if c != site_col and pd.api.types.is_numeric_dtype(df[c])],
+            default=[c for c in continuous_covariates if c in df.columns],
+            key="demo_vars_cont",
+        )
+    with _dc2:
+        _demo_cat = st.multiselect(
+            "Categorical variables to check (groups, such as sex or diagnosis)",
+            options=[c for c in df.columns if c != site_col],
+            default=[c for c in categorical_covariates if c in df.columns],
+            key="demo_vars_cat",
+        )
+    _demo_vars = _demo_cont + [c for c in _demo_cat if c not in _demo_cont]
+    _demo_cat_set = set(_demo_cat)
+    if set(_demo_cont) & _demo_cat_set:
+        st.caption("A variable in both lists is described as a category: "
+                   + ", ".join(sorted(set(_demo_cont) & _demo_cat_set)) + ".")
     st.markdown("By batch")
-    st.dataframe(_by_batch_table(df, site_col, _demo_vars), use_container_width=True, hide_index=True)
+    st.dataframe(_by_batch_table(df, site_col, _demo_vars, categorical=_demo_cat_set),
+                 use_container_width=True, hide_index=True)
     _no_batch = int(df[site_col].isna().sum())
-    st.caption("Numeric variables: mean (SD); range. Categories: n (%)."
+    st.caption("Continuous variables: mean (SD); range. Categories: n (%) for each value. "
+               "Missing: n (%), also when it is 0."
                + (f" {_no_batch} participant(s) without a batch value are not in the table." if _no_batch else ""))
 
-    st.markdown("Every value, with the number of participants who have it")
+    st.markdown("The values of each variable")
     _roles = [(site_col, "batch")] + [
-        (_c, "continuous covariate" if _c in continuous_covariates else
-             "categorical covariate" if _c in categorical_covariates else "added for checking")
+        (_c, "continuous covariate" if _c in continuous_covariates and _c not in _demo_cat_set else
+             "categorical covariate" if _c in categorical_covariates else
+             "added for checking, categorical" if _c in _demo_cat_set else "added for checking, continuous")
         for _c in _demo_vars]
-    _vcols = st.columns(min(3, len(_roles)))
-    for _i, (_c, _role) in enumerate(_roles):
+    for _tab_ui, (_c, _role) in zip(st.tabs([_c for _c, _ in _roles]), _roles):
         _s = df[_c]
-        _vc = _s.value_counts(dropna=True)
-        if pd.api.types.is_numeric_dtype(_s):
-            _vc = _vc.sort_index()
-            _vals = [f"{v:g}" for v in _vc.index]
-            _desc = (f"{_s.nunique()} distinct values, {_s.min():g} to {_s.max():g}"
-                     if _s.notna().any() else "no values")
-        else:
-            _order = natural_sorted(_vc.index.astype(str))
-            _vc.index = _vc.index.astype(str)
-            _vc = _vc[_order]
-            _vals = list(_vc.index)
-            _desc = f"{_s.nunique()} distinct values"
-        _tab = pd.DataFrame({"Value": _vals, "Participants": _vc.values})
-        if _s.isna().any():
-            _tab = pd.concat([_tab, pd.DataFrame({"Value": ["(missing)"], "Participants": [int(_s.isna().sum())]})],
+        _n_miss = int(_s.isna().sum())
+        _miss_txt = f"missing: {_n_miss} ({100 * _n_miss / max(len(_s), 1):.1f}%)"
+        _cat = _c == site_col or _c in _demo_cat_set or not pd.api.types.is_numeric_dtype(_s)
+        with _tab_ui:
+            _vc = _s.value_counts(dropna=True)
+            if pd.api.types.is_numeric_dtype(_s):
+                _vc = _vc.sort_index()
+                _vc.index = [_fmt_val(v) for v in _vc.index]
+            else:
+                _vc.index = _vc.index.astype(str)
+                _vc = _vc[natural_sorted(_vc.index)]
+            _all = pd.DataFrame({"Value": list(_vc.index), "Participants": _vc.values})
+            _all = pd.concat([_all, pd.DataFrame({"Value": ["(missing)"], "Participants": [_n_miss]})],
                              ignore_index=True)
-        with _vcols[_i % len(_vcols)]:
-            st.markdown(f"**{_c}** ({_role}): {_desc}")
-            st.dataframe(_tab, hide_index=True, use_container_width=True,
-                         height=min(38 + 35 * len(_tab), 250))
+            _all["Participants (%)"] = (100 * _all["Participants"] / max(len(_s), 1)).round(1)
+            if _cat:
+                # categories: each value with n (%), and the missing values
+                st.markdown(f"**{_c}** ({_role}): {_s.nunique()} distinct values; {_miss_txt}")
+                st.dataframe(_all, hide_index=True, use_container_width=True,
+                             height=min(38 + 35 * len(_all), 300))
+            elif _s.notna().any():
+                # numbers: a summary, the distribution, and the lowest and highest values,
+                # where codes such as -999 or 999 show up
+                _v = _s.dropna()
+                st.markdown(f"**{_c}** ({_role}): {_v.nunique()} distinct values; "
+                            f"{_fmt_num(_v.min())} to {_fmt_num(_v.max())}; mean {_v.mean():.2f} "
+                            f"(SD {_v.std():.2f}); {_miss_txt}")
+                _h1, _h2 = st.columns([3, 2])
+                with _h1:
+                    _hf = go.Figure(go.Histogram(x=_v, nbinsx=40, marker_color="#2A6EBB"))
+                    _hf.update_layout(height=240, margin=dict(l=10, r=10, t=10, b=40), bargap=0.05,
+                                      plot_bgcolor="white", paper_bgcolor="white",
+                                      xaxis_title=_c, yaxis_title="Participants")
+                    st.plotly_chart(_hf, use_container_width=True)
+                with _h2:
+                    _srt = np.sort(_v.unique())
+                    st.dataframe(pd.DataFrame({
+                        "Lowest values": [_fmt_num(x) for x in _srt[:5]] + [""] * (5 - len(_srt[:5])),
+                        "Highest values": [_fmt_num(x) for x in _srt[::-1][:5]] + [""] * (5 - len(_srt[:5]))}),
+                        hide_index=True, use_container_width=True)
+                with st.expander(f"Every value of {_c} with its count ({len(_all) - 1} distinct)"):
+                    st.dataframe(_all, hide_index=True, use_container_width=True, height=300)
+            else:
+                st.markdown(f"**{_c}** ({_role}): no values; {_miss_txt}")
 
 exclude_meta  = {site_col, age_col, sex_col} | set(extra_cont_add) | set(extra_cat_add)
 auto_features = [c for c in num_cols if c not in exclude_meta]
@@ -1161,6 +1225,9 @@ if _show_miss_tools:
                 list(_btab[f"Participants missing more than {p_thr:g}% of the features (% of the batch)"]),
                 p_thr, 100 * float(feat_isna[_has_batch].values.mean()),
                 100 * float((part_pct[_has_batch] > p_thr).mean())), use_container_width=True)
+            st.plotly_chart(plot_missing_present_by_batch(
+                list(_btab["Batch"]), list(_btab["Participants (n)"]),
+                list(_btab["Feature values missing (% of the batch's values)"])), use_container_width=True)
             if modality_groups:
                 _grid = _btab.set_index("Batch")[[f"{m}: values missing (%)" for m in measures]]
                 _grid.columns = measures
