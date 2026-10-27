@@ -513,7 +513,9 @@ TEMPLATE = """<!DOCTYPE html>
   reported.
   {% elif missing_handling == 'pattern' %}
   Because the features contained scattered missing data, features were grouped
-  by their shared pattern of missing participants and each group was harmonized
+  by their shared pattern of missing participants{% if modality_on %}, within each of the
+  {{ modality_n_groups }} modality or measure groups ({{ modality_group_desc }}), so that
+  different measures were never pooled{% endif %}, and each group was harmonized
   in its own ComBat run. Features that are missing in the same participants are
   complete on the same participants, so Empirical Bayes could pool information
   across the features within a group [<a href="#ref1">1</a>], while retaining

@@ -1595,7 +1595,7 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
                 return run_combat_by_missing_pattern(
                     df_harm, feature_cols, site_col,
                     continuous_covariates=continuous_covariates,
-                    categorical_covariates=categorical_covariates, eb=eb)
+                    categorical_covariates=categorical_covariates, eb=eb, groups=modality_groups)
             if missing_mode == "per_feature":
                 return run_combat_per_feature(
                     df_harm, feature_cols, site_col,

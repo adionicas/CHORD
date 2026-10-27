@@ -282,6 +282,7 @@ def run_combat_by_missing_pattern(
     continuous_covariates: list | None = None,
     categorical_covariates: list | None = None,
     eb: bool = True,
+    groups: dict | None = None,
 ) -> pd.DataFrame:
     """
     Harmonize features grouped by their shared missing-value pattern, keeping EB.
@@ -296,11 +297,29 @@ def run_combat_by_missing_pattern(
     unique run on their own, feature-wise, because Empirical Bayes needs at
     least two features to pool (see run_combat).
 
+    When ``groups`` (a modality mapping) is given, the patterns are formed
+    within each modality group, so features of different modalities or measures
+    are never pooled in one Empirical Bayes run, even when they are missing in
+    the same participants.
+
     Returns a frame over the union of participants retained by any group, with
     each feature harmonized for its own complete cases and NaN elsewhere.
     """
+    if groups:
+        in_group = {c for cols in groups.values() for c in cols}
+        parts = dict(groups)
+        rest = [c for c in feature_cols if c not in in_group]
+        if rest:
+            parts["Not in a group"] = rest
+        pattern_runs = {}
+        for g, cols in parts.items():
+            cols = [c for c in cols if c in feature_cols]
+            for k, pcols in missing_pattern_groups(df, cols).items():
+                pattern_runs[f"{g} | {k}"] = pcols
+    else:
+        pattern_runs = missing_pattern_groups(df, feature_cols)
     return run_combat_grouped(
-        df, missing_pattern_groups(df, feature_cols), site_col,
+        df, pattern_runs, site_col,
         continuous_covariates=continuous_covariates,
         categorical_covariates=categorical_covariates,
         eb=eb,
