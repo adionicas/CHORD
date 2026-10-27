@@ -405,7 +405,7 @@ st.caption(
     "column numbers instead of names\" to pick them by number, for example from column 5 to the last "
     "column. The name lists hold only the columns that can be features (numeric, and not the batch "
     "or a covariate chosen in Step 2); type part of a name in a box to find it. After choosing, you "
-    "can remove columns by keyword or edit the selected features further down."
+    "can review and edit the selected features below, or remove columns by keyword."
 )
 n_cols   = len(all_df_cols)
 last_col = all_df_cols[-1]
@@ -469,6 +469,7 @@ else:
     with nb_c1:
         from_num = st.number_input("From column №", min_value=1,
                                     max_value=n_cols, value=1, step=1)
+        st.caption(f"Column {from_num}: {all_df_cols[from_num - 1]}")
     with nb_c2:
         if st.session_state.get("range_to_last", False):
             to_num = n_cols
@@ -477,6 +478,7 @@ else:
         else:
             to_num = st.number_input("To column №", min_value=1,
                                      max_value=n_cols, value=n_cols, step=1)
+            st.caption(f"Column {to_num}: {all_df_cols[to_num - 1]}")
         to_last = _to_last_tick()
     range_cols = [c for c in all_df_cols[min(from_num, to_num) - 1:max(from_num, to_num)]
                   if c in auto_features]
@@ -493,62 +495,6 @@ else:
     num_preview = all_df_cols[from_num-1:to_num]
     st.caption(f"Columns {from_num}–{to_num}: "
                f"{', '.join(num_preview[:5])}{'…' if len(num_preview) > 5 else ''}")
-
-# ── Optional: exclude by keyword ───────────────────────────────────────────
-if st.checkbox("Exclude columns whose name contains a keyword", key="use_keyword_exclusion"):
-    ex_c1, ex_c2 = st.columns([4, 2])
-    with ex_c1:
-        excl_input = st.text_input(
-            "Exclude keyword(s)", key="excl_keywords",
-            placeholder='e.g.  unassigned   or   unassigned, reward, LIM',
-            label_visibility="collapsed",
-        )
-    with ex_c2:
-        st.markdown("<br>", unsafe_allow_html=True)
-        if st.button("Exclude matching", use_container_width=True):
-            if excl_input.strip():
-                keywords = [k.strip().lower() for k in excl_input.split(",") if k.strip()]
-                before   = st.session_state.get("sel_features", [])
-                kept     = [c for c in before
-                            if not any(kw in c.lower() for kw in keywords)]
-                removed  = len(before) - len(kept)
-                st.session_state["sel_features"] = kept
-                st.rerun()
-    if excl_input.strip():
-        import re as _re2
-        keywords     = [k.strip().lower() for k in excl_input.split(",") if k.strip()]
-        would_remove = [c for c in st.session_state.get("sel_features", [])
-                        if any(kw in c.lower() for kw in keywords)]
-
-        def _highlight(name, kws):
-            """Wrap each matching keyword in the column name with a yellow highlight."""
-            result = name
-            for kw in kws:
-                pattern = _re2.compile(_re2.escape(kw), _re2.IGNORECASE)
-                result  = pattern.sub(
-                    lambda m: f'<mark style="background:#FFD700;padding:0 2px;'
-                              f'border-radius:2px;font-weight:bold">{m.group()}</mark>',
-                    result,
-                )
-            return result
-
-        if would_remove:
-            st.warning(f"**{len(would_remove)} column{'s' if len(would_remove) > 1 else ''} "
-                       f"match{'es' if len(would_remove) == 1 else ''} and would be removed:**")
-            shown_rm = would_remove[:60]
-            rm_rows = [shown_rm[i:i+3] for i in range(0, len(shown_rm), 3)]
-            for row in rm_rows:
-                grid = st.columns(3)
-                for j, name in enumerate(row):
-                    highlighted = _highlight(name, keywords)
-                    grid[j].markdown(
-                        f'<span style="font-family:monospace;font-size:0.88em">{highlighted}</span>',
-                        unsafe_allow_html=True,
-                    )
-            if len(would_remove) > 60:
-                st.caption(f"… and {len(would_remove) - 60} more.")
-        else:
-            st.caption("No currently selected columns match that keyword.")
 
 # ── Final review multiselect ───────────────────────────────────────────────
 n_sel = len(st.session_state.get("sel_features", []))
@@ -622,6 +568,61 @@ with st.expander(f"View all {len(feature_cols)} selected feature names in full")
             for j, name in enumerate(row):
                 idx = i * cols_per_row + j + 1
                 grid[j].markdown(f"`{idx}.` {name}")
+
+# ── Optional: exclude by keyword ───────────────────────────────────────────
+if st.checkbox("Exclude columns whose name contains a keyword", key="use_keyword_exclusion"):
+    ex_c1, ex_c2 = st.columns([4, 2])
+    with ex_c1:
+        excl_input = st.text_input(
+            "Exclude keyword(s)", key="excl_keywords",
+            placeholder='e.g.  unassigned   or   unassigned, reward, LIM',
+            label_visibility="collapsed",
+        )
+    with ex_c2:
+        st.markdown("<br>", unsafe_allow_html=True)
+        def _exclude_keyword_matches():
+            text = st.session_state.get("excl_keywords", "")
+            keywords = [k.strip().lower() for k in text.split(",") if k.strip()]
+            if keywords:
+                st.session_state["sel_features"] = [
+                    c for c in st.session_state.get("sel_features", [])
+                    if not any(kw in c.lower() for kw in keywords)]
+        st.button("Exclude matching", use_container_width=True, on_click=_exclude_keyword_matches)
+    if excl_input.strip():
+        import re as _re2
+        keywords     = [k.strip().lower() for k in excl_input.split(",") if k.strip()]
+        would_remove = [c for c in st.session_state.get("sel_features", [])
+                        if any(kw in c.lower() for kw in keywords)]
+
+        def _highlight(name, kws):
+            """Wrap each matching keyword in the column name with a yellow highlight."""
+            result = name
+            for kw in kws:
+                pattern = _re2.compile(_re2.escape(kw), _re2.IGNORECASE)
+                result  = pattern.sub(
+                    lambda m: f'<mark style="background:#FFD700;padding:0 2px;'
+                              f'border-radius:2px;font-weight:bold">{m.group()}</mark>',
+                    result,
+                )
+            return result
+
+        if would_remove:
+            st.warning(f"**{len(would_remove)} column{'s' if len(would_remove) > 1 else ''} "
+                       f"match{'es' if len(would_remove) == 1 else ''} and would be removed:**")
+            shown_rm = would_remove[:60]
+            rm_rows = [shown_rm[i:i+3] for i in range(0, len(shown_rm), 3)]
+            for row in rm_rows:
+                grid = st.columns(3)
+                for j, name in enumerate(row):
+                    highlighted = _highlight(name, keywords)
+                    grid[j].markdown(
+                        f'<span style="font-family:monospace;font-size:0.88em">{highlighted}</span>',
+                        unsafe_allow_html=True,
+                    )
+            if len(would_remove) > 60:
+                st.caption(f"… and {len(would_remove) - 60} more.")
+        else:
+            st.caption("No currently selected columns match that keyword.")
 
 sites = df[site_col].dropna().unique()
 st.info(f"Batches (n = {len(sites)}): **{', '.join(natural_sorted(sites.astype(str)))}**")
@@ -852,7 +853,7 @@ if _show_miss_tools:
         st.dataframe(_mm, use_container_width=True, hide_index=True)
 
         # Which participants these are, on request; the ID column is guessed from its name.
-        if st.toggle("Show which participants these are", key="show_missing_ids"):
+        if st.toggle("Show participants with missing model variables/covariates", key="show_missing_ids"):
             _id_guess = _guess_id_col(df, exclude=set(_model_vars) | set(feature_cols))
             _id_opts = [c for c in df.columns if c not in set(feature_cols)]
             _id_col = st.selectbox(
