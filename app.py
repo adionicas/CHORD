@@ -356,6 +356,10 @@ for c in auto_features:
 if "sel_features" not in st.session_state or \
         not set(st.session_state["sel_features"]).issubset(set(auto_features)):
     st.session_state["sel_features"] = []
+else:
+    # Re-assigned on every run so the selection is kept also on runs where its
+    # box is not drawn (large selections are shown compactly, see below).
+    st.session_state["sel_features"] = list(st.session_state["sel_features"])
 
 st.divider()
 st.subheader("Step 3 — Select the features to harmonize")
@@ -407,6 +411,14 @@ else:
     num_preview = all_df_cols[from_num-1:to_num]
     st.caption(f"Columns {from_num}–{to_num}: "
                f"{', '.join(num_preview[:5])}{'…' if len(num_preview) > 5 else ''}")
+    if st.toggle("Show the column names with their numbers", key="show_col_numbers"):
+        find = st.text_input("Find a column", key="col_number_find",
+                             placeholder="part of a column name, e.g. node100")
+        num_table = pd.DataFrame({"№": range(1, len(all_df_cols) + 1), "Column": all_df_cols})
+        if find.strip():
+            num_table = num_table[num_table["Column"].str.contains(find.strip(), case=False, regex=False)]
+        st.caption(f"{len(num_table)} of {len(all_df_cols)} columns shown.")
+        st.dataframe(num_table, hide_index=True, use_container_width=True, height=300)
 
 st.checkbox("Use column numbers instead of names", value=False, key="range_use_col_num",
             help="Check this if column names are not informative enough to use as range boundaries")
@@ -452,7 +464,8 @@ if st.checkbox("Exclude columns whose name contains a keyword", key="use_keyword
         if would_remove:
             st.warning(f"**{len(would_remove)} column{'s' if len(would_remove) > 1 else ''} "
                        f"match{'es' if len(would_remove) == 1 else ''} and would be removed:**")
-            rm_rows = [would_remove[i:i+3] for i in range(0, len(would_remove), 3)]
+            shown_rm = would_remove[:60]
+            rm_rows = [shown_rm[i:i+3] for i in range(0, len(shown_rm), 3)]
             for row in rm_rows:
                 grid = st.columns(3)
                 for j, name in enumerate(row):
@@ -461,18 +474,61 @@ if st.checkbox("Exclude columns whose name contains a keyword", key="use_keyword
                         f'<span style="font-family:monospace;font-size:0.88em">{highlighted}</span>',
                         unsafe_allow_html=True,
                     )
+            if len(would_remove) > 60:
+                st.caption(f"… and {len(would_remove) - 60} more.")
         else:
             st.caption("No currently selected columns match that keyword.")
 
 # ── Final review multiselect ───────────────────────────────────────────────
 n_sel = len(st.session_state.get("sel_features", []))
-st.markdown(f"**Currently selected: {n_sel} features** — review or edit below")
-feature_cols = st.multiselect(
-    "Selected features",
-    options=auto_features,
-    key="sel_features",
-    label_visibility="collapsed",
-)
+MAX_CHIPS = 300   # above this the browser slows down badly when every feature is drawn as a chip
+if n_sel <= MAX_CHIPS:
+    st.markdown(f"**Currently selected: {n_sel} features** — review or edit below")
+    feature_cols = st.multiselect(
+        "Selected features",
+        options=auto_features,
+        key="sel_features",
+        label_visibility="collapsed",
+    )
+else:
+    feature_cols = list(st.session_state["sel_features"])
+    st.markdown(f"**Currently selected: {n_sel} features** — review or edit below")
+    st.caption(f"Too many to show one by one (more than {MAX_CHIPS}), so they are counted by "
+               "measure here. Remove or add features with the two boxes below.")
+    _mk = measure_keys(feature_cols)
+    _by_measure = pd.Series([_mk[c] for c in feature_cols]).value_counts(sort=False)
+    st.dataframe(pd.DataFrame({"Measure": _by_measure.index, "Features": _by_measure.values}),
+                 hide_index=True, use_container_width=False)
+    st.caption(f"From {feature_cols[0]} to {feature_cols[-1]}.")
+
+    def _remove_picked():
+        drop = set(st.session_state.get("sel_remove_pick", []))
+        st.session_state["sel_features"] = [c for c in st.session_state["sel_features"] if c not in drop]
+        st.session_state["sel_remove_pick"] = []
+
+    def _add_picked():
+        add = set(st.session_state.get("sel_add_pick", [])) | set(st.session_state["sel_features"])
+        st.session_state["sel_features"] = [c for c in auto_features if c in add]
+        st.session_state["sel_add_pick"] = []
+
+    rm_c1, rm_c2 = st.columns([4, 1])
+    with rm_c1:
+        st.multiselect("Remove features from the selection", options=feature_cols, key="sel_remove_pick",
+                       placeholder="type part of a name to find features to remove")
+    with rm_c2:
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.button("Remove", on_click=_remove_picked, use_container_width=True,
+                  disabled=not st.session_state.get("sel_remove_pick"))
+    not_sel = [c for c in auto_features if c not in set(feature_cols)]
+    if not_sel:
+        ad_c1, ad_c2 = st.columns([4, 1])
+        with ad_c1:
+            st.multiselect("Add features to the selection", options=not_sel, key="sel_add_pick",
+                           placeholder="type part of a name to find features to add")
+        with ad_c2:
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.button("Add", on_click=_add_picked, use_container_width=True,
+                      disabled=not st.session_state.get("sel_add_pick"))
 
 if not feature_cols:
     st.info("No features selected yet. Choose the first and last feature column above, "
@@ -481,14 +537,19 @@ if not feature_cols:
 
 # ── Full name preview ──────────────────────────────────────────────────────
 with st.expander(f"View all {len(feature_cols)} selected feature names in full"):
-    # show as a compact numbered list in 3 columns
-    cols_per_row = 3
-    rows = [feature_cols[i:i+cols_per_row] for i in range(0, len(feature_cols), cols_per_row)]
-    for i, row in enumerate(rows):
-        grid = st.columns(cols_per_row)
-        for j, name in enumerate(row):
-            idx = i * cols_per_row + j + 1
-            grid[j].markdown(f"`{idx}.` {name}")
+    if len(feature_cols) > MAX_CHIPS:
+        # many features: one scrollable numbered table instead of one line per name
+        st.dataframe(pd.DataFrame({"№": range(1, len(feature_cols) + 1), "Feature": feature_cols}),
+                     hide_index=True, use_container_width=True, height=300)
+    else:
+        # show as a compact numbered list in 3 columns
+        cols_per_row = 3
+        rows = [feature_cols[i:i+cols_per_row] for i in range(0, len(feature_cols), cols_per_row)]
+        for i, row in enumerate(rows):
+            grid = st.columns(cols_per_row)
+            for j, name in enumerate(row):
+                idx = i * cols_per_row + j + 1
+                grid[j].markdown(f"`{idx}.` {name}")
 
 sites = df[site_col].dropna().unique()
 st.info(f"Batches (n = {len(sites)}): **{', '.join(sorted(sites.astype(str)))}**")
