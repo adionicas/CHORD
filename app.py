@@ -292,6 +292,11 @@ if all_covars_display:
         f"ComBat model: batch = **{site_col}**  |  covariates = "
         + ", ".join(f"**{c}**" for c in all_covars_display)
     )
+else:
+    st.warning(
+        f"ComBat model: batch = **{site_col}** only, no covariates. "
+        "Batch effects will be removed but no biological variability is explicitly preserved."
+    )
 
 
 def _by_batch_table(data, batch_col, variables):
@@ -332,11 +337,6 @@ if st.toggle("Show a demographic table by batch", key="show_demo_table"):
     _no_batch = int(df[site_col].isna().sum())
     st.caption("Numeric variables: mean (SD); range. Categories: n (%)."
                + (f" {_no_batch} participant(s) without a batch value are not in the table." if _no_batch else ""))
-else:
-    st.warning(
-        f"ComBat model: batch = **{site_col}** only, no covariates. "
-        "Batch effects will be removed but no biological variability is explicitly preserved."
-    )
 
 exclude_meta  = {site_col, age_col, sex_col} | set(extra_cont_add) | set(extra_cat_add)
 auto_features = [c for c in num_cols if c not in exclude_meta]
