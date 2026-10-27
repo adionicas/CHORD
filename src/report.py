@@ -9,7 +9,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 from jinja2 import Template
-from src.naming import measure_keys, natural_sorted
+from src.naming import natural_sorted
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -130,14 +130,14 @@ def _excl_feat_block(excl_feat_list, multimodal):
         return ""
     d = pd.DataFrame(excl_feat_list)
     name_col = "Feature" if "Feature" in d.columns else d.columns[0]
-    if multimodal:
-        _guess = measure_keys(d[name_col].astype(str).tolist())
+    if multimodal and "Modality group" in d.columns and d["Modality group"].notna().any():
+        # the group each feature had when it was excluded, as defined by the user
         d = d.copy()
-        d["Measure group"] = d[name_col].astype(str).map(_guess)
+        d["Modality group"] = d["Modality group"].fillna("Not in a group")
         rows = []
-        for meas, g in d.groupby("Measure group"):
+        for meas, g in d.groupby("Modality group", sort=False):
             rows.append({
-                "Measure group":            meas,
+                "Modality group":           meas,
                 "n excluded":               len(g),
                 "Excluded ROIs (features)": ", ".join(g[name_col].astype(str).tolist()),
             })

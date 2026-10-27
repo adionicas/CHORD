@@ -400,17 +400,37 @@ st.caption(f"{len(auto_features)} numeric columns are available.")
 st.markdown("**Choose the first and last feature column**")
 st.caption(
     "Every column in the range is selected: from one column to another, or from one column to the "
-    "last column of the table (tick \"To the last column\"). Pick the columns by name, or by number "
-    "with \"Use column numbers instead of names\", for example from column 5 to the last column; "
-    "\"Show all column names with their numbers\" lists every column with its number. The name "
-    "lists hold only the columns that can be features (numeric, and not the batch or a covariate "
-    "chosen in Step 2); type part of a name in a box to find it. After choosing, you can remove "
-    "columns by keyword or edit the selected features further down."
+    "last column of the table (tick \"To the last column\"). \"Show all column names with their "
+    "numbers\" lists every column with its number. Pick the columns by name, or switch on \"Use "
+    "column numbers instead of names\" to pick them by number, for example from column 5 to the last "
+    "column. The name lists hold only the columns that can be features (numeric, and not the batch "
+    "or a covariate chosen in Step 2); type part of a name in a box to find it. After choosing, you "
+    "can remove columns by keyword or edit the selected features further down."
 )
-use_col_num = st.checkbox("Use column numbers instead of names", value=False, key="range_use_col_num",
-                          help="Check this if column names are not informative enough to use as range boundaries")
 n_cols   = len(all_df_cols)
 last_col = all_df_cols[-1]
+
+# Every column of the table with its number: with thousands of columns the
+# From/To lists are too long to scroll through.
+if st.toggle("Show all column names with their numbers", key="show_col_numbers"):
+    lc1, lc2 = st.columns([3, 2])
+    with lc1:
+        find = st.text_input("Find a column", key="col_number_find",
+                             placeholder="part of a column name, e.g. node100")
+    with lc2:
+        list_from = st.radio("Start the list at", ["First column", "Last column"], horizontal=True,
+                             key="col_list_order")
+    num_table = pd.DataFrame({"№": range(1, n_cols + 1), "Column": all_df_cols})
+    if find.strip():
+        num_table = num_table[num_table["Column"].str.contains(find.strip(), case=False, regex=False)]
+    if list_from == "Last column":
+        num_table = num_table.iloc[::-1]
+    st.caption(f"{len(num_table)} of {n_cols} columns shown.")
+    st.dataframe(num_table, hide_index=True, use_container_width=True, height=300,
+                 column_config={"№": st.column_config.NumberColumn(width="small")})
+
+use_col_num = st.toggle("Use column numbers instead of names", value=False, key="range_use_col_num",
+                        help="Switch on if column names are not informative enough to use as range boundaries")
 
 
 def _to_last_tick():
@@ -478,18 +498,6 @@ else:
     num_preview = all_df_cols[from_num-1:to_num]
     st.caption(f"Columns {from_num}–{to_num}: "
                f"{', '.join(num_preview[:5])}{'…' if len(num_preview) > 5 else ''}")
-
-# Every column of the table with its number, in both modes: with thousands of columns
-# the From/To lists are too long to scroll through.
-if st.toggle("Show all column names with their numbers", key="show_col_numbers"):
-    find = st.text_input("Find a column", key="col_number_find",
-                         placeholder="part of a column name, e.g. node100")
-    num_table = pd.DataFrame({"№": range(1, n_cols + 1), "Column": all_df_cols})
-    if find.strip():
-        num_table = num_table[num_table["Column"].str.contains(find.strip(), case=False, regex=False)]
-    st.caption(f"{len(num_table)} of {n_cols} columns shown.")
-    st.dataframe(num_table, hide_index=True, use_container_width=True, height=300,
-                 column_config={"№": st.column_config.NumberColumn(width="small")})
 
 # ── Optional: exclude by keyword ───────────────────────────────────────────
 if st.checkbox("Exclude columns whose name contains a keyword", key="use_keyword_exclusion"):
@@ -561,13 +569,9 @@ if n_sel <= MAX_CHIPS:
 else:
     feature_cols = list(st.session_state["sel_features"])
     st.markdown(f"**Currently selected: {n_sel} features** — review or edit below")
-    st.caption(f"Too many to show one by one (more than {MAX_CHIPS}), so they are counted by "
-               "measure here. To change the selection, tick \"Remove or add features one by one\".")
-    _mk = measure_keys(feature_cols)
-    _by_measure = pd.Series([_mk[c] for c in feature_cols]).value_counts(sort=False)
-    st.dataframe(pd.DataFrame({"Measure": _by_measure.index, "Features": _by_measure.values}),
-                 hide_index=True, use_container_width=False)
-    st.caption(f"From {feature_cols[0]} to {feature_cols[-1]}.")
+    st.caption(f"From {feature_cols[0]} to {feature_cols[-1]}. Too many to show one by one (more than "
+               f"{MAX_CHIPS}): open \"View all {n_sel} selected feature names in full\" below to see them, "
+               "and tick \"Remove or add features one by one\" to change the selection.")
 
     def _remove_picked():
         drop = set(st.session_state.get("sel_remove_pick", []))
@@ -879,17 +883,15 @@ if _show_miss_tools:
             miss_pct = (100 * miss_n / n_total) if n_total else miss_n * 0
             feats_l = list(feature_cols)
             _cov_set = set([age_col, sex_col] + extra_continuous + extra_categorical)
-            _guessed_measure = measure_keys([c for c in assess_cols if c not in _cov_set])
+            # Groups only as defined under "Multiple imaging modalities or measure
+            # types"; nothing is guessed here.
+            _col_group = {c: g for g, gcols in (modality_groups or {}).items() for c in gcols}
 
             def _grp_of(c):
                 if c in _cov_set:
                     return "(covariate)"
-                if modality_groups:
-                    for g, gcols in modality_groups.items():
-                        if c in gcols:
-                            return g
-                return _guessed_measure.get(c, "(feature)")
-            measure_of = {c: _grp_of(c) for c in feats_l}
+                return _col_group.get(c, "Not in a group")
+            measure_of = {c: _grp_of(c) for c in feats_l} if modality_groups else {}
             measures = list(dict.fromkeys(measure_of.values()))
 
             feat_isna = df[feats_l].isna()
@@ -906,17 +908,21 @@ if _show_miss_tools:
                 f"{int((part_pct > a_thr).sum())} miss more than {a_thr:g}% of the features."
             )
 
-            # ── per measure ──
-            st.markdown("**Missing values per measure**")
-            st.caption("Each bar is one measure (the groups set for harmonization, or guessed from the "
-                       "column names); its features are counted by the share of participants missing them.")
-            st.plotly_chart(plot_missing_by_measure(feat_pct, measure_of), use_container_width=True)
+            # ── per modality group (only when the groups are defined) ──
+            st.markdown("**Missing values per modality group**")
+            if not modality_groups:
+                st.caption("Define the groups under \"Multiple imaging modalities or measure types\" above "
+                           "to see the missing values of each modality or measure type here.")
+            else:
+                st.caption("Each bar is one modality group as defined above; its features are counted by "
+                           "the share of participants missing them.")
+                st.plotly_chart(plot_missing_by_measure(feat_pct, measure_of), use_container_width=True)
             _per_meas = []
-            for m in measures:
+            for m in (measures if modality_groups else []):
                 cols_m = [c for c in feats_l if measure_of[c] == m]
                 p_m, na_m = feat_pct[cols_m], feat_isna[cols_m]
                 _per_meas.append({
-                    "Measure": m, "Features": len(cols_m),
+                    "Modality group": m, "Features": len(cols_m),
                     "With any missing": int((p_m > 0).sum()),
                     f"Over {a_thr:g}% missing": int((p_m > a_thr).sum()),
                     "Median % missing": round(float(p_m.median()), 1),
@@ -924,19 +930,22 @@ if _show_miss_tools:
                     "Participants missing some": int(na_m.any(axis=1).sum()),
                     "Participants missing all": int(na_m.all(axis=1).sum()),
                 })
-            st.dataframe(pd.DataFrame(_per_meas), use_container_width=True, hide_index=True)
+            if _per_meas:
+                st.dataframe(pd.DataFrame(_per_meas), use_container_width=True, hide_index=True)
 
             # ── per feature ──
             st.markdown("**Missing values per feature**")
             miss_df = pd.DataFrame({
                 "Variable":      assess_cols,
-                "Measure group": [_grp_of(c) for c in assess_cols],
+                "Modality group": [_grp_of(c) for c in assess_cols],
                 "Missing (n)":   miss_n.values,
                 "Missing (%)":   miss_pct.round(1).values,
                 "Present (n)":   (n_total - miss_n.values),
             })
             miss_df = miss_df[miss_df["Missing (n)"] > 0].sort_values(
                 "Missing (n)", ascending=False).reset_index(drop=True)
+            if not modality_groups:
+                miss_df = miss_df.drop(columns="Modality group")
 
             if len(miss_df) == 0:
                 st.success("No missing values in the selected features or covariates.")
@@ -991,7 +1000,7 @@ if _show_miss_tools:
         "percentage exceeds it, then remove them from the selection in one step. The "
         "box is empty by default, so nothing is filtered until you enter a value. "
         "Missing percentage is computed per feature across all uploaded participants. "
-        "When multiple modalities are used, the exceedances are broken down by modality."
+        "When modality groups are defined above, the exceedances are broken down by group."
     )
 
     def _exclude_high_missing_features(cols_to_drop, threshold, miss_pcts_dict=None):
@@ -1002,9 +1011,11 @@ if _show_miss_tools:
         prev = st.session_state.get("_excl_info", {"n": 0, "threshold": None})
         st.session_state["_excl_info"] = {"n": prev["n"] + len(drop), "threshold": threshold}
         prev_list = st.session_state.get("_excl_feat_list", [])
+        _grp_at_exclusion = {c: g for g, gcols in (modality_groups or {}).items() for c in gcols}
         for feat in cols_to_drop:
             pct_val = miss_pcts_dict.get(feat, float("nan")) if miss_pcts_dict else float("nan")
-            prev_list.append({"Feature": feat, "Missing (%)": round(float(pct_val), 1)})
+            prev_list.append({"Feature": feat, "Modality group": _grp_at_exclusion.get(feat),
+                              "Missing (%)": round(float(pct_val), 1)})
         st.session_state["_excl_feat_list"] = prev_list
 
     def _undo_all_exclusions():
@@ -1019,16 +1030,10 @@ if _show_miss_tools:
     # are gone, but this record does not).
     _excluded_so_far = st.session_state.get("_excl_feat_list", [])
     if _excluded_so_far:
-        _excl_guess = measure_keys(list(feature_cols) + [d["Feature"] for d in _excluded_so_far])
-        def _grp_excl(c):
-            if modality_groups:
-                for g, gcols in modality_groups.items():
-                    if c in gcols:
-                        return g
-            return _excl_guess.get(c, "(feature)")
         _ex_df = pd.DataFrame(_excluded_so_far)
-        _ex_df["Measure group"] = _ex_df["Feature"].map(_grp_excl)
-        _ex_df = _ex_df[["Feature", "Measure group", "Missing (%)"]]
+        _ex_cols = ["Feature"] + (["Modality group"] if "Modality group" in _ex_df.columns
+                                  and _ex_df["Modality group"].notna().any() else []) + ["Missing (%)"]
+        _ex_df = _ex_df[_ex_cols]
         st.markdown(f"**Excluded: {len(_ex_df)} feature(s)** (removed from the selection)")
         st.dataframe(_ex_df, use_container_width=True, hide_index=True)
         st.button("Undo all exclusions (restore to selection)", on_click=_undo_all_exclusions)
@@ -1048,39 +1053,33 @@ if _show_miss_tools:
         if len(over) == 0:
             st.caption(f"No selected features exceed {miss_thr:.0f}% missing.")
         else:
-            # measure / modality label per feature: use the defined groups when
-            # present, otherwise derive it from the column name
-            if modality_groups:
-                col_to_measure = {c: g for g, cols in modality_groups.items() for c in cols}
-            else:
-                col_to_measure = measure_keys(feature_cols)
-
-            measures = {}
-            for c in feature_cols:
-                measures.setdefault(col_to_measure[c], []).append(c)
-
+            # modality group per feature: only the groups defined above, never guessed
+            col_to_measure = {c: g for g, cols in (modality_groups or {}).items() for c in cols}
             st.warning(
-                f"{len(over)} of {len(feature_cols)} selected features exceed "
-                f"{miss_thr:.0f}% missing. Breakdown by measure below."
+                f"{len(over)} of {len(feature_cols)} selected features exceed {miss_thr:.0f}% missing."
+                + (" Breakdown by modality group below." if modality_groups else "")
             )
-            # per-measure summary: how many exceed the threshold in each measure
-            summ = pd.DataFrame([
-                {
-                    "Measure / modality":      meas,
-                    "Features over threshold": int((feat_miss_pct.reindex(mcols) > miss_thr).sum()),
-                    "Total features":          len(mcols),
-                    "Mean missing (%)":        round(float(feat_miss_pct.reindex(mcols).mean()), 1),
-                }
-                for meas, mcols in measures.items()
-            ]).sort_values("Features over threshold", ascending=False).reset_index(drop=True)
-            st.dataframe(summ, use_container_width=True, hide_index=True)
-            # detailed list of the features over threshold, with their measure
+            if modality_groups:
+                measures = {}
+                for c in feature_cols:
+                    measures.setdefault(col_to_measure.get(c, "Not in a group"), []).append(c)
+                # per-group summary: how many exceed the threshold in each group
+                summ = pd.DataFrame([
+                    {
+                        "Modality group":          meas,
+                        "Features over threshold": int((feat_miss_pct.reindex(mcols) > miss_thr).sum()),
+                        "Total features":          len(mcols),
+                        "Mean missing (%)":        round(float(feat_miss_pct.reindex(mcols).mean()), 1),
+                    }
+                    for meas, mcols in measures.items()
+                ]).sort_values("Features over threshold", ascending=False).reset_index(drop=True)
+                st.dataframe(summ, use_container_width=True, hide_index=True)
+            # detailed list of the features over threshold
             with st.expander(f"View the {len(over)} features over missingness threshold"):
-                over_df = pd.DataFrame({
-                    "Variable":           list(over.index),
-                    "Measure / modality": [col_to_measure[c] for c in over.index],
-                    "Missing (%)":        over.values.round(1),
-                })
+                over_df = pd.DataFrame({"Variable": list(over.index)})
+                if modality_groups:
+                    over_df["Modality group"] = [col_to_measure.get(c, "Not in a group") for c in over.index]
+                over_df["Missing (%)"] = over.values.round(1)
                 st.dataframe(over_df, use_container_width=True, hide_index=True)
 
             st.button(
