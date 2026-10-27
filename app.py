@@ -659,17 +659,16 @@ _model_cols_now = [c for c in [site_col, age_col, sex_col] + extra_continuous + 
                    if c and c in df.columns]
 _nothing_missing = not df[list(feature_cols) + _excluded_before + _model_cols_now].isna().any().any()
 
-if not _nothing_missing:
-    st.toggle("Show missing values only", key="preview_missing_only",
-              help="Shows only where values are missing (black) and present (grey), "
-                   "like the vis_miss plot of the R package naniar. Applies to both previews.")
+# always offered, also when nothing is missing (an all-grey view confirms it)
+st.toggle("Show missing values only", key="preview_missing_only",
+          help="Shows only where values are missing (black) and present (grey), "
+               "like the vis_miss plot of the R package naniar. Applies to both previews.")
 _preview_excluded = [d.get("Feature") for d in st.session_state.get("_excl_feat_list", [])
                      if d.get("Feature") in df.columns]
 _show_matrix_preview(
     df, "all", list(feature_cols) + [f for f in _preview_excluded if f not in feature_cols],
     "Before exclusions",
-    marked=("Excluded for missingness", _preview_excluded) if _preview_excluded else None,
-    missing_only=False if _nothing_missing else None)
+    marked=("Excluded for missingness", _preview_excluded) if _preview_excluded else None)
 
 # ── Missing value assessment ────────────────────────────────────────────────
 st.markdown("---")
