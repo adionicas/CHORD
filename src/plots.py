@@ -1215,3 +1215,60 @@ def plot_data_matrix(
     if n_no_batch:
         notes.append(f"{n_no_batch} participant(s) with no batch value are not shown.")
     return fig, " ".join(notes)
+
+
+# ── Missing values per measure and per batch (missing-value assessment) ──────
+MISSING_BANDS  = ["None", "Up to 5%", "5 to 10%", "10 to 20%", "20 to 50%", "Over 50%"]
+MISSING_COLORS = ["#DDDDDD", "#FEE8C8", "#FDBB84", "#FC8D59", "#E34A33", "#990000"]
+
+
+def missing_band(pct: pd.Series) -> pd.Series:
+    """Band of a share missing (in %): None, Up to 5%, 5 to 10%, ..., Over 50%."""
+    edges = [-np.inf, 0, 5, 10, 20, 50, np.inf]
+    return pd.cut(pct, bins=edges, labels=MISSING_BANDS, right=True)
+
+
+def _band_bars(counts: pd.DataFrame, title: str, x_title: str, hover_unit: str, percent: bool) -> go.Figure:
+    """Horizontal stacked bars, one per row of counts (rows x MISSING_BANDS)."""
+    rows = list(counts.index)
+    total = counts.sum(axis=1)
+    fig = go.Figure()
+    for band, color in zip(MISSING_BANDS, MISSING_COLORS):
+        n = counts[band] if band in counts else pd.Series(0, index=rows)
+        x = (100 * n / total) if percent else n
+        fig.add_trace(go.Bar(
+            y=rows, x=x, name=band, orientation="h", marker_color=color,
+            marker_line=dict(color="white", width=0.5),
+            customdata=np.stack([n.values, total.values], axis=1),
+            hovertemplate=(f"%{{y}}<br>{band} missing: %{{customdata[0]}} of %{{customdata[1]}} "
+                           f"{hover_unit}<extra></extra>"),
+        ))
+    fig.update_layout(
+        barmode="stack", title=title, **WHITE_BG,
+        height=170 + 30 * len(rows), margin=dict(l=10, r=30, t=60, b=110),
+        legend=dict(BOTTOM_LEGEND, title_text="Share missing", traceorder="normal"),
+        xaxis=dict(title=x_title, range=[0, 100] if percent else None, showgrid=True, gridcolor="#EEEEEE"),
+        yaxis=dict(autorange="reversed", type="category"),
+    )
+    return fig
+
+
+def plot_missing_by_measure(feature_pct: pd.Series, measure_of: dict) -> go.Figure:
+    """For each measure, its features counted by share of participants missing."""
+    d = pd.DataFrame({"measure": [measure_of[c] for c in feature_pct.index],
+                      "band": missing_band(feature_pct.values)})
+    counts = d.groupby(["measure", "band"], observed=False, sort=False).size().unstack(fill_value=0)
+    counts = counts.reindex(list(dict.fromkeys(d["measure"])))
+    counts.index = [f"{m} (n={int(n)})" for m, n in zip(counts.index, counts.sum(axis=1))]
+    return _band_bars(counts, "Features per measure, by share of participants missing",
+                      "Features of the measure (%)", "features", percent=True)
+
+
+def plot_missing_by_batch(participant_pct: pd.Series, batch: pd.Series) -> go.Figure:
+    """For each batch, its participants by share of the selected features missing (% of the batch)."""
+    d = pd.DataFrame({"batch": batch.astype(str).values, "band": missing_band(participant_pct.values)})
+    counts = d.groupby(["batch", "band"], observed=False).size().unstack(fill_value=0)
+    counts = counts.reindex(natural_sorted(counts.index))
+    counts.index = [f"{b} (n={int(n)})" for b, n in zip(counts.index, counts.sum(axis=1))]
+    return _band_bars(counts, "Participants per batch, by share of the selected features missing",
+                      "Participants in the batch (%)", "participants", percent=True)

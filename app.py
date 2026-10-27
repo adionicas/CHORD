@@ -23,7 +23,8 @@ from src.plots     import (plot_site_deviation, plot_spearman, plot_icc, plot_da
                            plot_age_correlations, plot_cohens_f,
                            plot_icc_by_site, plot_spearman_by_site,
                            plot_extra_associations, plot_single_association,
-                           plot_icc_ci_compare)
+                           plot_icc_ci_compare, plot_missing_by_measure,
+                           plot_missing_by_batch)
 from src.report    import generate_report, build_methods_paragraph
 
 # ── Update this URL once the repo is live ─────────────────────────────────
@@ -876,20 +877,10 @@ if _show_miss_tools:
             n_total = len(df)
             miss_n = df[assess_cols].isna().sum()
             miss_pct = (100 * miss_n / n_total) if n_total else miss_n * 0
-            n_complete_feats = int(df[list(feature_cols)].notna().all(axis=1).sum())
-            total_missing_cells = int(df[list(feature_cols)].isna().sum().sum())
-            n_cols_with_missing = int((df[list(feature_cols)].isna().sum() > 0).sum())
-
-            mc1, mc2, mc3, mc4 = st.columns(4)
-            mc1.metric("Participants", f"{n_total}")
-            mc2.metric("Complete on all features", f"{n_complete_feats}")
-            mc3.metric("Feature columns with missing", f"{n_cols_with_missing} / {len(feature_cols)}")
-            mc4.metric("Missing feature cells", f"{total_missing_cells:,}")
-
-            # missing values at a glance, as vis_miss in the R package naniar
-            _show_matrix_preview(df, "all", feature_cols, "Missing values", missing_only=True)
-
+            feats_l = list(feature_cols)
             _cov_set = set([age_col, sex_col] + extra_continuous + extra_categorical)
+            _guessed_measure = measure_keys([c for c in assess_cols if c not in _cov_set])
+
             def _grp_of(c):
                 if c in _cov_set:
                     return "(covariate)"
@@ -898,8 +889,45 @@ if _show_miss_tools:
                         if c in gcols:
                             return g
                 return _guessed_measure.get(c, "(feature)")
+            measure_of = {c: _grp_of(c) for c in feats_l}
+            measures = list(dict.fromkeys(measure_of.values()))
 
-            _guessed_measure = measure_keys([c for c in assess_cols if c not in _cov_set])
+            feat_isna = df[feats_l].isna()
+            feat_pct = 100 * feat_isna.mean()
+            part_pct = 100 * feat_isna.mean(axis=1)
+            thr_c = st.columns([1, 3])[0]
+            with thr_c:
+                a_thr = st.number_input("Threshold for the counts below (%)", min_value=0.0, max_value=100.0,
+                                        value=10.0, step=5.0, key="miss_assess_thr")
+            st.markdown(
+                f"- **Features:** {int((feat_pct > 0).sum())} of {len(feats_l)} have at least one missing "
+                f"value; {int((feat_pct > a_thr).sum())} have more than {a_thr:g}% missing.\n"
+                f"- **Participants:** {int((part_pct > 0).sum())} of {n_total} miss at least one feature; "
+                f"{int((part_pct > a_thr).sum())} miss more than {a_thr:g}% of the features."
+            )
+
+            # ── per measure ──
+            st.markdown("**Missing values per measure**")
+            st.caption("Each bar is one measure (the groups set for harmonization, or guessed from the "
+                       "column names); its features are counted by the share of participants missing them.")
+            st.plotly_chart(plot_missing_by_measure(feat_pct, measure_of), use_container_width=True)
+            _per_meas = []
+            for m in measures:
+                cols_m = [c for c in feats_l if measure_of[c] == m]
+                p_m, na_m = feat_pct[cols_m], feat_isna[cols_m]
+                _per_meas.append({
+                    "Measure": m, "Features": len(cols_m),
+                    "With any missing": int((p_m > 0).sum()),
+                    f"Over {a_thr:g}% missing": int((p_m > a_thr).sum()),
+                    "Median % missing": round(float(p_m.median()), 1),
+                    "Highest % missing": round(float(p_m.max()), 1),
+                    "Participants missing some": int(na_m.any(axis=1).sum()),
+                    "Participants missing all": int(na_m.all(axis=1).sum()),
+                })
+            st.dataframe(pd.DataFrame(_per_meas), use_container_width=True, hide_index=True)
+
+            # ── per feature ──
+            st.markdown("**Missing values per feature**")
             miss_df = pd.DataFrame({
                 "Variable":      assess_cols,
                 "Measure group": [_grp_of(c) for c in assess_cols],
@@ -919,6 +947,40 @@ if _show_miss_tools:
                     "complete. Sorted by count, most missing first."
                 )
                 st.dataframe(miss_df, use_container_width=True, hide_index=True)
+
+            # ── per participant ──
+            st.markdown("**Missing values per participant**")
+            _has_batch = df[site_col].notna()
+            st.plotly_chart(plot_missing_by_batch(part_pct[_has_batch], df.loc[_has_batch, site_col]),
+                            use_container_width=True)
+            _pid = st.session_state.get("id_col") or _guess_id_col(df, exclude=set(_model_vars) | set(feats_l))
+            _rows = part_pct > 0
+            _first = (df.loc[_rows, _pid].astype(str).values if _pid in df.columns
+                      else np.flatnonzero(_rows.values) + 1)
+            ptab = pd.DataFrame({
+                (_pid if _pid in df.columns else "Row in the table"): _first,
+                "Batch": df.loc[_rows, site_col].astype(str).where(_has_batch[_rows], "—").values,
+                "Missing features (n)": feat_isna[_rows].sum(axis=1).values,
+                "Missing (%)": part_pct[_rows].round(1).values,
+            })
+            if 1 < len(measures) <= 20:
+                for m in measures:
+                    cols_m = [c for c in feats_l if measure_of[c] == m]
+                    ptab[f"{m} missing (%)"] = (100 * feat_isna.loc[_rows, cols_m].mean(axis=1)).round(1).values
+            ptab = ptab.sort_values("Missing (%)", ascending=False, kind="stable").reset_index(drop=True)
+            if len(ptab) == 0:
+                st.caption("No participant misses a selected feature.")
+            else:
+                st.caption(f"{len(ptab)} of {n_total} participants miss at least one selected feature; "
+                           "most missing first." + ("" if 1 < len(measures) <= 20 or len(measures) == 1
+                                                    else " Per measure columns are shown for up to 20 measures."))
+                st.dataframe(ptab, use_container_width=True, hide_index=True,
+                             height=min(38 + 35 * len(ptab), 400))
+
+            # ── map ──
+            st.markdown("**Map of missing values**")
+            # missing values at a glance, as vis_miss in the R package naniar
+            _show_matrix_preview(df, "all", feature_cols, "Missing values", missing_only=True)
         except Exception as _miss_err:
             st.error(f"Missing-value assessment could not be generated: {_miss_err}")
 
