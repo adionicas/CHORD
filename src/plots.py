@@ -1278,62 +1278,7 @@ def plot_data_matrix(
     return fig, " ".join(notes)
 
 
-# ── Missing values per measure and per batch (missing-value assessment) ──────
-MISSING_BANDS  = ["None", "Up to 5%", "5 to 10%", "10 to 20%", "20 to 50%", "Over 50%"]
-MISSING_COLORS = ["#DDDDDD", "#FEE8C8", "#FDBB84", "#FC8D59", "#E34A33", "#990000"]
-
-
-def missing_band(pct: pd.Series) -> pd.Series:
-    """Band of a share missing (in %): None, Up to 5%, 5 to 10%, ..., Over 50%."""
-    edges = [-np.inf, 0, 5, 10, 20, 50, np.inf]
-    return pd.cut(pct, bins=edges, labels=MISSING_BANDS, right=True)
-
-
-def _band_bars(counts: pd.DataFrame, title: str, x_title: str, hover_unit: str, percent: bool) -> go.Figure:
-    """Horizontal stacked bars, one per row of counts (rows x MISSING_BANDS)."""
-    rows = list(counts.index)
-    total = counts.sum(axis=1)
-    fig = go.Figure()
-    for band, color in zip(MISSING_BANDS, MISSING_COLORS):
-        n = counts[band] if band in counts else pd.Series(0, index=rows)
-        x = (100 * n / total) if percent else n
-        fig.add_trace(go.Bar(
-            y=rows, x=x, name=band, orientation="h", marker_color=color,
-            marker_line=dict(color="white", width=0.5),
-            customdata=np.stack([n.values, total.values], axis=1),
-            hovertemplate=(f"%{{y}}<br>{band} missing: %{{customdata[0]}} of %{{customdata[1]}} "
-                           f"{hover_unit}<extra></extra>"),
-        ))
-    fig.update_layout(
-        barmode="stack", title=title, **WHITE_BG,
-        height=170 + 30 * len(rows), margin=dict(l=10, r=30, t=60, b=110),
-        legend=dict(BOTTOM_LEGEND, title_text="Missing", traceorder="normal"),
-        xaxis=dict(title=x_title, range=[0, 100] if percent else None, showgrid=True, gridcolor="#EEEEEE"),
-        yaxis=dict(autorange="reversed", type="category"),
-    )
-    return fig
-
-
-def plot_missing_by_measure(feature_pct: pd.Series, measure_of: dict) -> go.Figure:
-    """For each measure, its features counted by share of participants missing."""
-    d = pd.DataFrame({"measure": [measure_of[c] for c in feature_pct.index],
-                      "band": missing_band(feature_pct.values)})
-    counts = d.groupby(["measure", "band"], observed=False, sort=False).size().unstack(fill_value=0)
-    counts = counts.reindex(list(dict.fromkeys(d["measure"])))
-    counts.index = [f"{m} (n={int(n)})" for m, n in zip(counts.index, counts.sum(axis=1))]
-    return _band_bars(counts, "Features per modality group, by participants missing",
-                      "Features of the measure (%)", "features", percent=True)
-
-
-def plot_missing_by_batch(participant_pct: pd.Series, batch: pd.Series) -> go.Figure:
-    """For each batch, its participants by share of the selected features missing (% of the batch)."""
-    d = pd.DataFrame({"batch": batch.astype(str).values, "band": missing_band(participant_pct.values)})
-    counts = d.groupby(["batch", "band"], observed=False).size().unstack(fill_value=0)
-    counts = counts.reindex(natural_sorted(counts.index))
-    counts.index = [f"{b} (n={int(n)})" for b, n in zip(counts.index, counts.sum(axis=1))]
-    return _band_bars(counts, "Participants per batch, by share of the selected features missing",
-                      "Participants in the batch (%)", "participants", percent=True)
-
+# ── Missing-value assessment figures ─────────────────────────────────────────
 
 def plot_missing_curve(feature_pct: pd.Series, measure_of: dict | None = None,
                        threshold: float | None = None, kind: str = "features") -> go.Figure:
@@ -1425,42 +1370,22 @@ def plot_missing_by_batch_bars(batches: list, n: list, values_pct: list, over_pc
     return fig
 
 
-def plot_missing_batch_by_group(table: pd.DataFrame) -> go.Figure:
-    """Batch by modality group grid: the feature values missing (%) in each cell."""
-    z = table.values.astype(float)
-    fig = go.Figure(go.Heatmap(
-        z=z, x=list(table.columns), y=list(table.index), colorscale="Oranges", zmin=0,
-        zmax=max(float(np.nanmax(z)) if z.size else 1.0, 1.0),
-        text=[[f"{v:.1f}%" for v in row] for row in z], texttemplate="%{text}",
-        colorbar=dict(title="missing (%)", thickness=12),
-        hovertemplate="Batch %{y}<br>%{x}: %{z:.1f}% of the values missing<extra></extra>"))
-    fig.update_layout(title="Feature values missing per batch and modality group (%)", **WHITE_BG,
-                      height=160 + 34 * len(table.index), margin=dict(l=10, r=30, t=60, b=60),
-                      yaxis=dict(autorange="reversed", type="category"), xaxis=dict(side="top"))
-    return fig
-
-
-def plot_missing_present_by_batch(batches: list, n: list, values_pct: list) -> go.Figure:
-    """Per batch, one bar split into the feature values missing (black, at the
-    bottom so batches compare) and present (grey), as % of the batch's values."""
+def plot_missing_by_batch_groups(batches: list, n: list, by_group: dict, all_by_group: dict) -> go.Figure:
+    """Per batch, one bar per modality group: the feature values of that group missing
+    (% of the batch's values for the group); the legend gives each group's value over all batches."""
     x = [f"{b}<br>(n={k})" for b, k in zip(batches, n)]
-    miss = [float(v) for v in values_pct]
+    palette = px.colors.qualitative.Bold
     fig = go.Figure()
-    fig.add_trace(go.Bar(x=x, y=miss, name="Missing", marker_color="#222222",
-                         text=[f"{v:.1f}%" if v >= 8 else "" for v in miss], textposition="inside",
-                         insidetextfont=dict(color="white"),
-                         hovertemplate="%{x}<br>missing: %{y:.1f}% of the batch's feature values<extra></extra>"))
-    fig.add_trace(go.Bar(x=x, y=[100 - v for v in miss], name="Present", marker_color="#DDDDDD",
-                         hovertemplate="%{x}<br>present: %{y:.1f}% of the batch's feature values<extra></extra>"))
-    small = [(xi, v) for xi, v in zip(x, miss) if v < 8]       # too thin for a label inside: label above
-    if small:
-        fig.add_trace(go.Scatter(x=[s[0] for s in small], y=[s[1] + 2 for s in small], mode="text",
-                                 text=[f"{s[1]:.1f}%" for s in small], textposition="top center",
-                                 textfont=dict(color="black"), showlegend=False, hoverinfo="skip"))
+    for i, (g, vals) in enumerate(by_group.items()):
+        fig.add_trace(go.Bar(x=x, y=vals, name=f"{g}; all batches {all_by_group[g]:.1f}%",
+                             marker_color=palette[i % len(palette)], text=[f"{v:.1f}%" for v in vals],
+                             textposition="outside", cliponaxis=False,
+                             hovertemplate="%{x}<br>" + g + ": %{y:.1f}% of the values missing<extra></extra>"))
+    top = max([v for vals in by_group.values() for v in vals] + [1.0])
     fig.update_layout(
-        title="Missing and present feature values per batch", barmode="stack", **WHITE_BG, height=430,
-        margin=dict(l=10, r=30, t=60, b=120), legend=dict(BOTTOM_LEGEND),
-        yaxis=dict(title="Feature values of the batch (%)", range=[0, 100], showgrid=True, gridcolor="#EEEEEE"),
+        title="Feature values missing per batch, by modality group", barmode="group", **WHITE_BG, height=470,
+        margin=dict(l=10, r=30, t=60, b=140), legend=dict(BOTTOM_LEGEND),
+        yaxis=dict(title="Feature values missing (%)", range=[0, top * 1.2], showgrid=True, gridcolor="#EEEEEE"),
         xaxis=dict(tickangle=0),
     )
     return fig

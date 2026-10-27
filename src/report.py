@@ -178,10 +178,10 @@ def _data_prep_tables(excl_feat_html, overview, excl_part_list):
         def excluded(n, t):
             return f"{n} (more than {t:g}% missing)" if n and t is not None else str(n or 0)
         ov = pd.DataFrame([
-            {"": "Features", "Total": overview["n_features"], "With any missing value": overview["feat_any"],
+            {"": "Features", "Total": overview["n_features"],
              "Above the threshold": f"{overview['feat_over']} (participants missing more than {thr:g}%)",
              "Excluded by the user": excluded(overview["feat_excl"], overview["feat_excl_thr"])},
-            {"": "Participants", "Total": overview["n_participants"], "With any missing value": "",
+            {"": "Participants", "Total": overview["n_participants"],
              "Above the threshold": f"{overview['part_over']} (features missing more than {pthr:g}%)",
              "Excluded by the user": excluded(overview["part_excl"], overview["part_excl_thr"])},
         ])
@@ -470,9 +470,8 @@ TEMPLATE = """<!DOCTYPE html>
   {% if missing_overview %}
   {% set mthr = '%g'|format(missing_overview.threshold) %}
   {% set pthr = '%g'|format(missing_overview.part_threshold or missing_overview.threshold) %}
-  Before harmonization, {{ missing_overview.feat_any }} of the {{ missing_overview.n_features }} selected
-  features had at least one missing value and {{ missing_overview.feat_over }}
-  {{ 'was' if missing_overview.feat_over == 1 else 'were' }} missing in more than {{ mthr }}% of the
+  Before harmonization, {{ missing_overview.feat_over }} of the {{ missing_overview.n_features }} selected
+  features {{ 'was' if missing_overview.feat_over == 1 else 'were' }} missing in more than {{ mthr }}% of the
   participants, and {{ missing_overview.part_over }} of the {{ missing_overview.n_participants }} participants
   missed more than {{ pthr }}% of the features (Table {{ overview_table_label }}).
   {% endif %}
@@ -488,9 +487,8 @@ TEMPLATE = """<!DOCTYPE html>
   {{ 'were' if excl_part_info.n != 1 else 'was' }} excluded (Table {{ part_table_label }}).
   {% endif %}
   {% if missing_summary and missing_summary.k > 0 %}
-  In the participants entered into harmonization, {{ missing_summary.k }} of the {{ n_features }}
-  harmonized features contained missing values (per-feature missing rate {{ missing_summary.min }}% to
-  {{ missing_summary.max }}%, {{ missing_summary.total }} missing cells in total).
+  In the participants entered into harmonization, the missing rate per feature ranged up to
+  {{ missing_summary.max }}% ({{ missing_summary.total }} missing values in total).
   {% endif %}
   Prior to harmonization, features were examined for missing data. neuroCombat
   requires a complete feature matrix, so a participant was entered into a given
