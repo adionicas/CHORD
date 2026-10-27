@@ -67,12 +67,13 @@ def run_combat(
     if missing:
         raise KeyError(f"Columns not found in the uploaded data: {missing}")
 
-    # Empirical Bayes pools the batch estimates across features. With a single
-    # feature there is nothing to pool, and neuroCombat then returns an all-NaN
-    # column without an error (its prior variances use ddof=1), so a run with
-    # one feature is always feature-wise.
-    if eb and len(feature_cols) < 2:
-        eb = False
+    # Features ComBat cannot harmonize stay out of the run: a feature with no
+    # observed value (it would leave no complete participant; it stays empty)
+    # and a feature with one value for everyone (no spread to scale by; it is
+    # returned unchanged).
+    empty_features = [f for f in feature_cols if df[f].notna().sum() == 0]
+    usable = [f for f in feature_cols if f not in set(empty_features)]
+    required = list(dict.fromkeys([site_col] + cont_cols + cat_cols + usable))
 
     # Rows must be complete on the columns ComBat actually uses (site,
     # covariates, and features). ALL other columns, including subject IDs and
@@ -85,8 +86,19 @@ def run_combat(
         raise ValueError(
             "No rows with complete data across site, all covariates, and all features."
         )
+    constant_features = [f for f in usable if work[f].nunique() <= 1]
+    run_cols = [f for f in usable if f not in set(constant_features)]
+    if not run_cols:
+        return work.copy()
 
-    data_matrix = work[feature_cols].values.T  # (p, n)
+    # Empirical Bayes pools the batch estimates across features. With a single
+    # feature there is nothing to pool, and neuroCombat then returns an all-NaN
+    # column without an error (its prior variances use ddof=1), so a run with
+    # one feature is always feature-wise.
+    if eb and len(run_cols) < 2:
+        eb = False
+
+    data_matrix = work[run_cols].values.T  # (p, n)
 
     # Build covars DataFrame
     covars = pd.DataFrame({site_col: work[site_col].values})
@@ -120,7 +132,7 @@ def run_combat(
     # original row index are preserved so downstream metrics can still pair
     # raw and harmonized rows by index.
     out = work.copy()
-    out[feature_cols] = harm_matrix
+    out[run_cols] = harm_matrix
     return out
 
 

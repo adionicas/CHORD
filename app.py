@@ -9,6 +9,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+import plotly.express as px
 
 from src.naming    import measure_keys, natural_sorted
 from src.harmonize import (run_combat, run_combat_grouped, run_combat_per_feature,
@@ -429,19 +430,19 @@ def _by_batch_table(data, batch_col, variables, categorical=None):
             col = sub[var]
             vals = col.dropna()
             n_miss = int(col.isna().sum())
-            miss_txt = f"missing: {n_miss} ({100 * n_miss / len(sub):.0f}%)" if len(sub) else "missing: 0"
-            if len(vals) == 0:
-                row[var] = miss_txt
-            elif var not in categorical and pd.api.types.is_numeric_dtype(data[var]):
-                row[var] = (f"{vals.mean():.2f} ({vals.std():.2f}); {_fmt_num(vals.min())} to "
-                            f"{_fmt_num(vals.max())}  |  {miss_txt}")
+            miss_txt = f"{n_miss} ({100 * n_miss / len(sub):.0f}%)" if len(sub) else "0"
+            if var not in categorical and pd.api.types.is_numeric_dtype(data[var]):
+                head = f"{var} [mean (SD); range; missing n (%)]"
+                row[head] = (f"{vals.mean():.2f} ({vals.std():.2f}); {_fmt_num(vals.min())} to "
+                             f"{_fmt_num(vals.max())}; {miss_txt}") if len(vals) else f"—; —; {miss_txt}"
             else:
+                head = f"{var} [n (%) per value; missing n (%)]"
                 vc = vals.map(_fmt_val).value_counts()
                 order = natural_sorted(vc.index)
                 parts = [f"{v}: {vc[v]} ({100 * vc[v] / len(sub):.0f}%)" for v in order[:8]]
                 if len(order) > 8:
                     parts.append(f"+ {len(order) - 8} more")
-                row[var] = "  |  ".join(parts + [miss_txt])
+                row[head] = ", ".join(parts) + f"; missing {miss_txt}"
         rows.append(row)
     return pd.DataFrame(rows)
 
@@ -479,40 +480,69 @@ if st.toggle("Check the batch and the covariates", value=True, key="show_demo_ta
     st.dataframe(_by_batch_table(df, site_col, _demo_vars, categorical=_demo_cat_set),
                  use_container_width=True, hide_index=True)
     _no_batch = int(df[site_col].isna().sum())
-    st.caption("Continuous variables: mean (SD); range. Categories: n (%) for each value. "
-               "Missing: n (%), also when it is 0."
+    st.caption("Each column says what it shows: for continuous variables mean (SD); range; missing n (%), "
+               "for categories n (%) per value; missing n (%). Missing is shown also when it is 0."
                + (f" {_no_batch} participant(s) without a batch value are not in the table." if _no_batch else ""))
 
     st.markdown("The values of each variable")
+    _by_b = st.toggle("Show by batch", key="demo_by_batch",
+                      help="Categories: one bar per batch split by value. Continuous variables: one box per batch.")
     _roles = [(site_col, "batch")] + [
         (_c, "continuous covariate" if _c in continuous_covariates and _c not in _demo_cat_set else
              "categorical covariate" if _c in categorical_covariates else
              "added for checking, categorical" if _c in _demo_cat_set else "added for checking, continuous")
         for _c in _demo_vars]
+    _bdf = df[df[site_col].notna()].copy()
+    _bdf["_batch"] = _bdf[site_col].astype(str)
+    _border = natural_sorted(_bdf["_batch"].unique())
+    _pal = px.colors.qualitative.Safe
+    _plot_layout = dict(margin=dict(l=10, r=10, t=10, b=40), plot_bgcolor="white", paper_bgcolor="white",
+                        font=dict(color="black"))
     for _tab_ui, (_c, _role) in zip(st.tabs([_c for _c, _ in _roles]), _roles):
         _s = df[_c]
         _n_miss = int(_s.isna().sum())
         _miss_txt = f"missing: {_n_miss} ({100 * _n_miss / max(len(_s), 1):.1f}%)"
         _cat = _c == site_col or _c in _demo_cat_set or not pd.api.types.is_numeric_dtype(_s)
         with _tab_ui:
-            _vc = _s.value_counts(dropna=True)
-            if pd.api.types.is_numeric_dtype(_s):
-                _vc = _vc.sort_index()
-                _vc.index = [_fmt_val(v) for v in _vc.index]
-            else:
-                _vc.index = _vc.index.astype(str)
-                _vc = _vc[natural_sorted(_vc.index)]
-            _all = pd.DataFrame({"Value": list(_vc.index), "Participants": _vc.values})
-            _all = pd.concat([_all, pd.DataFrame({"Value": ["(missing)"], "Participants": [_n_miss]})],
-                             ignore_index=True)
-            _all["Participants (%)"] = (100 * _all["Participants"] / max(len(_s), 1)).round(1)
             if _cat:
-                # categories: each value with n (%), and the missing values
+                _vc = _s.dropna().map(_fmt_val).value_counts()
+                _vals = natural_sorted(_vc.index)
+                _all = pd.DataFrame({"Value": _vals + ["(missing)"],
+                                     "Participants": [int(_vc[v]) for v in _vals] + [_n_miss]})
+                _all["Participants (%)"] = (100 * _all["Participants"] / max(len(_s), 1)).round(1)
                 st.markdown(f"**{_c}** ({_role}): {_s.nunique()} distinct values; {_miss_txt}")
-                st.dataframe(_all, hide_index=True, use_container_width=True,
-                             height=min(38 + 35 * len(_all), 300))
+                _p1, _p2 = st.columns([3, 2])
+                with _p1:
+                    if _by_b and _c != site_col:
+                        # one 100% bar per batch, split by value
+                        _lab = _bdf[_c].map(lambda v: "(missing)" if pd.isna(v) else _fmt_val(v))
+                        _ct = pd.crosstab(_bdf["_batch"], _lab).reindex(index=_border, fill_value=0)
+                        _ct = _ct[[v for v in _vals + ["(missing)"] if v in _ct.columns]]
+                        _pct = 100 * _ct.div(_ct.sum(axis=1), axis=0)
+                        _f = go.Figure()
+                        for _i, _v in enumerate(_ct.columns):
+                            _f.add_trace(go.Bar(x=_border, y=_pct[_v], name=_v,
+                                                marker_color="#BBBBBB" if _v == "(missing)" else _pal[_i % len(_pal)],
+                                                customdata=_ct[_v], hovertemplate=f"Batch %{{x}}<br>{_v}: %{{customdata}} "
+                                                f"(%{{y:.0f}}%)<extra></extra>"))
+                        _f.update_layout(barmode="stack", height=300, legend=dict(orientation="h", y=-0.25),
+                                         yaxis_title="Participants of the batch (%)", xaxis_title="Batch",
+                                         xaxis=dict(type="category"), **_plot_layout)
+                    else:
+                        _f = go.Figure(go.Bar(
+                            x=_all["Value"], y=_all["Participants"],
+                            marker_color=["#BBBBBB" if v == "(missing)" else "#2A6EBB" for v in _all["Value"]],
+                            text=[f"{n} ({p:.0f}%)" for n, p in zip(_all["Participants"], _all["Participants (%)"])],
+                            textposition="outside", cliponaxis=False,
+                            hovertemplate="%{x}: %{y} participants<extra></extra>"))
+                        _f.update_layout(height=300, yaxis_title="Participants", xaxis=dict(type="category"),
+                                         **_plot_layout)
+                    st.plotly_chart(_f, use_container_width=True)
+                with _p2:
+                    st.dataframe(_all, hide_index=True, use_container_width=True,
+                                 height=min(38 + 35 * len(_all), 300))
             elif _s.notna().any():
-                # numbers: a summary, the distribution, and the lowest and highest values,
+                # continuous: a summary, the distribution, and the lowest and highest values,
                 # where codes such as -999 or 999 show up
                 _v = _s.dropna()
                 st.markdown(f"**{_c}** ({_role}): {_v.nunique()} distinct values; "
@@ -520,19 +550,25 @@ if st.toggle("Check the batch and the covariates", value=True, key="show_demo_ta
                             f"(SD {_v.std():.2f}); {_miss_txt}")
                 _h1, _h2 = st.columns([3, 2])
                 with _h1:
-                    _hf = go.Figure(go.Histogram(x=_v, nbinsx=40, marker_color="#2A6EBB"))
-                    _hf.update_layout(height=240, margin=dict(l=10, r=10, t=10, b=40), bargap=0.05,
-                                      plot_bgcolor="white", paper_bgcolor="white",
-                                      xaxis_title=_c, yaxis_title="Participants")
-                    st.plotly_chart(_hf, use_container_width=True)
+                    if _by_b:
+                        _f = go.Figure()
+                        for _bb in _border:
+                            _yy = _bdf.loc[_bdf["_batch"] == _bb, _c].dropna()
+                            _f.add_trace(go.Box(y=_yy, name=str(_bb), boxpoints="outliers", marker_color="#2A6EBB",
+                                                line_color="#2A6EBB", showlegend=False))
+                        _f.update_layout(height=300, yaxis_title=_c, xaxis_title="Batch",
+                                         xaxis=dict(type="category"), **_plot_layout)
+                    else:
+                        _f = go.Figure(go.Histogram(x=_v, nbinsx=40, marker_color="#2A6EBB"))
+                        _f.update_layout(height=300, bargap=0.05, xaxis_title=_c, yaxis_title="Participants",
+                                         **_plot_layout)
+                    st.plotly_chart(_f, use_container_width=True)
                 with _h2:
                     _srt = np.sort(_v.unique())
                     st.dataframe(pd.DataFrame({
                         "Lowest values": [_fmt_num(x) for x in _srt[:5]] + [""] * (5 - len(_srt[:5])),
                         "Highest values": [_fmt_num(x) for x in _srt[::-1][:5]] + [""] * (5 - len(_srt[:5]))}),
                         hide_index=True, use_container_width=True)
-                with st.expander(f"Every value of {_c} with its count ({len(_all) - 1} distinct)"):
-                    st.dataframe(_all, hide_index=True, use_container_width=True, height=300)
             else:
                 st.markdown(f"**{_c}** ({_role}): no values; {_miss_txt}")
 
@@ -593,7 +629,8 @@ if st.toggle("Show all column names with their numbers", key="show_col_numbers")
     num_table = pd.DataFrame({"№": range(1, n_cols + 1), "Column": all_df_cols})
     if find.strip():
         num_table = num_table[num_table["Column"].str.contains(find.strip(), case=False, regex=False)]
-    lc1.caption(f"{len(num_table)} of {n_cols} columns shown.")
+    lc1.caption(f"{len(num_table)} of {n_cols} columns shown. Click the № header to sort, for example to "
+                "show the end of the table first.")
     st.dataframe(num_table, hide_index=True, use_container_width=True, height=300,
                  column_config={"№": st.column_config.NumberColumn(width="small")})
 
@@ -780,6 +817,18 @@ if not feature_cols:
     st.info("No features selected yet. Choose the first and last feature column above, pick features "
             "in the list, or select them by keyword.")
     st.stop()
+
+# Features ComBat cannot harmonize: no value at all, or one value for everyone
+_empty_feats = [c for c in feature_cols if df[c].notna().sum() == 0]
+_const_feats = [c for c in feature_cols if c not in set(_empty_feats) and df[c].nunique(dropna=True) <= 1]
+if _empty_feats or _const_feats:
+    st.warning(
+        "Some selected features cannot be harmonized, so ComBat leaves them as they are; consider "
+        "excluding them (for example with \"Exclude matching\" above)."
+        + (f"\n\n- No value for any participant ({len(_empty_feats)}): " + ", ".join(_empty_feats[:10])
+           + (" …" if len(_empty_feats) > 10 else "") if _empty_feats else "")
+        + (f"\n\n- The same value for every participant ({len(_const_feats)}): " + ", ".join(_const_feats[:10])
+           + (" …" if len(_const_feats) > 10 else "") if _const_feats else ""))
 
 sites = df[site_col].dropna().unique()
 st.info(f"Batches (n = {len(sites)}): **{', '.join(natural_sorted(sites.astype(str)))}**")
