@@ -1321,8 +1321,8 @@ def plot_missing_curve(feature_pct: pd.Series, measure_of: dict | None = None,
         fig.add_trace(go.Scatter(x=[0, 0], y=[0, 0], yaxis="y2", mode="lines", line=dict(width=0),
                                  showlegend=False, hoverinfo="skip"))
         fig.update_layout(yaxis2=dict(title=f"{unit.capitalize()} (n" + (" per group)" if len(groups) > 1 else ")"),
-                                      overlaying="y", side="right", range=[0, n_all * 1.02], showgrid=False,
-                                      rangemode="tozero"))
+                                      overlaying="y", side="right", range=[0, n_all * 1.02], autorange=False,
+                                      showgrid=False))
     if threshold is not None and threshold <= x_max:
         fig.add_vline(x=threshold, line_dash="dot", line_color=GREY, line_width=1.5,
                       annotation_text=f"{threshold:g}%", annotation_position="top right")
@@ -1335,8 +1335,8 @@ def plot_missing_curve(feature_pct: pd.Series, measure_of: dict | None = None,
     fig.update_layout(
         title=title, **WHITE_BG, height=430,
         margin=dict(l=10, r=60, t=60, b=120), legend=dict(BOTTOM_LEGEND),
-        xaxis=dict(title=x_title, range=[0, x_max], showgrid=True, gridcolor="#EEEEEE"),
-        yaxis=dict(title=y_title, range=[0, 102], showgrid=True, gridcolor="#EEEEEE"),
+        xaxis=dict(title=x_title, range=[0, x_max], autorange=False, showgrid=True, gridcolor="#EEEEEE"),
+        yaxis=dict(title=y_title, range=[0, 102], autorange=False, showgrid=True, gridcolor="#EEEEEE"),
     )
     return fig
 
