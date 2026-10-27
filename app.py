@@ -368,7 +368,8 @@ st.caption(f"{len(auto_features)} numeric columns are available.")
 # ── Range of feature columns (the main way to select) ──────────────────────
 st.markdown("**Choose the first and last feature column**")
 st.caption("Every column from the first to the last is selected. You can then remove "
-           "columns by keyword, or edit the list of selected features further down.")
+           "columns by keyword, or edit the list of selected features further down. "
+           "In the From and To boxes, type part of a name to find a column.")
 use_col_num = st.session_state.get("range_use_col_num", False)
 
 if not use_col_num:
@@ -411,14 +412,18 @@ else:
     num_preview = all_df_cols[from_num-1:to_num]
     st.caption(f"Columns {from_num}–{to_num}: "
                f"{', '.join(num_preview[:5])}{'…' if len(num_preview) > 5 else ''}")
-    if st.toggle("Show the column names with their numbers", key="show_col_numbers"):
-        find = st.text_input("Find a column", key="col_number_find",
-                             placeholder="part of a column name, e.g. node100")
-        num_table = pd.DataFrame({"№": range(1, len(all_df_cols) + 1), "Column": all_df_cols})
-        if find.strip():
-            num_table = num_table[num_table["Column"].str.contains(find.strip(), case=False, regex=False)]
-        st.caption(f"{len(num_table)} of {len(all_df_cols)} columns shown.")
-        st.dataframe(num_table, hide_index=True, use_container_width=True, height=300)
+
+# Every column of the table with its number, in both modes: with thousands of columns
+# the From/To lists are too long to scroll through.
+if st.toggle("Show all column names with their numbers", key="show_col_numbers"):
+    find = st.text_input("Find a column", key="col_number_find",
+                         placeholder="part of a column name, e.g. node100")
+    num_table = pd.DataFrame({"№": range(1, len(all_df_cols) + 1), "Column": all_df_cols})
+    if find.strip():
+        num_table = num_table[num_table["Column"].str.contains(find.strip(), case=False, regex=False)]
+    st.caption(f"{len(num_table)} of {len(all_df_cols)} columns shown.")
+    st.dataframe(num_table, hide_index=True, use_container_width=True, height=300,
+                 column_config={"№": st.column_config.NumberColumn(width="small")})
 
 st.checkbox("Use column numbers instead of names", value=False, key="range_use_col_num",
             help="Check this if column names are not informative enough to use as range boundaries")
@@ -540,7 +545,8 @@ with st.expander(f"View all {len(feature_cols)} selected feature names in full")
     if len(feature_cols) > MAX_CHIPS:
         # many features: one scrollable numbered table instead of one line per name
         st.dataframe(pd.DataFrame({"№": range(1, len(feature_cols) + 1), "Feature": feature_cols}),
-                     hide_index=True, use_container_width=True, height=300)
+                     hide_index=True, use_container_width=True, height=300,
+                     column_config={"№": st.column_config.NumberColumn(width="small")})
     else:
         # show as a compact numbered list in 3 columns
         cols_per_row = 3
