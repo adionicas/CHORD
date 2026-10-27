@@ -143,7 +143,7 @@ def _excl_feat_block(excl_feat_list, multimodal):
             })
         return _df_table(pd.DataFrame(rows))
     items = "".join(
-        f'<li>{r.get("Feature", "")} ({r.get("Missing (%)", "?")}% missing)</li>'
+        f'<li>{r.get("Feature", "")} ({r.get("Participants missing (%)", r.get("Missing (%)", "?"))}% missing)</li>'
         for r in excl_feat_list
     )
     return f'<ul style="margin:4px 0 0 18px;columns:2;font-size:10pt">{items}</ul>'
@@ -169,8 +169,8 @@ def _data_prep_tables(excl_feat_html, overview, excl_part_list):
     if excl_feat_html:
         table("Features excluded due to missingness.", excl_feat_html,
               "Features listed above were removed from the analysis before harmonization because their "
-              "missing rate exceeded the user-specified threshold. Missing (%) is computed across all "
-              "uploaded participants.")
+              "missing rate exceeded the user-specified threshold. Participants missing (%) is computed "
+              "across all uploaded participants.")
     if overview:
         thr = overview["threshold"]
 
@@ -908,6 +908,36 @@ def _covariate_texts(age_col, sex_col, extra_continuous, extra_categorical,
     return _join_and(parts), len(parts), _join_and(anc)
 
 
+def data_prep_sentence(missing_overview=None, excl_info=None, excl_part_info=None,
+                       missing_handling="impute") -> str:
+    """
+    The data preparation sentences of the Methods paragraph: the thresholds the
+    user chose to exclude features and participants for missing values, with the
+    numbers excluded, and how the remaining missing values were handled.
+    """
+    if not missing_overview:
+        return ""
+    out = []
+    n_f, n_p = missing_overview["n_features"], missing_overview["n_participants"]
+    if excl_info and excl_info.get("n") and excl_info.get("threshold") is not None:
+        out.append(f"Features missing in more than {excl_info['threshold']:g}% of the participants were "
+                   f"excluded (n = {excl_info['n']} of {n_f}).")
+    if excl_part_info and excl_part_info.get("n") and excl_part_info.get("threshold") is not None:
+        out.append(f"Participants missing more than {excl_part_info['threshold']:g}% of the selected "
+                   f"features were excluded (n = {excl_part_info['n']} of {n_p}).")
+    if missing_overview.get("feat_any"):
+        out.append({
+            "complete": "Participants with any remaining missing feature value were left out of the "
+                        "ComBat run (complete-case analysis).",
+            "impute": "Remaining missing feature values were filled with each feature's median for "
+                      "harmonization and set back to missing afterwards.",
+            "pattern": "Features missing in the same participants were harmonized together, so each "
+                       "participant contributed the features they had.",
+            "per_feature": "Each feature was harmonized on its own complete cases, without Empirical Bayes.",
+        }.get(missing_handling, ""))
+    return " ".join(x for x in out if x)
+
+
 def build_methods_paragraph(
     site_col: str,
     age_col: str,
@@ -925,6 +955,7 @@ def build_methods_paragraph(
     covariates_cont: list | None = None,
     covariates_cat: list | None = None,
     ancova_covars: list | None = None,
+    data_prep_text: str | None = None,
 ) -> str:
     """Return a plain-text methods paragraph for copy-paste into a manuscript."""
     cov_text, _, anc_text = _covariate_texts(
@@ -992,7 +1023,8 @@ def build_methods_paragraph(
     return (
         f"Scanner-related batch effects were corrected and evaluated using CHORD "
         f"(Comprehensive Harmonization Open-platform with Reporting and Diagnostics; {github_url}). "
-        f"ComBat harmonization (Johnson et al., 2007; Fortin et al., 2017) was applied using the "
+        + (f"{data_prep_text} " if data_prep_text else "")
+        + f"ComBat harmonization (Johnson et al., 2007; Fortin et al., 2017) was applied using the "
         f"neuroCombat Python package (v0.2.12), with {site_col} as the batch variable"
         + (f" and {cov_text} included as biological covariates to preserve their associated variability. "
            if cov_text else ", without biological covariates. ")

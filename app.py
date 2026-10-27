@@ -24,8 +24,9 @@ from src.plots     import (plot_site_deviation, plot_spearman, plot_icc, plot_da
                            plot_icc_by_site, plot_spearman_by_site,
                            plot_extra_associations, plot_single_association,
                            plot_icc_ci_compare, plot_missing_by_measure,
-                           plot_missing_by_batch, plot_missing_curve)
-from src.report    import generate_report, build_methods_paragraph
+                           plot_missing_by_batch, plot_missing_curve,
+                           plot_missing_per_participant)
+from src.report    import generate_report, build_methods_paragraph, data_prep_sentence
 
 # ── Update this URL once the repo is live ─────────────────────────────────
 GITHUB_URL = "https://github.com/adionicas/CHORD"
@@ -194,6 +195,75 @@ def _col_selector(label, all_cols, default, key):
         return None
     return sel
 
+def _record_feature_exclusion(cols_to_drop, threshold, pcts, groups):
+    """Remove features from the selection and record them with the threshold used."""
+    drop = set(cols_to_drop)
+    st.session_state["sel_features"] = [c for c in st.session_state.get("sel_features", []) if c not in drop]
+    prev = st.session_state.get("_excl_info", {"n": 0, "threshold": None})
+    st.session_state["_excl_info"] = {"n": prev["n"] + len(drop), "threshold": threshold}
+    grp = {c: g for g, gcols in (groups or {}).items() for c in gcols}
+    lst = st.session_state.get("_excl_feat_list", [])
+    for f in cols_to_drop:
+        lst.append({"Feature": f, "Modality group": grp.get(f),
+                    "Participants missing (%)": round(float(pcts.get(f, float("nan"))), 1)})
+    st.session_state["_excl_feat_list"] = lst
+
+
+def _record_participant_exclusion(entries, threshold, key_of_data):
+    """Record participants as excluded, with the threshold used."""
+    prev = [d for d in st.session_state.get("_excl_part_list", []) if d.get("data_key") == key_of_data]
+    prev += entries
+    st.session_state["_excl_part_list"] = prev
+    st.session_state["_excl_part_info"] = {"n": len(prev), "threshold": threshold}
+
+
+@st.experimental_dialog("Missing values at this share", width="large")
+def _missing_at_share(x, feat_pct, part_pct, measure_of, kind="features", part_entries=None,
+                      groups=None, key_of_data=None):
+    """What a click on a missing-value curve shows, with a button to exclude at
+    that share: the features with more than x% of the participants missing
+    (kind "features"), or the participants missing more than x% of the selected
+    features (kind "participants")."""
+    if kind == "features":
+        over = feat_pct[feat_pct > x].sort_values(ascending=False)
+        st.markdown(f"**Features with more than {x:.1f}% of the participants missing: "
+                    f"{len(over)} of {len(feat_pct)}**")
+        if measure_of:
+            _g = pd.Series(measure_of)
+            st.dataframe(pd.DataFrame([
+                {"Modality group": g, "Features": int((_g == g).sum()),
+                 f"More than {x:.1f}% missing": int(_g.reindex(over.index).eq(g).sum())}
+                for g in dict.fromkeys(_g.values)]), hide_index=True, use_container_width=True)
+        if len(over):
+            _t = pd.DataFrame({"Feature": over.index})
+            if measure_of:
+                _t["Modality group"] = [measure_of.get(c, "") for c in over.index]
+            _t["Participants missing (%)"] = over.values.round(1)
+            st.dataframe(_t, hide_index=True, use_container_width=True, height=min(38 + 35 * len(_t), 300))
+            if st.button(f"Exclude these {len(over)} feature(s) (more than {x:.1f}% of the participants missing)",
+                         type="primary", on_click=_record_feature_exclusion,
+                         args=(list(over.index), round(float(x), 1), over.to_dict(), groups)):
+                st.rerun()
+    else:
+        over = part_pct[part_pct > x].sort_values(ascending=False)
+        st.markdown(f"**Participants missing more than {x:.1f}% of the selected features: "
+                    f"{len(over)} of {len(part_pct)}**")
+        if len(over):
+            _e = [e for e in (part_entries or []) if e["row"] in set(over.index)]
+            st.dataframe(pd.DataFrame(_e)[["Participant", "Batch", "Features missing (%)"]]
+                         .sort_values("Features missing (%)", ascending=False),
+                         hide_index=True, use_container_width=True, height=min(38 + 35 * len(_e), 300))
+            if st.button(f"Exclude these {len(over)} participant(s) (missing more than {x:.1f}% of the features)",
+                         type="primary", on_click=_record_participant_exclusion,
+                         args=(_e, round(float(x), 1), key_of_data)):
+                st.rerun()
+    st.caption("Excluding records the share as the threshold; the report and the Methods paragraph state it. "
+               "Exclusions can be undone in the exclusion steps below.")
+    if st.button(f"Only use {x:.1f}% as the threshold for the counts"):
+        st.session_state["miss_assess_thr"] = round(float(x), 1)
+        st.rerun()
+
+
 # Participant ID column, guessed from common names (participant_id, subID,
 # subject, RecordID, ...) among columns whose values are all different.
 _ID_NAMES = ["participantid", "participant", "subjectid", "subject", "subid", "subjid", "sub",
@@ -328,6 +398,37 @@ else:
         f"ComBat model: batch = **{site_col}** only, no covariates. "
         "Batch effects will be removed but no biological variability is explicitly preserved."
     )
+
+# Every value of each model variable with its count, to spot odd codes (for
+# example -999, 999 or "Unknown") before they enter the model.
+if st.toggle("Show the values of each model variable", value=True, key="show_model_values"):
+    _roles = [(site_col, "batch")] + [(c, "continuous covariate") for c in continuous_covariates] \
+             + [(c, "categorical covariate") for c in categorical_covariates]
+    st.caption("Each value with the number of participants who have it; check for codes that are not "
+               "real values, such as -999, 999 or \"Unknown\", and for misspelled categories.")
+    _vcols = st.columns(min(3, len(_roles)))
+    for _i, (_c, _role) in enumerate(_roles):
+        _s = df[_c]
+        _vc = _s.value_counts(dropna=True)
+        if pd.api.types.is_numeric_dtype(_s):
+            _vc = _vc.sort_index()
+            _vals = [f"{v:g}" for v in _vc.index]
+            _desc = (f"{_s.nunique()} distinct values, {_s.min():g} to {_s.max():g}"
+                     if _s.notna().any() else "no values")
+        else:
+            _order = natural_sorted(_vc.index.astype(str))
+            _vc.index = _vc.index.astype(str)
+            _vc = _vc[_order]
+            _vals = list(_vc.index)
+            _desc = f"{_s.nunique()} distinct values"
+        _tab = pd.DataFrame({"Value": _vals, "Participants": _vc.values})
+        if _s.isna().any():
+            _tab = pd.concat([_tab, pd.DataFrame({"Value": ["(missing)"], "Participants": [int(_s.isna().sum())]})],
+                             ignore_index=True)
+        with _vcols[_i % len(_vcols)]:
+            st.markdown(f"**{_c}** ({_role}): {_desc}")
+            st.dataframe(_tab, hide_index=True, use_container_width=True,
+                         height=min(38 + 35 * len(_tab), 250))
 
 
 def _by_batch_table(data, batch_col, variables):
@@ -846,10 +947,10 @@ if _show_miss_tools:
         )
         _mm = pd.DataFrame({
             "Model variable": _model_vars,
-            "Missing (n)":    _model_miss.values,
-            "Missing (%)":    (100 * _model_miss / len(df)).round(1).values,
+            "Participants missing (n)": _model_miss.values,
+            f"Participants missing (% of {len(df)})": (100 * _model_miss / len(df)).round(1).values,
         })
-        _mm = _mm[_mm["Missing (n)"] > 0].sort_values("Missing (n)", ascending=False)
+        _mm = _mm[_mm["Participants missing (n)"] > 0].sort_values("Participants missing (n)", ascending=False)
         st.dataframe(_mm, use_container_width=True, hide_index=True)
 
         # Which participants these are, on request; the ID column is guessed from its name.
@@ -903,6 +1004,47 @@ if _show_miss_tools:
             feat_isna = df[feats_l].isna()
             feat_pct = 100 * feat_isna.mean()
             part_pct = 100 * feat_isna.mean(axis=1)
+            # ── features by share missing: the curve, then the threshold under it ──
+            st.markdown("**How many features and participants are above each share missing**")
+            st.caption("The first curve gives, for every share x, the features with more than x% of the "
+                       "participants missing" + (", one line per modality group as defined above"
+                                                 if modality_groups else
+                       " (define the groups under \"Multiple imaging modalities or measure types\" above "
+                       "to get one line per modality or measure type)")
+                       + "; the second, the participants missing more than x% of the selected features. "
+                       "Click a point on a line to see who or what is above that share, and to exclude them "
+                       "with that share as the threshold.")
+            _a_thr_now = float(st.session_state.get("miss_assess_thr", 10.0) or 0.0)
+            _ck = st.session_state.get("_miss_curve_n", 0)
+            _pid_c = st.session_state.get("id_col") or _guess_id_col(df, exclude=set(_model_vars) | set(feats_l))
+            _clicked = None
+            _ev_f = st.plotly_chart(plot_missing_curve(feat_pct, measure_of or None, _a_thr_now),
+                                    use_container_width=True, on_select="rerun", selection_mode="points",
+                                    key=f"miss_curve_f_{_ck}")
+            _pts = (_ev_f or {}).get("selection", {}).get("points", []) if _ev_f else []
+            if _pts:
+                _clicked = ("features", float(_pts[0]["x"]))
+            _ev_p = st.plotly_chart(plot_missing_curve(part_pct, None, _a_thr_now, kind="participants"),
+                                    use_container_width=True, on_select="rerun", selection_mode="points",
+                                    key=f"miss_curve_p_{_ck}")
+            _pts = (_ev_p or {}).get("selection", {}).get("points", []) if _ev_p else []
+            if _pts:
+                _clicked = ("participants", float(_pts[0]["x"]))
+            if _clicked:
+                # new chart keys clear the click, so the window opens once per click
+                st.session_state["_miss_curve_n"] = _ck + 1
+                _entries = None
+                if _clicked[0] == "participants":
+                    _rows_over = part_pct[part_pct > _clicked[1]].index
+                    _entries = [{"data_key": data_key, "row": r,
+                                 "Participant": (str(df.at[r, _pid_c]) if _pid_c in df.columns
+                                                 else f"Row {df.index.get_loc(r) + 1}"),
+                                 "Batch": "—" if pd.isna(df.at[r, site_col]) else str(df.at[r, site_col]),
+                                 "Features missing (%)": round(float(part_pct[r]), 1)}
+                                for r in _rows_over if r not in set(_excl_part_rows)]
+                _missing_at_share(_clicked[1], feat_pct, part_pct, measure_of, kind=_clicked[0],
+                                  part_entries=_entries, groups=modality_groups, key_of_data=data_key)
+
             thr_c = st.columns([1, 3])[0]
             with thr_c:
                 a_thr = st.number_input("Threshold for the counts below (%)", min_value=0.0, max_value=100.0,
@@ -915,14 +1057,8 @@ if _show_miss_tools:
             )
 
             # ── per modality group (only when the groups are defined) ──
-            st.markdown("**Missing values per modality group**")
-            st.caption("The curve gives, for every share x, how many features have more than x% of the "
-                       "participants missing" + (", one line per modality group as defined above."
-                                                 if modality_groups else
-                       ". Define the groups under \"Multiple imaging modalities or measure types\" above "
-                       "to get one line per modality or measure type."))
-            st.plotly_chart(plot_missing_curve(feat_pct, measure_of or None, a_thr), use_container_width=True)
             if modality_groups:
+                st.markdown("**Missing values per modality group**")
                 st.caption("Each bar is one modality group as defined above; its features are counted by "
                            "the share of participants missing them.")
                 st.plotly_chart(plot_missing_by_measure(feat_pct, measure_of), use_container_width=True)
@@ -947,12 +1083,12 @@ if _show_miss_tools:
             miss_df = pd.DataFrame({
                 "Variable":      assess_cols,
                 "Modality group": [_grp_of(c) for c in assess_cols],
-                "Missing (n)":   miss_n.values,
-                "Missing (%)":   miss_pct.round(1).values,
-                "Present (n)":   (n_total - miss_n.values),
+                "Participants missing (n)": miss_n.values,
+                f"Participants missing (% of {n_total})": miss_pct.round(1).values,
+                "Participants with a value (n)": (n_total - miss_n.values),
             })
-            miss_df = miss_df[miss_df["Missing (n)"] > 0].sort_values(
-                "Missing (n)", ascending=False).reset_index(drop=True)
+            miss_df = miss_df[miss_df["Participants missing (n)"] > 0].sort_values(
+                "Participants missing (n)", ascending=False).reset_index(drop=True)
             if not modality_groups:
                 miss_df = miss_df.drop(columns="Modality group")
 
@@ -966,11 +1102,36 @@ if _show_miss_tools:
                 )
                 st.dataframe(miss_df, use_container_width=True, hide_index=True)
 
+            # ── per batch ──
+            st.markdown("**Missing values per batch**")
+            _has_batch = df[site_col].notna()
+            _pid = st.session_state.get("id_col") or _guess_id_col(df, exclude=set(_model_vars) | set(feats_l))
+            _bt = []
+            for b in natural_sorted(df.loc[_has_batch, site_col].astype(str).unique()):
+                _in = _has_batch & (df[site_col].astype(str) == b)
+                _na_b, _pp_b = feat_isna[_in], part_pct[_in]
+                _row = {"Batch": b, "Participants (n)": int(_in.sum()),
+                        "Participants missing any feature (n)": int((_pp_b > 0).sum()),
+                        "Participants missing any feature (% of the batch)": round(100 * float((_pp_b > 0).mean()), 1),
+                        f"Participants missing more than {a_thr:g}% of the features (n)": int((_pp_b > a_thr).sum()),
+                        "Feature values missing (% of the batch's values)": round(100 * float(_na_b.values.mean()), 2),
+                        "Features with any missing value in the batch (n)": int(_na_b.any().sum())}
+                for m in (measures if modality_groups else []):
+                    cols_m = [c for c in feats_l if measure_of[c] == m]
+                    _row[f"{m}: values missing (%)"] = round(100 * float(_na_b[cols_m].values.mean()), 2)
+                _bt.append(_row)
+            st.dataframe(pd.DataFrame(_bt), use_container_width=True, hide_index=True)
+            if (~_has_batch).any():
+                st.caption(f"{int((~_has_batch).sum())} participant(s) without a batch value are not in this table.")
+            st.caption("Each point is one participant: the share of the selected features they miss, by batch. "
+                       "Points above the dotted line miss more than the threshold above.")
+            st.plotly_chart(plot_missing_per_participant(
+                part_pct[_has_batch], df.loc[_has_batch, site_col],
+                df.loc[_has_batch, _pid] if _pid in df.columns else None, a_thr, len(feats_l)),
+                use_container_width=True)
+
             # ── per participant ──
             st.markdown("**Missing values per participant**")
-            _has_batch = df[site_col].notna()
-            st.plotly_chart(plot_missing_by_batch(part_pct[_has_batch], df.loc[_has_batch, site_col]),
-                            use_container_width=True)
             _pid = st.session_state.get("id_col") or _guess_id_col(df, exclude=set(_model_vars) | set(feats_l))
             _rows = part_pct > 0
             _first = (df.loc[_rows, _pid].astype(str).values if _pid in df.columns
@@ -978,20 +1139,21 @@ if _show_miss_tools:
             ptab = pd.DataFrame({
                 (_pid if _pid in df.columns else "Row in the table"): _first,
                 "Batch": df.loc[_rows, site_col].astype(str).where(_has_batch[_rows], "—").values,
-                "Missing features (n)": feat_isna[_rows].sum(axis=1).values,
-                "Missing (%)": part_pct[_rows].round(1).values,
+                "Features missing (n)": feat_isna[_rows].sum(axis=1).values,
+                f"Features missing (% of the {len(feats_l)} selected)": part_pct[_rows].round(1).values,
             })
             if 1 < len(measures) <= 20:
                 for m in measures:
                     cols_m = [c for c in feats_l if measure_of[c] == m]
-                    ptab[f"{m} missing (%)"] = (100 * feat_isna.loc[_rows, cols_m].mean(axis=1)).round(1).values
-            ptab = ptab.sort_values("Missing (%)", ascending=False, kind="stable").reset_index(drop=True)
+                    ptab[f"{m}: features missing (% of {len(cols_m)})"] = (
+                        100 * feat_isna.loc[_rows, cols_m].mean(axis=1)).round(1).values
+            ptab = ptab.sort_values("Features missing (n)", ascending=False, kind="stable").reset_index(drop=True)
             if len(ptab) == 0:
                 st.caption("No participant misses a selected feature.")
             else:
                 st.caption(f"{len(ptab)} of {n_total} participants miss at least one selected feature; "
                            "most missing first." + ("" if 1 < len(measures) <= 20 or len(measures) == 1
-                                                    else " Per measure columns are shown for up to 20 measures."))
+                                                    else " Columns per modality group are shown for up to 20 groups."))
                 st.dataframe(ptab, use_container_width=True, hide_index=True,
                              height=min(38 + 35 * len(ptab), 400))
 
@@ -1013,19 +1175,7 @@ if _show_miss_tools:
     )
 
     def _exclude_high_missing_features(cols_to_drop, threshold, miss_pcts_dict=None):
-        drop = set(cols_to_drop)
-        st.session_state["sel_features"] = [
-            c for c in st.session_state.get("sel_features", []) if c not in drop
-        ]
-        prev = st.session_state.get("_excl_info", {"n": 0, "threshold": None})
-        st.session_state["_excl_info"] = {"n": prev["n"] + len(drop), "threshold": threshold}
-        prev_list = st.session_state.get("_excl_feat_list", [])
-        _grp_at_exclusion = {c: g for g, gcols in (modality_groups or {}).items() for c in gcols}
-        for feat in cols_to_drop:
-            pct_val = miss_pcts_dict.get(feat, float("nan")) if miss_pcts_dict else float("nan")
-            prev_list.append({"Feature": feat, "Modality group": _grp_at_exclusion.get(feat),
-                              "Missing (%)": round(float(pct_val), 1)})
-        st.session_state["_excl_feat_list"] = prev_list
+        _record_feature_exclusion(cols_to_drop, threshold, miss_pcts_dict or {}, modality_groups)
 
     def _undo_all_exclusions():
         restored = [d.get("Feature") for d in st.session_state.get("_excl_feat_list", []) if d.get("Feature")]
@@ -1041,7 +1191,7 @@ if _show_miss_tools:
     if _excluded_so_far:
         _ex_df = pd.DataFrame(_excluded_so_far)
         _ex_cols = ["Feature"] + (["Modality group"] if "Modality group" in _ex_df.columns
-                                  and _ex_df["Modality group"].notna().any() else []) + ["Missing (%)"]
+                                  and _ex_df["Modality group"].notna().any() else []) + ["Participants missing (%)"]
         _ex_df = _ex_df[_ex_cols]
         st.markdown(f"**Excluded: {len(_ex_df)} feature(s)** (removed from the selection)")
         st.dataframe(_ex_df, use_container_width=True, hide_index=True)
@@ -1088,7 +1238,7 @@ if _show_miss_tools:
                 over_df = pd.DataFrame({"Variable": list(over.index)})
                 if modality_groups:
                     over_df["Modality group"] = [col_to_measure.get(c, "Not in a group") for c in over.index]
-                over_df["Missing (%)"] = over.values.round(1)
+                over_df["Participants missing (%)"] = over.values.round(1)
                 st.dataframe(over_df, use_container_width=True, hide_index=True)
 
             st.button(
@@ -1113,13 +1263,11 @@ if _show_miss_tools:
         return f"Row {df.index.get_loc(r) + 1}"
 
     def _exclude_participants(rows, threshold, pcts):
-        prev = [d for d in st.session_state.get("_excl_part_list", []) if d.get("data_key") == data_key]
-        for r in rows:
-            prev.append({"data_key": data_key, "row": r, "Participant": _part_label(r),
-                         "Batch": "—" if pd.isna(df.at[r, site_col]) else str(df.at[r, site_col]),
-                         "Missing (%)": round(float(pcts[r]), 1)})
-        st.session_state["_excl_part_list"] = prev
-        st.session_state["_excl_part_info"] = {"n": len(prev), "threshold": threshold}
+        _record_participant_exclusion(
+            [{"data_key": data_key, "row": r, "Participant": _part_label(r),
+              "Batch": "—" if pd.isna(df.at[r, site_col]) else str(df.at[r, site_col]),
+              "Features missing (%)": round(float(pcts[r]), 1)} for r in rows],
+            threshold, data_key)
 
     def _undo_participant_exclusions():
         st.session_state["_excl_part_list"] = []
@@ -1128,7 +1276,7 @@ if _show_miss_tools:
     _excl_parts_now = [d for d in st.session_state.get("_excl_part_list", []) if d.get("data_key") == data_key]
     if _excl_parts_now:
         st.markdown(f"**Excluded: {len(_excl_parts_now)} participant(s)** (left out of harmonization)")
-        _xp = pd.DataFrame(_excl_parts_now)[["Participant", "Batch", "Missing (%)"]]
+        _xp = pd.DataFrame(_excl_parts_now)[["Participant", "Batch", "Features missing (%)"]]
         st.dataframe(_xp, use_container_width=True, hide_index=True, height=min(38 + 35 * len(_xp), 300))
         st.button("Undo all participant exclusions", on_click=_undo_participant_exclusions)
 
@@ -1153,13 +1301,13 @@ if _show_miss_tools:
                 st.dataframe(pd.DataFrame({
                     "Participant": [_part_label(r) for r in _over_p.index],
                     "Batch": ["—" if pd.isna(df.at[r, site_col]) else str(df.at[r, site_col]) for r in _over_p.index],
-                    "Missing (%)": _over_p.values.round(1),
+                    "Features missing (%)": _over_p.values.round(1),
                 }), use_container_width=True, hide_index=True)
             st.button(f"Exclude these {len(_over_p)} participant(s)", on_click=_exclude_participants,
                       args=(list(_over_p.index), part_thr, _over_p.to_dict()))
 
     # ── How missing feature values are handled ──────────────────────────────────
-    st.markdown("**How missing feature values are handled**")
+    st.markdown("**How remaining missing values are handled**")
     _feat_na = df[list(feature_cols)].isna()
     if bool(_feat_na.any().any()):
         _cov_ok = df[[site_col] + continuous_covariates + categorical_covariates].notna().all(axis=1)
@@ -1176,7 +1324,7 @@ if _show_miss_tools:
         )
 
     st.caption(
-        "How missing feature values are handled depends on Empirical Bayes. If Empirical Bayes is not used, "
+        "How the remaining missing values are handled depends on Empirical Bayes. If Empirical Bayes is not used, "
         "missing values are less of a problem, because each feature is harmonized on its own available data, "
         "so no imputation or pattern grouping is needed (this is the per-feature option). If Empirical Bayes "
         "is used, which is the default, the tool imputes missing feature values with each feature's median "
@@ -1189,7 +1337,7 @@ if _show_miss_tools:
         "Complete case (drop participants missing any feature in a run)": "complete",
         "Impute missing with median, keep Empirical Bayes":              "impute",
         "Group features by shared missing pattern, keep Empirical Bayes": "pattern",
-        "Per-feature, feature-wise (no Empirical Bayes)":                "per_feature",
+        "Do not use Empirical Bayes (each feature on its own)":          "per_feature",
     }
     missing_mode_label = st.selectbox(
         "Missing-value handling", list(_MISS_OPTS.keys()), index=1, key="missing_mode",
@@ -1202,15 +1350,15 @@ if _show_miss_tools:
              "are missing in the same participants, keeping Empirical Bayes within "
              "each group; it suits scattered missing data. A feature whose missing "
              "pattern no other feature shares is harmonized on its own, without "
-             "Empirical Bayes, which needs at least two features. Per-feature "
-             "harmonizes each feature on its own complete cases, without Empirical "
-             "Bayes.",
+             "Empirical Bayes, which needs at least two features. Not using Empirical "
+             "Bayes harmonizes each feature on its own complete cases; Step 4 then "
+             "runs EB=FALSE only.",
     )
     missing_mode = _MISS_OPTS[missing_mode_label]
     per_feature = (missing_mode == "per_feature")
 
     st.markdown("**What each method does**")
-    st.table(pd.DataFrame([
+    _methods = pd.DataFrame([
         {"Method": "Complete case",
          "What it does": "Drops any participant missing any feature in the run",
          "Empirical Bayes": "Yes",
@@ -1223,11 +1371,14 @@ if _show_miss_tools:
          "What it does": "Harmonizes together the features missing in the same participants, one Empirical Bayes run per pattern; suits scattered missing data",
          "Empirical Bayes": "Yes, except for a feature whose missing pattern no other feature shares",
          "Participants used": "Each participant, for the features they have"},
-        {"Method": "Per-feature",
-         "What it does": "Harmonizes each feature on its own complete cases, one feature at a time",
+        {"Method": "Do not use Empirical Bayes",
+         "What it does": "Harmonizes each feature on its own complete cases, one feature at a time; Step 4 then runs EB=FALSE only",
          "Empirical Bayes": "No",
          "Participants used": "Each participant, for the features they have"},
-    ]))
+    ])
+    # a plain table without row numbers, with the text wrapped
+    st.markdown("| " + " | ".join(_methods.columns) + " |\n|" + "---|" * len(_methods.columns) + "\n"
+                + "\n".join("| " + " | ".join(str(v) for v in r) + " |" for r in _methods.itertuples(index=False)))
     # How many participants remain under the chosen handling (after the participants
     # excluded by missing percentage)
     _work = df.drop(index=_excl_part_rows)
@@ -1409,12 +1560,13 @@ eb_options = {
     "Compare EB=TRUE vs EB=FALSE":                ("compare",   True,  True),
 }
 eb_label = st.radio("ComBat configuration", list(eb_options.keys()),
-                    horizontal=True, index=0, disabled=per_feature)
+                    horizontal=True, index=1 if per_feature else 0, disabled=per_feature)
 eb_mode, run_ebt, run_ebf = eb_options[eb_label]
 if per_feature:
-    st.caption("Per-feature mode runs feature-wise, so the Empirical Bayes "
-               "setting above does not apply.")
-    run_ebt, run_ebf = False, True
+    st.caption("You chose \"Do not use Empirical Bayes\" for the remaining missing values, so ComBat "
+               "runs as EB=FALSE only, each feature on its own; the report shows EB=FALSE results and "
+               "the download is the EB=FALSE table.")
+    eb_mode, run_ebt, run_ebf = "ebf_only", False, True
 
 if st.button("▶  Run Harmonization", type="primary", use_container_width=True):
 
@@ -1663,7 +1815,7 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
                 for g, gc in (modality_groups or {}).items() if gc
             ],
         }
-        excl_part_list = [{k: d[k] for k in ("Participant", "Batch", "Missing (%)")}
+        excl_part_list = [{k: d[k] for k in ("Participant", "Batch", "Features missing (%)")}
                           for d in st.session_state.get("_excl_part_list", [])
                           if d.get("data_key") == data_key and d.get("row") in df.index]
         # missing-data documentation for the report
@@ -1744,6 +1896,9 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
             include_extra_assoc=(include_extra_assoc and len(extra_assoc_df) > 0),
             assoc_cont_vars=assoc_cont_vars,
             assoc_cat_vars=assoc_cat_vars,
+            data_prep_text=data_prep_sentence(
+                missing_overview, st.session_state.get("_excl_info"),
+                st.session_state.get("_excl_part_info") if _excl_part_rows else None, missing_mode),
         )
 
         progress.progress(100, "Done.")

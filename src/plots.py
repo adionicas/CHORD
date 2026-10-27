@@ -1279,7 +1279,7 @@ def plot_missing_by_batch(participant_pct: pd.Series, batch: pd.Series) -> go.Fi
 
 
 def plot_missing_curve(feature_pct: pd.Series, measure_of: dict | None = None,
-                       threshold: float | None = None) -> go.Figure:
+                       threshold: float | None = None, kind: str = "features") -> go.Figure:
     """
     For every share x from 0 to 100%, the features with more than x% of the
     participants missing: one line per modality group as defined by the user,
@@ -1287,11 +1287,15 @@ def plot_missing_curve(feature_pct: pd.Series, measure_of: dict | None = None,
     is the share of the group's features, so groups of different sizes compare;
     the hover gives the count.
     """
-    if measure_of:
+    # kind "participants": feature_pct holds each participant's share of the
+    # selected features missing, and the line counts participants
+    unit = "features" if kind == "features" else "participants"
+    if measure_of and kind == "features":
         groups = list(dict.fromkeys(measure_of[c] for c in feature_pct.index))
         members = {g: [c for c in feature_pct.index if measure_of[c] == g] for g in groups}
     else:
-        groups, members = ["All selected features"], {"All selected features": list(feature_pct.index)}
+        g0 = "All selected features" if kind == "features" else "All participants"
+        groups, members = [g0], {g0: list(feature_pct.index)}
     top = float(feature_pct.max()) if len(feature_pct) else 0.0
     x_max = min(100.0, max(5.0, top * 1.1 + 1))
     xs = np.unique(np.concatenate([np.linspace(0, x_max, 401), feature_pct.values]))
@@ -1302,20 +1306,68 @@ def plot_missing_curve(feature_pct: pd.Series, measure_of: dict | None = None,
         p = np.sort(feature_pct[members[g]].values)
         n_over = len(p) - np.searchsorted(p, xs, side="right")      # features with more than x% missing
         fig.add_trace(go.Scatter(
-            x=xs, y=100 * n_over / len(p), mode="lines", line_shape="hv", name=f"{g} (n={len(p)})",
-            line=dict(color=palette[i % len(palette)], width=2.2),
+            x=xs, y=100 * n_over / len(p), mode="lines+markers", line_shape="hv", name=f"{g} (n={len(p)})",
+            line=dict(color=palette[i % len(palette)] if kind == "features" else "#2A6EBB", width=2.2),
+            marker=dict(size=7, opacity=0),          # invisible points, so a click on the line selects one
             customdata=np.stack([n_over, np.full(len(xs), len(p))], axis=1),
             hovertemplate=(f"{g}<br>more than %{{x:.1f}}% missing: %{{customdata[0]}} of "
-                           f"%{{customdata[1]}} features<extra></extra>"),
+                           f"%{{customdata[1]}} {unit}<br>click to see them or exclude them<extra></extra>"),
         ))
     if threshold is not None and threshold <= x_max:
         fig.add_vline(x=threshold, line_dash="dot", line_color=GREY, line_width=1.5,
                       annotation_text=f"{threshold:g}%", annotation_position="top right")
+    if kind == "features":
+        title, x_title, y_title = ("Features with more than x% of participants missing",
+                                   "Share of participants missing (x, %)", "Features of the group (%)")
+    else:
+        title, x_title, y_title = ("Participants missing more than x% of the selected features",
+                                   "Share of the selected features missing (x, %)", "Participants (%)")
     fig.update_layout(
-        title="Features with more than x% of participants missing", **WHITE_BG, height=430,
+        title=title, **WHITE_BG, height=430,
         margin=dict(l=10, r=30, t=60, b=120), legend=dict(BOTTOM_LEGEND),
-        xaxis=dict(title="Share of participants missing (x, %)", range=[0, x_max],
+        xaxis=dict(title=x_title, range=[0, x_max], showgrid=True, gridcolor="#EEEEEE"),
+        yaxis=dict(title=y_title, range=[0, 102], showgrid=True, gridcolor="#EEEEEE"),
+    )
+    return fig
+
+
+def plot_missing_per_participant(participant_pct: pd.Series, batch: pd.Series, ids: pd.Series | None,
+                                 threshold: float, n_features: int) -> go.Figure:
+    """
+    One point per participant: the share of the selected features they miss,
+    by batch (box behind the points, jitter with seed 42); points above the
+    threshold in red, a dotted line at the threshold.
+    """
+    b = batch.astype(str)
+    order = natural_sorted(b.unique())
+    pos = {s: i for i, s in enumerate(order)}
+    rng = np.random.default_rng(42)
+    fig = go.Figure()
+    for s in order:
+        v = participant_pct[b == s]
+        fig.add_trace(go.Box(x=[pos[s]] * len(v), y=v.values, boxpoints=False, line_color="#555555",
+                             line_width=1.0, fillcolor="rgba(200,200,200,0.15)", width=0.5,
+                             showlegend=False, hoverinfo="skip"))
+    lab = ids.astype(str) if ids is not None else pd.Series(participant_pct.index.astype(str), index=participant_pct.index)
+    for name, mask, color in ((f"At or below {threshold:g}%", participant_pct <= threshold, "#2A6EBB"),
+                              (f"More than {threshold:g}%", participant_pct > threshold, "#E34A33")):
+        if not mask.any():
+            continue
+        xs = [pos[s] + j for s, j in zip(b[mask], rng.uniform(-0.18, 0.18, int(mask.sum())))]
+        fig.add_trace(go.Scatter(
+            x=xs, y=participant_pct[mask].values, mode="markers", name=name,
+            marker=dict(color=color, size=5, opacity=0.75),
+            customdata=np.stack([lab[mask].values, b[mask].values], axis=1),
+            hovertemplate="%{customdata[0]}<br>Batch %{customdata[1]}<br>Features missing: %{y:.1f}%<extra></extra>"))
+    fig.add_hline(y=threshold, line_dash="dot", line_color=GREY, line_width=1.5)
+    n_by = b.value_counts()
+    fig.update_layout(
+        title="Share of the selected features each participant misses, by batch", **WHITE_BG, height=470,
+        margin=dict(l=10, r=30, t=60, b=130), legend=dict(BOTTOM_LEGEND),
+        xaxis=dict(tickmode="array", tickvals=list(range(len(order))),
+                   ticktext=[f"{s}<br>(n={int(n_by[s])})" for s in order], tickangle=0),
+        yaxis=dict(title=f"Features missing (% of the {n_features} selected)",
+                   range=[-2, max(5.0, float(participant_pct.max()) * 1.08 if len(participant_pct) else 5.0)],
                    showgrid=True, gridcolor="#EEEEEE"),
-        yaxis=dict(title="Features of the group (%)", range=[0, 102], showgrid=True, gridcolor="#EEEEEE"),
     )
     return fig
