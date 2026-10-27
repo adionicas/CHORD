@@ -10,6 +10,7 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
+from plotly.subplots import make_subplots
 
 from src.naming    import measure_keys, natural_sorted
 from src.harmonize import (run_combat, run_combat_grouped, run_combat_per_feature,
@@ -551,17 +552,49 @@ if st.toggle("Check the batch and the covariates", value=True, key="show_demo_ta
                 _h1, _h2 = st.columns([3, 2])
                 with _h1:
                     if _by_b:
-                        _f = go.Figure()
+                        # boxes per batch, and under them each batch's present and missing values
+                        _f = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3],
+                                           vertical_spacing=0.12)
                         for _bb in _border:
                             _yy = _bdf.loc[_bdf["_batch"] == _bb, _c].dropna()
-                            _f.add_trace(go.Box(y=_yy, name=str(_bb), boxpoints="outliers", marker_color="#2A6EBB",
-                                                line_color="#2A6EBB", showlegend=False))
-                        _f.update_layout(height=300, yaxis_title=_c, xaxis_title="Batch",
-                                         xaxis=dict(type="category"), **_plot_layout)
+                            _f.add_trace(go.Box(x=[str(_bb)] * len(_yy), y=_yy, name=str(_bb), boxpoints="outliers",
+                                                marker_color="#2A6EBB", line_color="#2A6EBB", showlegend=False),
+                                         row=1, col=1)
+                        _mb = [100 * float(_bdf.loc[_bdf["_batch"] == _bb, _c].isna().mean()) for _bb in _border]
+                        _f.add_trace(go.Bar(x=[str(b) for b in _border], y=[100 - m for m in _mb], name="Present",
+                                            marker_color="#DDDDDD", hovertemplate="Batch %{x}: %{y:.1f}% present<extra></extra>"),
+                                     row=2, col=1)
+                        _f.add_trace(go.Bar(x=[str(b) for b in _border], y=_mb, name="Missing", marker_color="#222222",
+                                            hovertemplate="Batch %{x}: %{y:.1f}% missing<extra></extra>"),
+                                     row=2, col=1)
+                        _f.add_trace(go.Scatter(x=[str(b) for b in _border], y=[102] * len(_border), mode="text",
+                                                text=[f"{m:.1f}% missing" if m > 0 else "" for m in _mb],
+                                                textposition="top center", showlegend=False, hoverinfo="skip"),
+                                     row=2, col=1)
+                        _f.update_layout(height=460, barmode="stack", legend=dict(orientation="h", y=-0.18),
+                                         **{**_plot_layout, "margin": dict(l=70, r=10, t=10, b=40)})
+                        _f.update_yaxes(title_text=_c, row=1, col=1)
+                        _f.update_yaxes(title_text="% of batch", range=[0, 125], tickvals=[0, 50, 100], row=2, col=1)
+                        _f.update_xaxes(type="category", title_text="Batch", row=2, col=1)
                     else:
-                        _f = go.Figure(go.Histogram(x=_v, nbinsx=40, marker_color="#2A6EBB"))
-                        _f.update_layout(height=300, bargap=0.05, xaxis_title=_c, yaxis_title="Participants",
-                                         **_plot_layout)
+                        # the distribution, and next to it how many values are present and missing
+                        _f = make_subplots(rows=1, cols=2, column_widths=[0.82, 0.18], horizontal_spacing=0.06)
+                        _f.add_trace(go.Histogram(x=_v, nbinsx=40, marker_color="#2A6EBB", showlegend=False,
+                                                  hovertemplate=f"{_c} %{{x}}: %{{y}} participants<extra></extra>"),
+                                     row=1, col=1)
+                        _np_ = int(_s.notna().sum())
+                        _f.add_trace(go.Bar(x=["Present", "Missing"], y=[_np_, _n_miss],
+                                            marker_color=["#2A6EBB", "#222222"], showlegend=False,
+                                            text=[f"{_np_} ({100 * _np_ / len(_s):.1f}%)",
+                                                  f"{_n_miss} ({100 * _n_miss / len(_s):.1f}%)"],
+                                            textposition="outside", cliponaxis=False,
+                                            hovertemplate="%{x}: %{y} participants<extra></extra>"),
+                                     row=1, col=2)
+                        _f.update_layout(height=300, bargap=0.05,
+                                         **{**_plot_layout, "margin": dict(l=70, r=10, t=10, b=40)})
+                        _f.update_xaxes(title_text=_c, row=1, col=1)
+                        _f.update_yaxes(title_text="Participants", row=1, col=1)
+                        _f.update_yaxes(range=[0, len(_s) * 1.15], row=1, col=2)
                     st.plotly_chart(_f, use_container_width=True)
                 with _h2:
                     _srt = np.sort(_v.unique())
@@ -1036,7 +1069,7 @@ else:
 if _show_miss_tools:
     st.markdown("**Missing value assessment (optional)**")
     st.caption(
-        "This section is also useful for cleaning the data in general: it shows which participants "
+        "This section shows which participants "
         "and features have missing values, so you can spot problems in the table (for example a "
         "processing step that failed, a measure missing for a whole site, or participants with almost "
         "no data) and decide what to fix or exclude before harmonizing. For harmonization itself, "
