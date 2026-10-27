@@ -11,6 +11,7 @@ import plotly.express as px
 from plotly.subplots import make_subplots
 import pandas as pd
 import numpy as np
+from src.naming import natural_sorted
 
 BLUE   = "#2A6EBB"
 ORANGE = "#EB6400"
@@ -57,7 +58,7 @@ def plot_site_deviation(
     fig = make_subplots(rows=1, cols=n_panels, subplot_titles=[d[1] for d in datasets],
                         shared_yaxes=True)
 
-    sites    = sorted(dev_before["site"].unique())
+    sites    = natural_sorted(dev_before["site"].unique())
     site_pos = {s: i for i, s in enumerate(sites)}
     n_sites  = len(sites)
     # Use numbered "Batch N" labels plus a key when there are many batches OR when
@@ -503,7 +504,7 @@ def plot_icc_by_site(
     titles   = [d[1] for d in datasets]
     fig = make_subplots(rows=1, cols=n_panels, subplot_titles=titles, shared_yaxes=True)
 
-    sites    = sorted(set().union(*[set(d[0]["site"].unique()) for d in datasets if len(d[0]) > 0]))
+    sites    = natural_sorted(set().union(*[set(d[0]["site"].unique()) for d in datasets if len(d[0]) > 0]))
     site_pos = {s: i for i, s in enumerate(sites)}
 
     # When there are many sites, long batch labels overlap. Above a threshold we
@@ -636,7 +637,7 @@ def plot_spearman_by_site(
     fig = make_subplots(rows=1, cols=n_panels, subplot_titles=[d[1] for d in datasets],
                         shared_yaxes=True)
 
-    sites = sorted(set().union(*[set(d[0]["site"].unique()) for d in datasets if len(d[0]) > 0]))
+    sites = natural_sorted(set().union(*[set(d[0]["site"].unique()) for d in datasets if len(d[0]) > 0]))
     site_palette_local = px.colors.qualitative.Safe[:len(sites)]
     site_color = dict(zip(sites, site_palette_local))
 
@@ -1063,7 +1064,8 @@ def plot_data_matrix(
         if not pd.api.types.is_numeric_dtype(d[c]):
             uniq = sorted(d[c].dropna().astype(str).unique())
             d[c] = d[c].astype(str).map({v: i for i, v in enumerate(uniq)}).where(d[c].notna())
-    d = d.sort_values(site_col, kind="stable").reset_index(drop=True)
+    _order = {s: i for i, s in enumerate(natural_sorted(d[site_col].astype(str).unique()))}
+    d = d.iloc[d[site_col].astype(str).map(_order).argsort(kind="stable")].reset_index(drop=True)
     sites = d[site_col].astype(str).to_numpy()
     site_order = list(dict.fromkeys(sites))
     site_n = {s: int((sites == s).sum()) for s in site_order}
@@ -1122,7 +1124,7 @@ def plot_data_matrix(
     # batch strip
     block_site = [sites[a] for a, _ in row_blocks]
     palette = px.colors.qualitative.Safe
-    color_of = {s: palette[i % len(palette)] for i, s in enumerate(sorted(site_order))}
+    color_of = {s: palette[i % len(palette)] for i, s in enumerate(natural_sorted(site_order))}
     n_s = len(site_order)
     strip_cs = []
     for i, s in enumerate(site_order):

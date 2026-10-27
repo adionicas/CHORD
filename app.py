@@ -9,7 +9,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 
-from src.naming    import measure_keys
+from src.naming    import measure_keys, natural_sorted
 from src.harmonize import (run_combat, run_combat_grouped, run_combat_per_feature,
                            run_combat_by_missing_pattern, run_combat_with_imputation,
                            missing_pattern_groups)
@@ -193,7 +193,37 @@ def _col_selector(label, all_cols, default, key):
         return None
     return sel
 
+# Participant ID column, guessed from common names (participant_id, subID,
+# subject, RecordID, ...) among columns whose values are all different.
+_ID_NAMES = ["participantid", "participant", "subjectid", "subject", "subid", "subjid", "sub",
+             "srcsubjectid", "recordid", "scanid", "outputid", "id", "eid", "guid"]
+
+
+def _guess_id_col(data, exclude=()):
+    import re as _re_id
+    cands = [c for c in data.columns if c not in exclude]
+    norm = {c: _re_id.sub(r"[^a-z0-9]", "", str(c).lower()) for c in cands}
+
+    def all_different(c):
+        v = data[c].dropna()
+        return len(v) > 0 and v.nunique() == len(v)
+    for name in _ID_NAMES:
+        for c in cands:
+            if norm[c] == name and all_different(c):
+                return c
+    for c in cands:
+        if norm[c].endswith("id") and all_different(c):
+            return c
+    return None
+
+
 site_col = _col_selector("Site / Batch column", all_cols, default_site, "site")
+# A batch column of whole numbers with empty cells is read as decimals (1.0, 2.0, ...);
+# its labels are kept as the whole numbers they are.
+if site_col and pd.api.types.is_float_dtype(df[site_col]):
+    _b = df[site_col].dropna()
+    if len(_b) and (_b == _b.round()).all():
+        df[site_col] = df[site_col].map(lambda v: str(int(v)) if pd.notna(v) else np.nan)
 st.caption(
     "Use your study's batch column. If every site used a single scanner with no hardware or "
     "software changes, the site column can serve as the batch. If a site used more than one "
@@ -307,7 +337,7 @@ def _by_batch_table(data, batch_col, variables):
     """
     data = data[data[batch_col].notna()]
     rows = []
-    for label in sorted(data[batch_col].unique().astype(str)) + ["Overall"]:
+    for label in natural_sorted(data[batch_col].unique().astype(str)) + ["Overall"]:
         sub = data if label == "Overall" else data[data[batch_col].astype(str) == label]
         row = {"Batch": label, "N": len(sub)}
         for var in variables:
@@ -367,25 +397,53 @@ st.caption(f"{len(auto_features)} numeric columns are available.")
 
 # ── Range of feature columns (the main way to select) ──────────────────────
 st.markdown("**Choose the first and last feature column**")
-st.caption("Every column from the first to the last is selected. You can then remove "
-           "columns by keyword, or edit the list of selected features further down. "
-           "In the From and To boxes, type part of a name to find a column.")
-use_col_num = st.session_state.get("range_use_col_num", False)
+st.caption(
+    "Every column in the range is selected: from one column to another, or from one column to the "
+    "last column of the table (tick \"To the last column\"). Pick the columns by name, or by number "
+    "with \"Use column numbers instead of names\", for example from column 5 to the last column; "
+    "\"Show all column names with their numbers\" lists every column with its number. The name "
+    "lists hold only the columns that can be features (numeric, and not the batch or a covariate "
+    "chosen in Step 2); type part of a name in a box to find it. After choosing, you can remove "
+    "columns by keyword or edit the selected features further down."
+)
+use_col_num = st.checkbox("Use column numbers instead of names", value=False, key="range_use_col_num",
+                          help="Check this if column names are not informative enough to use as range boundaries")
+n_cols   = len(all_df_cols)
+last_col = all_df_cols[-1]
+
+
+def _to_last_tick():
+    """The "To the last column" tick under the To box (same widget in both modes)."""
+    ticked = st.checkbox("To the last column", key="range_to_last")
+    if ticked:
+        note = f"Last column: {last_col} (column {n_cols})"
+        if auto_features and last_col not in auto_features:
+            note += f"; it cannot be a feature, so the range ends at {auto_features[-1]}"
+        st.caption(note)
+    return ticked
+
 
 if not use_col_num:
     na_c1, na_c2 = st.columns(2)
     with na_c1:
         from_name = st.selectbox("From column", ["— select —"] + auto_features, key="range_from_name")
     with na_c2:
-        to_name   = st.selectbox("To column",   ["— select —"] + auto_features, key="range_to_name")
-    if from_name != "— select —" and to_name != "— select —":
-        i1, i2  = auto_features.index(from_name), auto_features.index(to_name)
+        if st.session_state.get("range_to_last", False):
+            to_name = None
+            st.selectbox("To column", [last_col], disabled=True, key="range_to_last_shown")
+        else:
+            to_name = st.selectbox("To column", ["— select —"] + auto_features, key="range_to_name")
+        to_last = _to_last_tick()
+    if from_name != "— select —" and (to_last or to_name != "— select —"):
+        i1 = auto_features.index(from_name)
+        i2 = len(auto_features) - 1 if to_last else auto_features.index(to_name)
         preview = auto_features[min(i1, i2):max(i1, i2) + 1]
+        bounds  = (from_name, "<last column>" if to_last else to_name)
         # Apply automatically whenever the two boundaries change. The change
         # check keeps later manual edits (or keyword exclusions) from being
         # overwritten on every rerun.
-        if st.session_state.get("_last_range_name") != (from_name, to_name):
-            st.session_state["_last_range_name"] = (from_name, to_name)
+        if st.session_state.get("_last_range_name") != bounds:
+            st.session_state["_last_range_name"] = bounds
             st.session_state["sel_features"] = preview
             st.rerun()
         st.caption(f"Range covers {len(preview)} columns: "
@@ -394,18 +452,25 @@ else:
     nb_c1, nb_c2 = st.columns(2)
     with nb_c1:
         from_num = st.number_input("From column №", min_value=1,
-                                    max_value=len(all_df_cols), value=1, step=1)
+                                    max_value=n_cols, value=1, step=1)
     with nb_c2:
-        to_num   = st.number_input("To column №",   min_value=1,
-                                    max_value=len(all_df_cols), value=len(all_df_cols), step=1)
+        if st.session_state.get("range_to_last", False):
+            to_num = n_cols
+            st.number_input("To column №", min_value=1, max_value=n_cols, value=n_cols, step=1,
+                            disabled=True, key="range_to_last_num_shown")
+        else:
+            to_num = st.number_input("To column №", min_value=1,
+                                     max_value=n_cols, value=n_cols, step=1)
+        to_last = _to_last_tick()
     range_cols = [c for c in all_df_cols[min(from_num, to_num) - 1:max(from_num, to_num)]
                   if c in auto_features]
     # Seed on first render so the default full range does not auto-select;
     # apply automatically only when the user changes a boundary.
+    bounds = (from_num, to_num, to_last)
     if "_last_range_num" not in st.session_state:
-        st.session_state["_last_range_num"] = (from_num, to_num)
-    elif st.session_state["_last_range_num"] != (from_num, to_num):
-        st.session_state["_last_range_num"] = (from_num, to_num)
+        st.session_state["_last_range_num"] = bounds
+    elif st.session_state["_last_range_num"] != bounds:
+        st.session_state["_last_range_num"] = bounds
         if range_cols:
             st.session_state["sel_features"] = range_cols
             st.rerun()
@@ -418,15 +483,12 @@ else:
 if st.toggle("Show all column names with their numbers", key="show_col_numbers"):
     find = st.text_input("Find a column", key="col_number_find",
                          placeholder="part of a column name, e.g. node100")
-    num_table = pd.DataFrame({"№": range(1, len(all_df_cols) + 1), "Column": all_df_cols})
+    num_table = pd.DataFrame({"№": range(1, n_cols + 1), "Column": all_df_cols})
     if find.strip():
         num_table = num_table[num_table["Column"].str.contains(find.strip(), case=False, regex=False)]
-    st.caption(f"{len(num_table)} of {len(all_df_cols)} columns shown.")
+    st.caption(f"{len(num_table)} of {n_cols} columns shown.")
     st.dataframe(num_table, hide_index=True, use_container_width=True, height=300,
                  column_config={"№": st.column_config.NumberColumn(width="small")})
-
-st.checkbox("Use column numbers instead of names", value=False, key="range_use_col_num",
-            help="Check this if column names are not informative enough to use as range boundaries")
 
 # ── Optional: exclude by keyword ───────────────────────────────────────────
 if st.checkbox("Exclude columns whose name contains a keyword", key="use_keyword_exclusion"):
@@ -499,7 +561,7 @@ else:
     feature_cols = list(st.session_state["sel_features"])
     st.markdown(f"**Currently selected: {n_sel} features** — review or edit below")
     st.caption(f"Too many to show one by one (more than {MAX_CHIPS}), so they are counted by "
-               "measure here. Remove or add features with the two boxes below.")
+               "measure here. To change the selection, tick \"Remove or add features one by one\".")
     _mk = measure_keys(feature_cols)
     _by_measure = pd.Series([_mk[c] for c in feature_cols]).value_counts(sort=False)
     st.dataframe(pd.DataFrame({"Measure": _by_measure.index, "Features": _by_measure.values}),
@@ -516,24 +578,25 @@ else:
         st.session_state["sel_features"] = [c for c in auto_features if c in add]
         st.session_state["sel_add_pick"] = []
 
-    rm_c1, rm_c2 = st.columns([4, 1])
-    with rm_c1:
-        st.multiselect("Remove features from the selection", options=feature_cols, key="sel_remove_pick",
-                       placeholder="type part of a name to find features to remove")
-    with rm_c2:
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.button("Remove", on_click=_remove_picked, use_container_width=True,
-                  disabled=not st.session_state.get("sel_remove_pick"))
-    not_sel = [c for c in auto_features if c not in set(feature_cols)]
-    if not_sel:
-        ad_c1, ad_c2 = st.columns([4, 1])
-        with ad_c1:
-            st.multiselect("Add features to the selection", options=not_sel, key="sel_add_pick",
-                           placeholder="type part of a name to find features to add")
-        with ad_c2:
+    if st.checkbox("Remove or add features one by one", key="edit_large_selection"):
+        rm_c1, rm_c2 = st.columns([4, 1])
+        with rm_c1:
+            st.multiselect("Remove features from the selection", options=feature_cols, key="sel_remove_pick",
+                           placeholder="type part of a name to find features to remove")
+        with rm_c2:
             st.markdown("<br>", unsafe_allow_html=True)
-            st.button("Add", on_click=_add_picked, use_container_width=True,
-                      disabled=not st.session_state.get("sel_add_pick"))
+            st.button("Remove", on_click=_remove_picked, use_container_width=True,
+                      disabled=not st.session_state.get("sel_remove_pick"))
+        not_sel = [c for c in auto_features if c not in set(feature_cols)]
+        if not_sel:
+            ad_c1, ad_c2 = st.columns([4, 1])
+            with ad_c1:
+                st.multiselect("Add features to the selection", options=not_sel, key="sel_add_pick",
+                               placeholder="type part of a name to find features to add")
+            with ad_c2:
+                st.markdown("<br>", unsafe_allow_html=True)
+                st.button("Add", on_click=_add_picked, use_container_width=True,
+                          disabled=not st.session_state.get("sel_add_pick"))
 
 if not feature_cols:
     st.info("No features selected yet. Choose the first and last feature column above, "
@@ -558,7 +621,7 @@ with st.expander(f"View all {len(feature_cols)} selected feature names in full")
                 grid[j].markdown(f"`{idx}.` {name}")
 
 sites = df[site_col].dropna().unique()
-st.info(f"Batches (n = {len(sites)}): **{', '.join(sorted(sites.astype(str)))}**")
+st.info(f"Batches (n = {len(sites)}): **{', '.join(natural_sorted(sites.astype(str)))}**")
 
 st.markdown("**Multiple imaging modalities or measure types (optional)**")
 
@@ -605,9 +668,9 @@ use_modality = st.checkbox(
 if use_modality:
     st.markdown(
         "Define one group per modality or measure type using a text token that "
-        "appears in that group's column names (for example a suffix such as "
-        "`meandepth_native` or `t1w_t2w_mean`, or a prefix such as `FA_`, which "
-        "selects the names that start with it). Enter one token per line. "
+        "appears in that group's column names, for example a prefix such as `FA_`, "
+        "`MD_` or `fMRI_`, which selects the names that start with it; any other "
+        "text selects the names that contain it. Enter one token per line. "
         "Each selected feature is assigned to the first group whose token it "
         "matches. A group should be one measure, not a brain region."
     )
@@ -619,7 +682,7 @@ if use_modality:
     tokens_text = st.text_area(
         "One token per line",
         key="modality_tokens_text",
-        placeholder="hull_junction_length_native\nmeandepth_native\nsurface_native\nopening",
+        placeholder="FA_\nMD_\nfMRI_",
         height=130,
     )
     tokens = [t.strip() for t in tokens_text.splitlines() if t.strip()]
@@ -780,6 +843,24 @@ if _show_miss_tools:
         })
         _mm = _mm[_mm["Missing (n)"] > 0].sort_values("Missing (n)", ascending=False)
         st.dataframe(_mm, use_container_width=True, hide_index=True)
+
+        # Which participants these are: shown straight away when a participant ID
+        # column can be recognised from its name, otherwise on request.
+        _id_guess = _guess_id_col(df, exclude=set(_model_vars) | set(feature_cols))
+        if _id_guess or st.toggle("Show which participants these are", key="show_missing_ids"):
+            _id_opts = [c for c in df.columns if c not in set(feature_cols)]
+            _id_col = st.selectbox(
+                "Participant ID column", _id_opts,
+                index=_id_opts.index(_id_guess) if _id_guess in _id_opts else 0, key="id_col",
+                help="Guessed from the column names; pick another column if this is not the participant ID.")
+            _inc = df[df[_model_vars].isna().any(axis=1)]
+            _ids = pd.DataFrame({
+                "Participant": _inc[_id_col].astype(str).values,
+                "Missing":     [", ".join(v for v in _model_vars if pd.isna(r[v]))
+                                for _, r in _inc[_model_vars].iterrows()],
+            })
+            st.dataframe(_ids, use_container_width=True, hide_index=True,
+                         height=min(38 + 35 * len(_ids), 300))
     else:
         st.caption("All participants have complete batch, age, sex, and added covariates.")
 
@@ -1063,7 +1144,8 @@ st.dataframe(
     use_container_width=True, hide_index=True)
 st.caption("N = participants per batch. Numeric variables: mean (SD); range. Categories: n (%).")
 
-all_sites_n = df[site_col].value_counts().sort_index()
+all_sites_n = df[site_col].value_counts()
+all_sites_n = all_sites_n[natural_sorted(all_sites_n.index)]
 site_options = [f"{s}  (n={all_sites_n[s]})" for s in all_sites_n.index]
 site_label_to_name = {f"{s}  (n={all_sites_n[s]})": s for s in all_sites_n.index}
 excluded_labels = st.multiselect(

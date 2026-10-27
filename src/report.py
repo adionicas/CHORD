@@ -9,7 +9,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 from jinja2 import Template
-from src.naming import measure_keys
+from src.naming import measure_keys, natural_sorted
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -984,7 +984,7 @@ def generate_report(
     fig_icc_ci=None,
 ) -> str:
 
-    sites = sorted(df_raw[site_col].dropna().unique().astype(str))
+    sites = natural_sorted(df_raw[site_col].dropna().unique().astype(str))
 
     anc_b  = _summarise_cohens_f(anc_before)
     anc_t  = _summarise_cohens_f(anc_ebt)

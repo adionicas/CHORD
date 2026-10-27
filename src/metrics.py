@@ -13,6 +13,7 @@ import statsmodels.formula.api as smf
 import statsmodels.api as sm
 import pingouin as pg
 import warnings
+from src.naming import natural_sorted
 
 warnings.filterwarnings("ignore")
 
@@ -53,7 +54,7 @@ def demographic_summary(
         nf = _n_female(grp[sex_col])
         return f"{nf} ({100 * nf / n:.1f}%)"
 
-    for site in sorted(df[site_col].dropna().unique().astype(str)):
+    for site in natural_sorted(df[site_col].dropna().unique().astype(str)):
         grp    = df[df[site_col].astype(str) == site]
         am, ar = _age_stats(grp)
         rows.append({
@@ -316,7 +317,7 @@ def compute_icc_by_site(df_raw, df_harm, features, site_col):
     if site_col not in df_harm.columns:
         return pd.DataFrame()
     rows = []
-    for site in sorted(df_harm[site_col].dropna().unique().astype(str)):
+    for site in natural_sorted(df_harm[site_col].dropna().unique().astype(str)):
         raw_site  = df_raw[df_raw[site_col].astype(str) == site] if site_col in df_raw.columns else df_raw
         harm_site = df_harm[df_harm[site_col].astype(str) == site]
         common_idx = raw_site.index.intersection(harm_site.index)
@@ -495,7 +496,7 @@ def compute_spearman_by_site(df_raw, df_harm, features, site_col):
     if site_col not in df_harm.columns:
         return pd.DataFrame()
     rows = []
-    for site in sorted(df_harm[site_col].dropna().unique().astype(str)):
+    for site in natural_sorted(df_harm[site_col].dropna().unique().astype(str)):
         raw_site  = df_raw[df_raw[site_col].astype(str) == site] if site_col in df_raw.columns else df_raw
         harm_site = df_harm[df_harm[site_col].astype(str) == site]
         common_idx = raw_site.index.intersection(harm_site.index)

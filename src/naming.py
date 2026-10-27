@@ -5,6 +5,17 @@ suggested modality groups and for the measure labels in the missing-value
 tables. These are suggestions for the user to check, never applied silently.
 """
 
+import re as _re
+
+
+def natural_sorted(labels):
+    """Batch labels in natural order: numbers by value, so 2 comes before 11
+    (also inside names: Site2 before Site11); otherwise alphabetical."""
+    def key(v):
+        return [int(t) if t.isdigit() else t.lower() for t in _re.split(r"(\d+)", str(v))]
+    return sorted(labels, key=key)
+
+
 # a name part that names a brain region rather than a measure: FreeSurfer
 # style labels with hyphens (ctx-lh-cuneus, Left-Amygdala, Brain-Stem) or a
 # hemisphere word
