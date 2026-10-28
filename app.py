@@ -486,6 +486,7 @@ if st.toggle("Check the batch and the covariates", value=True, key="show_demo_ta
     st.markdown("The values of each variable")
     _by_b = st.toggle("Show by batch", key="demo_by_batch",
                       help="Categories: one bar per batch split by value. Continuous variables: one box per batch.")
+    st.caption("If a batch looks wrong or too small, you can exclude it later, under \"Batch exclusion (optional)\".")
     _roles = [(site_col, "batch")] + [
         (_c, "continuous covariate" if _c in continuous_covariates and _c not in _demo_cat_set else
              "categorical covariate" if _c in categorical_covariates else
