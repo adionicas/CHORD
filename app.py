@@ -451,7 +451,7 @@ st.markdown("**Check the demographics**")
 st.caption("Look at the batch and the covariates before harmonizing, to see whether anything in the "
            "table needs fixing first: typos or misspelled categories, codes that are not real values "
            "(such as -999, 999 or \"Unknown\"), unexpected ranges, or missing values.")
-if st.toggle("Check the batch and the covariates", value=True, key="show_demo_table"):
+if st.toggle("Check the batch and the covariates", value=False, key="show_demo_table"):
     st.caption("Your covariates are listed to start with; add any other column to the list of its kind, so "
                "that CHORD describes it the right way (a mean for continuous variables, counts for categories, "
                "also when the categories are coded as numbers, such as sex coded 1 and 2).")
@@ -484,9 +484,6 @@ if st.toggle("Check the batch and the covariates", value=True, key="show_demo_ta
                + (f" {_no_batch} participant(s) without a batch value are not in the table." if _no_batch else ""))
 
     st.markdown("The values of each variable")
-    _by_b = st.toggle("Show by batch", key="demo_by_batch",
-                      help="Categories: one bar per batch split by value. Continuous variables: one box per batch.")
-    st.caption("If a batch looks wrong or too small, you can exclude it later, under \"Batch exclusion (optional)\".")
     _roles = [(site_col, "batch")] + [
         (_c, "continuous covariate" if _c in continuous_covariates and _c not in _demo_cat_set else
              "categorical covariate" if _c in categorical_covariates else
@@ -504,6 +501,10 @@ if st.toggle("Check the batch and the covariates", value=True, key="show_demo_ta
         _miss_txt = f"missing: {_n_miss} ({100 * _n_miss / max(len(_s), 1):.1f}%)"
         _cat = _c == site_col or _c in _demo_cat_set or not pd.api.types.is_numeric_dtype(_s)
         with _tab_ui:
+            # a "Show by batch" switch in each variable's own tab (the batch variable is already per batch)
+            _by_b = _c != site_col and st.toggle(
+                "Show by batch", key=f"demo_by_batch_{_c}",
+                help="Categories: one bar per batch split by value. Continuous variables: one box per batch.")
             if _cat:
                 _vc = _s.dropna().map(_fmt_val).value_counts()
                 _vals = natural_sorted(_vc.index)
@@ -512,8 +513,8 @@ if st.toggle("Check the batch and the covariates", value=True, key="show_demo_ta
                 _all["Participants (%)"] = (100 * _all["Participants"] / max(len(_s), 1)).round(1)
                 st.markdown(f"**{_c}** ({_role}): {_s.nunique()} distinct values; {_miss_txt}")
                 if _c == site_col:
-                    st.caption("This is the batch variable, so its chart has one bar per batch; \"Show by batch\" "
-                               "applies to the other variables.")
+                    st.caption("If a batch looks wrong or too small, you can exclude it later, under "
+                               "\"Batch exclusion (optional)\".")
                 _p1, _p2 = st.columns([3, 2])
                 with _p1:
                     if _by_b and _c != site_col:
