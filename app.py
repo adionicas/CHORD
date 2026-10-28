@@ -510,6 +510,9 @@ if st.toggle("Check the batch and the covariates", value=True, key="show_demo_ta
                                      "Participants": [int(_vc[v]) for v in _vals] + [_n_miss]})
                 _all["Participants (%)"] = (100 * _all["Participants"] / max(len(_s), 1)).round(1)
                 st.markdown(f"**{_c}** ({_role}): {_s.nunique()} distinct values; {_miss_txt}")
+                if _c == site_col:
+                    st.caption("This is the batch variable, so its chart has one bar per batch; \"Show by batch\" "
+                               "applies to the other variables.")
                 _p1, _p2 = st.columns([3, 2])
                 with _p1:
                     if _by_b and _c != site_col:
