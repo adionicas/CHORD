@@ -743,30 +743,66 @@ if st.toggle("Check the batch and the covariates", value=False, key="show_demo_t
                 st.markdown(f"**{_c}** ({_role}): {_v.nunique()} distinct values; "
                             f"{_fmt_num(_v.min())} to {_fmt_num(_v.max())}; mean {_v.mean():.2f} "
                             f"(SD {_v.std():.2f}); {_miss_txt}")
+                # how the values are drawn, for values spanning orders of magnitude; the data are not changed
+                _log_lab = ("Log (log10 of value + 1)" if _v.min() >= 0
+                            else "Signed log (sign x log10 of |value| + 1)")
+                _scale = st.radio(
+                    "Scale of the plots", ["As is", _log_lab, "Middle 98% (1st to 99th percentile)"], horizontal=True,
+                    key=f"demo_scale_{_c}",
+                    help="Changes only how the values are drawn, not the data. The log scale spreads out values that "
+                         "span several orders of magnitude; the middle 98% leaves out the most extreme 1% at each end.")
+                _lo, _hi = float(np.percentile(_v, 1)), float(np.percentile(_v, 99))
+
+                def _disp(x):
+                    if _scale.startswith("Log"):
+                        return np.log10(x + 1)
+                    if _scale.startswith("Signed"):
+                        return np.sign(x) * np.log10(np.abs(x) + 1)
+                    if _scale.startswith("Middle"):
+                        return x[(x >= _lo) & (x <= _hi)]
+                    return x
+                _axis_lab = (f"log10({_c} + 1)" if _scale.startswith("Log") else
+                             f"sign x log10(|{_c}| + 1)" if _scale.startswith("Signed") else _c)
+                if _scale.startswith("Middle"):
+                    st.caption(f"Drawn: {_fmt_num(_lo)} to {_fmt_num(_hi)}; "
+                               f"{int(((_v < _lo) | (_v > _hi)).sum())} value(s) outside this range are not drawn.")
                 _h1, _h2 = st.columns([3, 2])
                 with _h1:
                     if _by_b:
-                        # boxes per batch; under each, the batch's n and its missing values
-                        _f = go.Figure()
-                        _ticks = []
+                        # two plots: the values by batch, and under them the missing values of each batch
+                        _f = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.68, 0.32],
+                                           vertical_spacing=0.07)
+                        _m_n, _m_pct, _n_b = [], [], []
                         for _bb in _border:
                             _all_b = _bdf.loc[_bdf["_batch"] == _bb, _c]
-                            _yy = _all_b.dropna()
-                            _nm = int(_all_b.isna().sum())
+                            _yy = _disp(_all_b.dropna())
+                            _m_n.append(int(_all_b.isna().sum()))
+                            _n_b.append(len(_all_b))
+                            _m_pct.append(100 * _m_n[-1] / max(len(_all_b), 1))
                             _f.add_trace(go.Box(x=[str(_bb)] * len(_yy), y=_yy, name=str(_bb), boxpoints="outliers",
-                                                marker_color="#2A6EBB", line_color="#2A6EBB", showlegend=False))
-                            _ticks.append(f"{_bb}<br>n = {len(_yy)}<br>"
-                                          f"{_nm} missing ({100 * _nm / max(len(_all_b), 1):.1f}%)")
-                        _f.update_layout(height=380 + _bextra, **{**_plot_layout, "margin": dict(l=70, r=10, t=10, b=80)})
-                        _f.update_yaxes(title_text=_c)
-                        _f.update_xaxes(type="category", tickvals=[str(b) for b in _border], ticktext=_ticks,
-                                        title_text="Batch", automargin=True, tickangle=_bangle)
-                        _f.update_yaxes(automargin=True)
+                                                marker_color="#2A6EBB", line_color="#2A6EBB", showlegend=False),
+                                         row=1, col=1)
+                        _f.add_trace(go.Bar(x=[str(b) for b in _border], y=_m_pct, marker_color="#222222",
+                                            showlegend=False, text=[f"{n} ({p:.0f}%)" if n else ""
+                                                                    for n, p in zip(_m_n, _m_pct)],
+                                            textposition="outside", cliponaxis=False, textfont=dict(size=10),
+                                            customdata=np.stack([_m_n, _n_b], axis=1),
+                                            hovertemplate="Batch %{x}: %{customdata[0]} of %{customdata[1]} "
+                                                          "missing (%{y:.1f}%)<extra></extra>"),
+                                     row=2, col=1)
+                        _f.update_layout(height=520 + _bextra,
+                                         **{**_plot_layout, "margin": dict(l=70, r=10, t=10, b=60)})
+                        _f.update_yaxes(title_text=_axis_lab, automargin=True, row=1, col=1)
+                        _f.update_yaxes(title_text="Missing (%)", range=[0, max(_m_pct + [1.0]) * 1.35],
+                                        automargin=True, row=2, col=1)
+                        _f.update_xaxes(type="category", automargin=True, row=1, col=1)
+                        _f.update_xaxes(type="category", title_text="Batch", automargin=True, tickangle=_bangle,
+                                        row=2, col=1)
                     else:
                         # the distribution, and next to it how many values are present and missing
                         _f = make_subplots(rows=1, cols=2, column_widths=[0.82, 0.18], horizontal_spacing=0.06)
-                        _f.add_trace(go.Histogram(x=_v, nbinsx=40, marker_color="#2A6EBB", showlegend=False,
-                                                  hovertemplate=f"{_c} %{{x}}: %{{y}} participants<extra></extra>"),
+                        _f.add_trace(go.Histogram(x=_disp(_v), nbinsx=40, marker_color="#2A6EBB", showlegend=False,
+                                                  hovertemplate=f"{_axis_lab} %{{x}}: %{{y}} participants<extra></extra>"),
                                      row=1, col=1)
                         _np_ = int(_s.notna().sum())
                         _f.add_trace(go.Bar(x=["Present", "Missing"], y=[_np_, _n_miss],
@@ -778,7 +814,7 @@ if st.toggle("Check the batch and the covariates", value=False, key="show_demo_t
                                      row=1, col=2)
                         _f.update_layout(height=300, bargap=0.05,
                                          **{**_plot_layout, "margin": dict(l=70, r=10, t=10, b=40)})
-                        _f.update_xaxes(title_text=_c, row=1, col=1)
+                        _f.update_xaxes(title_text=_axis_lab, row=1, col=1)
                         _f.update_yaxes(title_text="Participants", row=1, col=1)
                         _f.update_yaxes(range=[0, len(_s) * 1.15], row=1, col=2)
                     st.plotly_chart(_f, use_container_width=True)
