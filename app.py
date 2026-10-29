@@ -172,9 +172,48 @@ def _guess_optional(cols, keywords):
                 return c
     return None
 
+# words that contain "age" but are not an age
+_NOT_AGE = ("average", "image", "stage", "page", "percentage", "voltage", "damage", "usage", "message",
+            "passage", "language", "storage", "package", "lineage", "coverage", "leakage", "dosage")
+# an age at an event (first injury, onset, diagnosis) rather than at the scan
+_EVENT_AGE = ("first", "onset", "injury", "inj", "tbi", "diag", "dx", "death", "mother", "father", "parent",
+              "gest", "birth", "menarche")
+
+
+def _age_candidates(data, cols):
+    """
+    Numeric columns that may hold an age, best first: a name part that is or starts with
+    "age" (Age, Age_at_scan) ranks above "age" inside a part (DEMOGAGEYEARS); an age at an
+    event (AgeFirstTBI, age_onset) ranks below both; values between 0 and 120 rank higher.
+    """
+    scored = []
+    for c in cols:
+        if c not in data.columns or not pd.api.types.is_numeric_dtype(data[c]):
+            continue
+        parts = [q for q in re.split(r"[^a-z0-9]+", str(c).lower()) if q]
+        if any(q.startswith("age") for q in parts):
+            score = 100 if any(q in ("age", "ages") for q in parts) else 80
+        elif any("age" in q and not any(w in q for w in _NOT_AGE) for q in parts):
+            score = 60
+        else:
+            continue
+        low = str(c).lower()
+        if any(w in low for w in _EVENT_AGE):
+            score -= 50
+        v = data[c].dropna()
+        if len(v) and v.min() >= 0 and v.max() <= 120:
+            score += 10
+        scored.append((score, c))
+    return [c for _, c in sorted(scored, key=lambda t: -t[0])]
+
+
+def _sex_candidates(cols):
+    """Columns whose name has a part starting with "sex" or "gender", in table order."""
+    return [c for c in cols
+            if any(q.startswith(("sex", "gender")) for q in re.split(r"[^a-z0-9]+", str(c).lower()) if q)]
+
+
 default_site = _guess(all_cols, ["site", "scanner", "batch", "center"])
-default_age  = _guess_optional(all_cols, ["age"])
-default_sex  = _guess_optional(all_cols, ["sex", "gender"])
 
 CUSTOM = "— type custom name below —"
 
@@ -310,46 +349,47 @@ st.caption(
 if site_col is None:
     st.stop()
 
-# Age and sex are optional covariates, not required columns. They are detected
-# automatically here and offered, pre-selected, in the covariate section below.
-age_col = default_age if (default_age and default_age in all_cols) else None
-sex_col = default_sex if (default_sex and default_sex in all_cols) else None
+# Age and sex are optional covariates, not required columns. They are suggested from the
+# column names and chosen (or set to None) in a list each in the covariate section below.
+_NONE = "None"
+age_cands = _age_candidates(df, [c for c in all_cols if c != site_col])
+sex_cands = _sex_candidates([c for c in all_cols if c != site_col])
 
 # ── Covariates to preserve in the ComBat model ────────────────────────────
 st.markdown("**Covariates to preserve in the ComBat model**")
 st.caption(
     "ComBat harmonization can preserve the biological variability of key variables "
     "of interest, for example age and sex, while removing batch-related variance. "
-    "Only the batch column is strictly required; every covariate is optional. Age and sex "
-    "are detected automatically and pre-selected when present, and can be unchecked, for "
-    "example in a study with a single sex or no age variability."
+    "Only the batch column is strictly required; every covariate is optional. The age and sex "
+    "columns are suggested from the column names; choose another column, or None, for example "
+    "in a study with a single sex or no age variability."
 )
-
-other_candidates = [c for c in all_cols if c not in {site_col, age_col, sex_col}]
 
 cov_c1, cov_c2 = st.columns(2)
 with cov_c1:
     st.markdown("**Continuous covariates** *(numeric values, for example age, days since injury)*")
-    if age_col is not None:
-        inc_age = st.checkbox(
-            f"Include **{age_col}** (auto-detected age)",
-            value=True, key="inc_age",
-        )
-    else:
-        inc_age = False
-        st.caption("No age column was auto-detected. Add one with \"Add more covariates\" "
-                   "if your study has age.")
+    _age_opts = [_NONE] + age_cands + [c for c in num_cols if c != site_col and c not in age_cands]
+    age_choice = st.selectbox("Age column", _age_opts, index=1 if age_cands else 0, key="age_choice",
+                              help="Suggested from the column names; columns that may hold an age are listed first.")
+    if len(age_cands) > 1:
+        st.caption("Columns that may hold an age: " + ", ".join(f"**{c}**" for c in age_cands)
+                   + ". Choose the age at the scan.")
+    elif not age_cands:
+        st.caption("No column name suggests an age; choose one if your study has age.")
 with cov_c2:
     st.markdown("**Categorical covariates** *(group labels, for example sex, diagnosis, group)*")
-    if sex_col is not None:
-        inc_sex = st.checkbox(
-            f"Include **{sex_col}** (auto-detected sex)",
-            value=True, key="inc_sex",
-        )
-    else:
-        inc_sex = False
-        st.caption("No sex column was auto-detected. Add one with \"Add more covariates\" "
-                   "if your study has sex.")
+    _sex_opts = [_NONE] + sex_cands + [c for c in all_cols if c != site_col and c not in sex_cands]
+    sex_choice = st.selectbox("Sex column", _sex_opts, index=1 if sex_cands else 0, key="sex_choice",
+                              help="Suggested from the column names; columns named sex or gender are listed first.")
+    if len(sex_cands) > 1:
+        st.caption("Columns that may hold sex: " + ", ".join(f"**{c}**" for c in sex_cands) + ".")
+    elif not sex_cands:
+        st.caption("No column name suggests sex; choose one if your study has sex.")
+
+age_col = None if age_choice == _NONE else age_choice
+sex_col = None if sex_choice == _NONE else sex_choice
+inc_age, inc_sex = age_col is not None, sex_col is not None
+other_candidates = [c for c in all_cols if c not in {site_col, age_col, sex_col}]
 
 # Further covariates only when asked for
 extra_cont_add, extra_cat_add = [], []
