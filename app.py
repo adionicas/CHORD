@@ -1314,6 +1314,12 @@ _excl_part_rows = [d["row"] for d in st.session_state.get("_excl_part_list", [])
                    if d.get("data_key") == data_key and d.get("row") in df.index]
 _model_cols_now = [c for c in [site_col, age_col, sex_col] + extra_continuous + extra_categorical
                    if c and c in df.columns]
+keep_imputed = False
+cleaning_summary = None     # the data cleaning summary table, also for the report
+# the participants who enter the harmonization: all model variables present and not excluded for missing
+# features (narrowed below by the missing-value method, for example complete cases)
+final_rows = df.index[df[[c for c in [site_col] + continuous_covariates + categorical_covariates if c in df.columns]]
+                      .notna().all(axis=1) & ~df.index.isin(_excl_part_rows)]
 _nothing_missing = not df[list(feature_cols) + _excluded_before + _model_cols_now].isna().any().any()
 
 # always offered, also when nothing is missing (an all-grey view confirms it)
@@ -1335,11 +1341,22 @@ _preview_excluded = [d.get("Feature") for d in st.session_state.get("_excl_feat_
 _excl_group_of = {d.get("Feature"): d.get("Modality group") for d in st.session_state.get("_excl_feat_list", [])}
 _preview_groups = ({g: list(c) + [f for f in _preview_excluded if _excl_group_of.get(f) == g and f not in c]
                     for g, c in modality_groups.items()} if modality_groups and _preview_excluded else None)
-_show_matrix_preview(
-    df, "all", list(feature_cols) + [f for f in _preview_excluded if f not in feature_cols],
-    "Before exclusions",
-    marked=("Excluded for missingness", _preview_excluded) if _preview_excluded else None,
-    groups_override=_preview_groups)
+# before or after the data cleaning, once something has been excluded (Oni, 29 October 2026)
+_stage = (st.radio("Data shown", ["Before the data cleaning", "After the data cleaning"], horizontal=True,
+                   key="preview_stage",
+                   help="Before: every participant and every selected or excluded feature, with the excluded features "
+                        "marked. After: the participants who enter the harmonization (model variables present, not "
+                        "excluded for missing features) and the features kept.")
+          if (_preview_excluded or _excl_part_rows) else "Before the data cleaning")
+if _stage.startswith("After"):
+    _show_matrix_preview(df.loc[final_rows], ("final", tuple(map(str, final_rows))), feature_cols,
+                         "After the data cleaning")
+else:
+    _show_matrix_preview(
+        df, "all", list(feature_cols) + [f for f in _preview_excluded if f not in feature_cols],
+        "Before exclusions",
+        marked=("Excluded for missingness", _preview_excluded) if _preview_excluded else None,
+        groups_override=_preview_groups)
 
 # ── Missing value assessment ────────────────────────────────────────────────
 st.markdown("---")
@@ -1696,7 +1713,7 @@ if _show_miss_tools:
         _rm_parts.append(f"{len(_xp)} missing more than {_xp_thr:g}% of the features" if _xp_thr is not None
                          else f"{len(_xp)} excluded for missing features")
     _n_rm_p = len(_mv_rows) + len(_xp)
-    st.dataframe(pd.DataFrame([
+    cleaning_summary = pd.DataFrame([
         {"": "Features", "Before cleaning": _n_feat_all,
          "Removed": (f"{len(_xf)} (missing in more than {_xf_thr:g}% of the participants)" if _xf and _xf_thr is not None
                      else f"{len(_xf)} (threshold per modality group: "
@@ -1704,10 +1721,19 @@ if _show_miss_tools:
                      if _xf and (st.session_state.get("_excl_info") or {}).get("threshold_text")
                      else str(len(_xf))),
          "Kept": len(feature_cols)},
+    ] + ([] if not modality_groups else [
+        # the features of each modality group: before, removed and kept (Oni, 29 October 2026)
+        {"": f"   {g}",
+         "Before cleaning": len([c for c in gcols if c in set(feature_cols)])
+                            + sum(1 for d in _xf if d.get("Modality group") == g),
+         "Removed": str(sum(1 for d in _xf if d.get("Modality group") == g)),
+         "Kept": len([c for c in gcols if c in set(feature_cols)])}
+        for g, gcols in modality_groups.items()]) + [
         {"": "Participants", "Before cleaning": len(df),
          "Removed": f"{_n_rm_p} ({'; '.join(_rm_parts)})" if _rm_parts else "0",
          "Kept": len(df) - _n_rm_p},
-    ]), use_container_width=True, hide_index=True)
+    ])
+    st.dataframe(cleaning_summary, use_container_width=True, hide_index=True)
     if _xf:
         with st.expander(f"Removed features ({len(_xf)})"):
             _xfd = pd.DataFrame(_xf)
@@ -1779,6 +1805,15 @@ if _show_miss_tools:
     )
     missing_mode = _MISS_OPTS[missing_mode_label]
     per_feature = (missing_mode == "per_feature")
+    if missing_mode == "impute":
+        keep_imputed = st.checkbox(
+            "Keep the imputed values in the harmonized table", value=False, key="keep_imputed",
+            help="Off (default): each missing value is filled with its feature's median only so that every "
+                 "participant can enter the ComBat run; after harmonization the filled cells are set back to "
+                 "missing, so the harmonized table has missing values exactly where your table had them. On: the "
+                 "harmonized imputed values stay in the table. The report and the Methods paragraph say which.")
+        st.caption("By default the median values are used for harmonization only and set back to missing afterwards."
+                   + (" They will be kept, harmonized, in the harmonized table." if keep_imputed else ""))
 
     # the table of the methods only on request (Oni, 29 October 2026)
     if st.toggle("Show what each method does", value=False, key="show_method_table"):
@@ -1811,11 +1846,13 @@ if _show_miss_tools:
     _feat_ok_all = _work[list(feature_cols)].notna().all(axis=1)
     _feat_ok_any = _work[list(feature_cols)].notna().any(axis=1)
     if missing_mode == "complete":
-        _retained = int((_cov_ok & _feat_ok_all).sum())
+        _keep_mask = _cov_ok & _feat_ok_all
     elif missing_mode == "impute":
-        _retained = int(_cov_ok.sum())
+        _keep_mask = _cov_ok
     else:  # pattern / per_feature
-        _retained = int((_cov_ok & _feat_ok_any).sum())
+        _keep_mask = _cov_ok & _feat_ok_any
+    _retained = int(_keep_mask.sum())
+    final_rows = _work.index[_keep_mask]
     _dropped = len(_work) - _retained
     _cov_drop = int((~_cov_ok).sum())
     _feat_drop = max(_dropped - _cov_drop, 0)
@@ -1848,10 +1885,14 @@ st.caption(
     "the rest. Excluded batches are left out of the harmonization and the report. The table shows "
     "the model variables; for other variables, use \"Show a demographic table by batch\" in Step 2."
 )
-_xpids, _xpid_col = _participant_ids(df)
+# the participants who enter the harmonization (after the data cleaning and the missing-value method)
+_final = df.loc[final_rows]
+st.caption(f"The table shows the final sample: the {len(_final)} of {len(df)} participants who enter the "
+           "harmonization after the data cleaning above.")
+_xpids, _xpid_col = _participant_ids(_final)
 _show_by_batch_table(
-    _by_batch_table(df, site_col, [c for c in [age_used, sex_used] + extra_continuous + extra_categorical
-                                   if c and c in df.columns], ids=_xpids), "exclusion_by_batch_table", _xpid_col)
+    _by_batch_table(_final, site_col, [c for c in [age_used, sex_used] + extra_continuous + extra_categorical
+                                       if c and c in df.columns], ids=_xpids), "exclusion_by_batch_table", _xpid_col)
 st.caption("N = participants per batch. Continuous variables: mean (SD), range and missing n (%); "
            "categorical variables: n (%) per value and missing n (%).")
 
@@ -2021,7 +2062,7 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True,
                     df_harm, feature_cols, site_col,
                     continuous_covariates=continuous_covariates,
                     categorical_covariates=categorical_covariates,
-                    eb=eb, groups=modality_groups)
+                    eb=eb, groups=modality_groups, keep_imputed=keep_imputed)
             if missing_mode == "pattern":
                 return run_combat_by_missing_pattern(
                     df_harm, feature_cols, site_col,
@@ -2280,10 +2321,50 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True,
         else:
             fdr_note = ("Benjamini-Hochberg false discovery rate correction was applied across all "
                         f"{len(feature_cols)} features.")
+        # the data cleaning in the report: the curves with their thresholds and the map of missing values,
+        # before and after (Oni, 29 October 2026)
+        fig_clean_feat = fig_clean_part = fig_map_before = fig_map_after = None
+        try:
+            _feats_now = list(feature_cols)
+            _before_cols_r = _feats_now + [c for c in _excluded_before if c not in _feats_now]
+            if df[_before_cols_r].isna().any().any():
+                _kept_r = df.index[~df.index.isin(_excl_part_rows)]
+                _any_x = bool(_excluded_before) or bool(_excl_part_rows)
+                _grp_r = {c: g for g, cols in (modality_groups or {}).items() for c in cols}
+                _grp_r.update({d.get("Feature"): d.get("Modality group")
+                               for d in st.session_state.get("_excl_feat_list", []) if d.get("Modality group")})
+                _xi_r = st.session_state.get("_excl_info") or {}
+                _thr_f = ({g: v["threshold"] for g, v in _xi_r["by_group"].items()} if _xi_r.get("by_group")
+                          else _xi_r["threshold"] if _xi_r.get("threshold") is not None
+                          else float(st.session_state.get("miss_assess_thr", 10.0) or 10.0))
+                _thr_p = ((st.session_state.get("_excl_part_info") or {}).get("threshold")
+                          or float(st.session_state.get("miss_assess_part_thr", 10.0) or 10.0))
+                fig_clean_feat = plot_missing_curve(
+                    100 * df.loc[_kept_r, _feats_now].isna().mean(), _grp_r or None, _thr_f,
+                    before=100 * df[_before_cols_r].isna().mean() if _any_x else None,
+                    separate=bool(modality_groups))
+                fig_clean_part = plot_missing_curve(
+                    100 * df.loc[_kept_r, _feats_now].isna().mean(axis=1), None, _thr_p, kind="participants",
+                    before=100 * df[_before_cols_r].isna().mean(axis=1) if _any_x else None)
+                _covs_r = [c for c in [age_col, sex_col] + extra_continuous + extra_categorical if c and c in df.columns]
+                _groups_b = ({g: list(c) + [f for f in _excluded_before if _grp_r.get(f) == g and f not in c]
+                              for g, c in modality_groups.items()} if modality_groups else None)
+                fig_map_before, _ = plot_data_matrix(
+                    df, site_col, _covs_r, _before_cols_r, modality_groups=_groups_b,
+                    marked_block=("Excluded for missingness", _excluded_before) if _excluded_before else None,
+                    missing_only=True, title="Missing values before the data cleaning")
+                if _any_x:
+                    fig_map_after, _ = plot_data_matrix(
+                        df.loc[final_rows], site_col, _covs_r, _feats_now, modality_groups=modality_groups,
+                        missing_only=True, title="Missing values after the data cleaning")
+        except Exception as _clean_err:
+            st.warning(f"The data cleaning figures could not be added to the report: {_clean_err}")
         recoded_text = ("The following values were recoded as missing before harmonization: "
                         + "; ".join(f"{c} = {v} (n = {n})" for c, v, n in recoded) + ".") if recoded else ""
         html_report = generate_report(
-            recoded_text=recoded_text,
+            cleaning_df=cleaning_summary, fig_clean_feat=fig_clean_feat, fig_clean_part=fig_clean_part,
+            fig_map_before=fig_map_before, fig_map_after=fig_map_after,
+            recoded_text=recoded_text, keep_imputed=(missing_mode == "impute" and keep_imputed),
             df_raw=df, site_col=site_col, age_col=age_col, sex_col=sex_col,
             feature_cols=feature_cols, n_retained=n_retained,
             modality_groups=modality_groups,
@@ -2341,7 +2422,8 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True,
             assoc_cat_vars=assoc_cat_vars,
             data_prep_text=" ".join(x for x in (recoded_text, data_prep_sentence(
                 missing_overview, st.session_state.get("_excl_info"),
-                st.session_state.get("_excl_part_info") if _excl_part_rows else None, missing_mode)) if x),
+                st.session_state.get("_excl_part_info") if _excl_part_rows else None, missing_mode,
+                keep_imputed=(missing_mode == "impute" and keep_imputed))) if x),
         )
 
         progress.progress(100, "Done.")
@@ -2352,6 +2434,7 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True,
 
         st.session_state.update(dict(
             results_ready=True,
+            _scroll_to_results=True,
             methods_para=methods_para,
             fig_site=fig_site, fig_icc=fig_icc,
             fig_age=fig_age,   fig_anc=fig_anc,
@@ -2378,6 +2461,43 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True,
         st.error(f"An error occurred: {e}")
         st.exception(e)
 
+def _download_buttons(where):
+    """The report and the harmonized tables. Shown at the top of the Results and again at the end,
+    so they never depend on scrolling to the end of a long page (Oni, 29 October 2026)."""
+    dl1, dl2, dl3 = st.columns(3)
+    with dl1:
+        st.download_button(
+            label="⬇  Report (HTML)",
+            data=st.session_state["html_report"],
+            file_name=f"{data_stem}_harmonization_report.html",
+            mime="text/html",
+            type="primary",
+            use_container_width=True,
+            key=f"dl_report_{where}",
+        )
+        st.caption("Interactive figures")
+    with dl2:
+        if st.session_state.get("harm_csv_ebt"):
+            st.download_button(
+                label="⬇  Harmonized data — EB=TRUE",
+                data=st.session_state["harm_csv_ebt"],
+                file_name=f"{data_stem}_harmonized_EBT.csv",
+                mime="text/csv",
+                use_container_width=True,
+                key=f"dl_ebt_{where}",
+            )
+    with dl3:
+        if st.session_state.get("harm_csv_ebf"):
+            st.download_button(
+                label="⬇  Harmonized data — EB=FALSE",
+                data=st.session_state["harm_csv_ebf"],
+                file_name=f"{data_stem}_harmonized_EBF.csv",
+                mime="text/csv",
+                use_container_width=True,
+                key=f"dl_ebf_{where}",
+            )
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # RESULTS
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2385,6 +2505,18 @@ if st.session_state.get("results_ready"):
 
     st.divider()
     st.subheader("Results")
+    st.caption("Download the report and the harmonized data here; the same buttons are also at the end of the page.")
+    _download_buttons("top")
+    if st.session_state.pop("_scroll_to_results", False):
+        # once, right after a run: bring the Results into view instead of leaving the page where the Run button was
+        from streamlit.components.v1 import html as _html_component
+        _html_component("""<script>
+        setTimeout(() => {
+          const d = window.parent.document;
+          const h = [...d.querySelectorAll('h3')].find(x => x.innerText.trim().startsWith('Results'));
+          if (h) h.scrollIntoView({behavior: 'smooth', block: 'start'});
+        }, 400);
+        </script>""", height=0)
 
     _blank = st.session_state.get("blank_features") or []
     if _blank:
@@ -2515,32 +2647,4 @@ if st.session_state.get("results_ready"):
         st.caption("This paragraph is also included at the end of the downloaded HTML report.")
 
     st.divider()
-    dl1, dl2, dl3 = st.columns(3)
-    with dl1:
-        st.download_button(
-            label="⬇  Report (HTML)",
-            data=st.session_state["html_report"],
-            file_name=f"{data_stem}_harmonization_report.html",
-            mime="text/html",
-            type="primary",
-            use_container_width=True,
-        )
-        st.caption("Interactive figures")
-    with dl2:
-        if st.session_state.get("harm_csv_ebt"):
-            st.download_button(
-                label="⬇  Harmonized data — EB=TRUE",
-                data=st.session_state["harm_csv_ebt"],
-                file_name=f"{data_stem}_harmonized_EBT.csv",
-                mime="text/csv",
-                use_container_width=True,
-            )
-    with dl3:
-        if st.session_state.get("harm_csv_ebf"):
-            st.download_button(
-                label="⬇  Harmonized data — EB=FALSE",
-                data=st.session_state["harm_csv_ebf"],
-                file_name=f"{data_stem}_harmonized_EBF.csv",
-                mime="text/csv",
-                use_container_width=True,
-            )
+    _download_buttons("bottom")

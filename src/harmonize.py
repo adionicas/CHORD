@@ -346,10 +346,12 @@ def run_combat_with_imputation(
     categorical_covariates: list | None = None,
     eb: bool = True,
     groups: dict | None = None,
+    keep_imputed: bool = False,
 ) -> pd.DataFrame:
     """
     Fill missing feature values with each feature's median, harmonize with EB,
-    then restore the originally-missing cells to NaN in the output.
+    then restore the originally-missing cells to NaN in the output (unless
+    ``keep_imputed``, which keeps the harmonized imputed values).
 
     Imputation lets every participant enter the run, so Empirical Bayes pools
     across all features, and masking the imputed cells afterward keeps them out
@@ -377,6 +379,8 @@ def run_combat_with_imputation(
             eb=eb,
         )
 
+    if keep_imputed:
+        return out
     # restore originally-missing cells to NaN so imputed values are not reported
     for f in feature_cols:
         miss_idx = na_mask.index[na_mask[f].to_numpy()]

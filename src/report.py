@@ -429,6 +429,49 @@ TEMPLATE = """<!DOCTYPE html>
 
 {{ data_prep_tables }}
 
+{% if cleaning_table or fig_clean_feat or fig_map_before %}
+<h3>S1.2 Data cleaning</h3>
+<p>
+  What was done to the data before harmonization{% if cleaning_table %}: the features{% if modality_on %}, by modality
+  group,{% endif %} and the participants before the data cleaning, removed and kept, are given in Table C1{% endif %}.
+  {% if fig_clean_feat %}Figures C1 and C2 show, for every share x, the features with more than x% of the participants
+  missing and the participants missing more than x% of the selected features, with the exclusion thresholds as dotted
+  lines.{% endif %}
+  {% if fig_map_before %}Figure C3 shows every missing value before{% if fig_map_after %} and after{% endif %} the data
+  cleaning.{% endif %}
+</p>
+{% if cleaning_table %}
+<p class="table-title">Table C1. Data cleaning: features{% if modality_on %} (in all and by modality group){% endif %} and participants before the data cleaning, removed and kept.</p>
+{{ cleaning_table }}
+{% endif %}
+{% if fig_clean_feat %}
+<div class="fig-wrap">{{ fig_clean_feat }}</div>
+<p class="fig-caption">
+  <b>Figure C1.</b> Features with more than x% of the participants missing{% if modality_on %}, one plot per
+  modality group{% endif %}. The dotted line marks the exclusion threshold. After exclusions, the solid line shows the
+  features still included, counted on the participants still included, and the grey dashed line all features before
+  the exclusions.
+</p>
+{% endif %}
+{% if fig_clean_part %}
+<div class="fig-wrap">{{ fig_clean_part }}</div>
+<p class="fig-caption">
+  <b>Figure C2.</b> Participants missing more than x% of the selected features. The dotted line marks the exclusion
+  threshold; the solid line shows the participants still included and the grey dashed line all participants before the
+  exclusions.
+</p>
+{% endif %}
+{% if fig_map_before %}
+<div class="fig-wrap">{{ fig_map_before }}</div>
+{% if fig_map_after %}<div class="fig-wrap">{{ fig_map_after }}</div>{% endif %}
+<p class="fig-caption">
+  <b>Figure C3.</b> Missing values (black) and present values (grey), one row per participant sorted by batch,
+  before{% if fig_map_after %} (top) and after (bottom){% endif %} the data cleaning{% if modality_on %}; the columns are
+  grouped by modality group, each group's excluded features after it{% endif %}.
+</p>
+{% endif %}
+{% endif %}
+
 <h3>S1.1 Imaging features</h3>
 <p>
   The following {{ n_features }} features were included in the harmonization analysis:
@@ -510,9 +553,10 @@ TEMPLATE = """<!DOCTYPE html>
   Because the features contained scattered missing data, missing values were
   imputed with each feature's median before harmonization so that all
   participants could enter the model and Empirical Bayes could pool information
-  across features [<a href="#ref1">1</a>]. After harmonization, the originally
+  across features [<a href="#ref1">1</a>]. {% if keep_imputed %}At the user's request, the harmonized
+  imputed values were kept in the harmonized table.{% else %}After harmonization, the originally
   missing cells were restored to missing so that imputed values were not
-  reported.
+  reported.{% endif %}
   {% elif missing_handling == 'pattern' %}
   Because the features contained scattered missing data, features were grouped
   by their shared pattern of missing participants{% if modality_on %}, within each of the
@@ -913,7 +957,7 @@ def _covariate_texts(age_col, sex_col, extra_continuous, extra_categorical,
 
 
 def data_prep_sentence(missing_overview=None, excl_info=None, excl_part_info=None,
-                       missing_handling="impute") -> str:
+                       missing_handling="impute", keep_imputed=False) -> str:
     """
     The data preparation sentences of the Methods paragraph: the thresholds the
     user chose to exclude features and participants for missing values, with the
@@ -938,8 +982,11 @@ def data_prep_sentence(missing_overview=None, excl_info=None, excl_part_info=Non
         out.append({
             "complete": "Participants with any remaining missing feature value were left out of the "
                         "ComBat run (complete-case analysis).",
-            "impute": "Remaining missing feature values were filled with each feature's median for "
-                      "harmonization and set back to missing afterwards.",
+            "impute": ("Remaining missing feature values were filled with each feature's median for "
+                       "harmonization, and the harmonized imputed values were kept in the harmonized table."
+                       if keep_imputed else
+                       "Remaining missing feature values were filled with each feature's median for "
+                       "harmonization and set back to missing afterwards."),
             "pattern": "Features missing in the same participants were harmonized together, so each "
                        "participant contributed the features they had.",
             "per_feature": "Each feature was harmonized on its own complete cases, without Empirical Bayes.",
@@ -1088,6 +1135,12 @@ def generate_report(
     ancova_covars=None,
     fig_icc_ci=None,
     recoded_text="",
+    keep_imputed=False,
+    cleaning_df=None,
+    fig_clean_feat=None,
+    fig_clean_part=None,
+    fig_map_before=None,
+    fig_map_after=None,
 ) -> str:
 
     sites = natural_sorted(df_raw[site_col].dropna().unique().astype(str))
@@ -1142,6 +1195,12 @@ def generate_report(
     html = tmpl.render(
         data_prep_tables     = data_prep_tables,
         recoded_text         = recoded_text,
+        keep_imputed         = keep_imputed,
+        cleaning_table       = _df_table(cleaning_df) if cleaning_df is not None and len(cleaning_df) else None,
+        fig_clean_feat       = _fig_html(fig_clean_feat) if fig_clean_feat is not None else None,
+        fig_clean_part       = _fig_html(fig_clean_part) if fig_clean_part is not None else None,
+        fig_map_before       = _fig_html(fig_map_before) if fig_map_before is not None else None,
+        fig_map_after        = _fig_html(fig_map_after) if fig_map_after is not None else None,
         part_table_label     = part_table_label,
         overview_table_label = overview_table_label,
         missing_overview     = missing_overview,
