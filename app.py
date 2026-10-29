@@ -1173,6 +1173,7 @@ def _token_matches(token, cols):
 
 
 modality_groups = None
+groups_incomplete = []      # selected features that match no modality token (the run waits for them)
 use_modality = st.checkbox(
     "My selected features include multiple modalities or measure types. "
     "Harmonize each group separately",
@@ -1232,13 +1233,19 @@ if use_modality:
 
         if unassigned:
             st.warning(
-                f"{len(unassigned)} selected feature(s) match no token and would "
-                "not be harmonized. Add a token that covers them, or remove them "
-                "from the feature selection above."
+                f"{len(unassigned)} selected feature(s) match no token: "
+                + ", ".join(unassigned[:10]) + (" ..." if len(unassigned) > 10 else "")
+                + ". They are shown as \"Not in a group\" in the previews and the missing-value views. "
+                "Add a token that covers them, or remove them from the feature selection above; "
+                "harmonization cannot run until every selected feature is in a group."
             )
             with st.expander(f"View {len(unassigned)} unassigned column(s)"):
                 st.write(unassigned)
 
+        if len(groups) >= 2 and unassigned:
+            # the groups still apply to the previews and the missing-value views; the run waits
+            modality_groups = {**groups, "Not in a group": unassigned}
+            groups_incomplete = list(unassigned)
         if len(groups) >= 2 and not unassigned:
             modality_groups = groups
             st.success(
@@ -1254,7 +1261,8 @@ if use_modality:
         else:
             st.info(
                 "Resolve the unassigned columns above to enable grouped "
-                "harmonization."
+                "harmonization; until then the Run button is off, so the measures are never "
+                "harmonized together by mistake."
             )
 
 
@@ -1987,7 +1995,11 @@ if per_feature:
                "the download is the EB=FALSE table.")
     eb_mode, run_ebt, run_ebf = "ebf_only", False, True
 
-if st.button("▶  Run Harmonization", type="primary", use_container_width=True):
+if groups_incomplete:
+    st.error(f"{len(groups_incomplete)} selected feature(s) are in no modality group ("
+             + ", ".join(groups_incomplete[:5]) + (" ..." if len(groups_incomplete) > 5 else "")
+             + "). Add a token for them or remove them from the selection in Step 3, then run.")
+if st.button("▶  Run Harmonization", type="primary", use_container_width=True, disabled=bool(groups_incomplete)):
 
     progress = st.progress(0, "Starting...")
     try:

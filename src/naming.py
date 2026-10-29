@@ -32,7 +32,8 @@ def measure_keys(cols) -> dict:
     Map each column name to a guess of its measure.
 
     - Names with a "." (for example L_S_central.meandepth_native): the text
-      after the last ".", when every column has one.
+      after the last ".", when at least half the columns have one; the other
+      columns are guessed with the rules below.
     - Names that start with a measure (FA_CC, fMRI_DefaultMode): the first
       part followed by "_", for example "FA_".
     - Names that start with a brain region (ctx-lh-cuneus_t1w_t2w_mean,
@@ -44,13 +45,18 @@ def measure_keys(cols) -> dict:
     - A name with no "_" or "." is its own group.
     """
     cols = [str(c) for c in cols]
-    if len(cols) >= 2 and all("." in c for c in cols):
-        dotted = {c: c.rsplit(".", 1)[1] for c in cols}
+    # the measure after the last "." when most names have one (a few other columns, such as
+    # a total or an ID-like column, no longer switch the whole guess to the start of the names)
+    dotted_cols = [c for c in cols if "." in c]
+    keys = {}
+    if len(dotted_cols) >= 2 and 2 * len(dotted_cols) >= len(cols):
+        dotted = {c: c.rsplit(".", 1)[1] for c in dotted_cols}
         if len(set(dotted.values())) >= 2:
-            return dotted
+            keys.update(dotted)
+    rest = [c for c in cols if c not in keys]
 
-    keys, region_first = {}, []
-    for c in cols:
+    region_first = []
+    for c in rest:
         parts = c.split("_")
         if len(parts) < 2:
             keys[c] = c
