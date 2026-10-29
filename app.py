@@ -676,6 +676,10 @@ if st.toggle("Check the batch and the covariates", value=False, key="show_demo_t
     _pal = px.colors.qualitative.Safe
     _plot_layout = dict(margin=dict(l=10, r=10, t=10, b=40), plot_bgcolor="white", paper_bgcolor="white",
                         font=dict(color="black"))
+    # long batch names (for example site, scanner and software version) get slanted labels and room below
+    _blong = max((len(str(b)) for b in _border), default=1)
+    _bangle = -40 if _blong > 8 else 0
+    _bextra = int(min(260, 5.2 * _blong)) if _blong > 8 else 0
     for _tab_ui, (_c, _role) in zip(st.tabs([_c for _c, _ in _roles]), _roles):
         _s = df[_c]
         _n_miss = int(_s.isna().sum())
@@ -710,9 +714,13 @@ if st.toggle("Check the batch and the covariates", value=False, key="show_demo_t
                                                 marker_color="#BBBBBB" if _v == "(missing)" else _pal[_i % len(_pal)],
                                                 customdata=_ct[_v], hovertemplate=f"Batch %{{x}}<br>{_v}: %{{customdata}} "
                                                 f"(%{{y:.0f}}%)<extra></extra>"))
-                        _f.update_layout(barmode="stack", height=300, legend=dict(orientation="h", y=-0.25),
-                                         yaxis_title="Participants of the batch (%)", xaxis_title="Batch",
-                                         xaxis=dict(type="category"), **_plot_layout)
+                        # legend above the plot, so it never covers the batch names
+                        _f.update_layout(barmode="stack", height=330 + _bextra,
+                                         legend=dict(orientation="h", x=0, xanchor="left", y=1.02, yanchor="bottom"),
+                                         xaxis=dict(type="category", title_text="Batch", automargin=True,
+                                                    tickangle=_bangle),
+                                         yaxis=dict(title_text="Participants of the batch (%)", automargin=True),
+                                         **{**_plot_layout, "margin": dict(l=10, r=10, t=40, b=40)})
                     else:
                         _f = go.Figure(go.Bar(
                             x=_all["Value"], y=_all["Participants"],
@@ -720,8 +728,10 @@ if st.toggle("Check the batch and the covariates", value=False, key="show_demo_t
                             text=[f"{n} ({p:.0f}%)" for n, p in zip(_all["Participants"], _all["Participants (%)"])],
                             textposition="outside", cliponaxis=False,
                             hovertemplate="%{x}: %{y} participants<extra></extra>"))
-                        _f.update_layout(height=300, yaxis_title="Participants", xaxis=dict(type="category"),
-                                         **_plot_layout)
+                        _f.update_layout(height=300 + (_bextra if _c == site_col else 0),
+                                         xaxis=dict(type="category", automargin=True,
+                                                    tickangle=_bangle if _c == site_col else None),
+                                         yaxis=dict(title_text="Participants", automargin=True), **_plot_layout)
                     st.plotly_chart(_f, use_container_width=True)
                 with _p2:
                     st.dataframe(_all, hide_index=True, use_container_width=True,
@@ -747,10 +757,11 @@ if st.toggle("Check the batch and the covariates", value=False, key="show_demo_t
                                                 marker_color="#2A6EBB", line_color="#2A6EBB", showlegend=False))
                             _ticks.append(f"{_bb}<br>n = {len(_yy)}<br>"
                                           f"{_nm} missing ({100 * _nm / max(len(_all_b), 1):.1f}%)")
-                        _f.update_layout(height=380, **{**_plot_layout, "margin": dict(l=70, r=10, t=10, b=80)})
+                        _f.update_layout(height=380 + _bextra, **{**_plot_layout, "margin": dict(l=70, r=10, t=10, b=80)})
                         _f.update_yaxes(title_text=_c)
                         _f.update_xaxes(type="category", tickvals=[str(b) for b in _border], ticktext=_ticks,
-                                        title_text="Batch")
+                                        title_text="Batch", automargin=True, tickangle=_bangle)
+                        _f.update_yaxes(automargin=True)
                     else:
                         # the distribution, and next to it how many values are present and missing
                         _f = make_subplots(rows=1, cols=2, column_widths=[0.82, 0.18], horizontal_spacing=0.06)
