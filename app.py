@@ -384,6 +384,20 @@ st.caption(
 if site_col is None:
     st.stop()
 
+# The participant ID column, chosen once here and used wherever CHORD lists participants
+# (guessed from the column names among columns with a different value in every row)
+_ROWNUM = "None (list participants by row number)"
+_id_guess0 = _guess_id_col(df, exclude={site_col})
+_id_opts0 = [_ROWNUM] + [c for c in all_cols if c != site_col]
+id_col = st.selectbox(
+    "Participant ID column", _id_opts0,
+    index=_id_opts0.index(_id_guess0) if _id_guess0 in _id_opts0 else 0, key="id_col_choice",
+    help="Guessed from the column names (participant_id, subject, subID, record or scan ID, ID ...) among the "
+         "columns with a different value in every row. CHORD uses it wherever it lists participants.")
+id_col = None if id_col == _ROWNUM else id_col
+if id_col and df[id_col].duplicated().any():
+    st.warning(f"{id_col} has the same value in more than one row; check that it is the participant ID.")
+
 # Age and sex are optional covariates, not required columns. They are suggested from the
 # column names and chosen (or set to None) in a list each in the covariate section below.
 _NONE = "None"
@@ -545,7 +559,7 @@ def _by_batch_table(data, batch_col, variables, categorical=None, ids=None):
 
 def _participant_ids(data):
     """IDs to list in the tables: the ID column chosen (or guessed), else the row number."""
-    col = st.session_state.get("id_col") or _guess_id_col(data, exclude={site_col})
+    col = id_col
     return (data[col] if col in data.columns else None), col
 
 
@@ -793,18 +807,21 @@ if st.toggle("Check the batch and the covariates", value=False, key="show_demo_t
                             _f.add_trace(go.Box(x=[str(_bb)] * len(_yy), y=_yy, name=str(_bb), boxpoints="outliers",
                                                 marker_color="#2A6EBB", line_color="#2A6EBB", showlegend=False),
                                          row=1, col=1)
-                        _f.add_trace(go.Bar(x=[str(b) for b in _border], y=_m_pct, marker_color="#222222",
-                                            showlegend=False, text=[f"{n} ({p:.0f}%)" if n else ""
-                                                                    for n, p in zip(_m_n, _m_pct)],
-                                            textposition="outside", cliponaxis=False, textfont=dict(size=10),
-                                            customdata=np.stack([_m_n, _n_b], axis=1),
-                                            hovertemplate="Batch %{x}: %{customdata[0]} of %{customdata[1]} "
-                                                          "missing (%{y:.1f}%)<extra></extra>"),
-                                     row=2, col=1)
-                        _f.update_layout(height=520 + _bextra,
-                                         **{**_plot_layout, "margin": dict(l=70, r=10, t=10, b=60)})
+                        # complete against missing values per batch, as counts with their share (Oni, 29 October 2026)
+                        _p_n = [n - m for n, m in zip(_n_b, _m_n)]
+                        for _nm_, _ys, _col in (("Present", _p_n, "#2A6EBB"), ("Missing", _m_n, "#222222")):
+                            _f.add_trace(go.Bar(x=[str(b) for b in _border], y=_ys, name=_nm_, marker_color=_col,
+                                                text=[f"{y} ({100 * y / max(n, 1):.1f}%)" for y, n in zip(_ys, _n_b)],
+                                                textposition="outside", cliponaxis=False, textfont=dict(size=10),
+                                                customdata=_n_b, legendgroup="pm", showlegend=True,
+                                                hovertemplate=f"Batch %{{x}}: %{{y}} of %{{customdata}} {_nm_.lower()}"
+                                                              "<extra></extra>"),
+                                         row=2, col=1)
+                        _f.update_layout(height=540 + _bextra, barmode="group",
+                                         legend=dict(orientation="h", x=0, xanchor="left", y=1.02, yanchor="bottom"),
+                                         **{**_plot_layout, "margin": dict(l=70, r=10, t=40, b=60)})
                         _f.update_yaxes(title_text=_axis_lab, automargin=True, row=1, col=1)
-                        _f.update_yaxes(title_text="Missing (%)", range=[0, max(_m_pct + [1.0]) * 1.35],
+                        _f.update_yaxes(title_text="Participants (n)", range=[0, max(_n_b + [1]) * 1.3],
                                         automargin=True, row=2, col=1)
                         _f.update_xaxes(type="category", automargin=True, row=1, col=1)
                         _f.update_xaxes(type="category", title_text="Batch", automargin=True, tickangle=_bangle,
@@ -1365,17 +1382,14 @@ if _show_miss_tools:
         _mm = _mm[_mm["Participants missing (n)"] > 0].sort_values("Participants missing (n)", ascending=False)
         st.dataframe(_mm, use_container_width=True, hide_index=True)
 
-        # Which participants these are, on request; the ID column is guessed from its name.
+        # Which participants these are, on request, by the participant ID column chosen in Step 2.
         if st.toggle("Show participants with missing model variables/covariates", key="show_missing_ids"):
-            _id_guess = _guess_id_col(df, exclude=set(_model_vars) | set(feature_cols))
-            _id_opts = [c for c in df.columns if c not in set(feature_cols)]
-            _id_col = st.selectbox(
-                "Participant ID column", _id_opts,
-                index=_id_opts.index(_id_guess) if _id_guess in _id_opts else 0, key="id_col",
-                help="Guessed from the column names; pick another column if this is not the participant ID.")
+            st.caption(f"Participants listed by {id_col} (the participant ID column chosen in Step 2)." if id_col
+                       else "Participants listed by row number (no participant ID column chosen in Step 2).")
             _inc = df[df[_model_vars].isna().any(axis=1)]
             _ids = pd.DataFrame({
-                "Participant": _inc[_id_col].astype(str).values,
+                "Participant": (_inc[id_col].astype(str).values if id_col
+                                else [f"Row {df.index.get_loc(r) + 1}" for r in _inc.index]),
                 "Missing":     [", ".join(v for v in _model_vars if pd.isna(r[v]))
                                 for _, r in _inc[_model_vars].iterrows()],
             })
@@ -1432,7 +1446,7 @@ if _show_miss_tools:
             _f_thr_now = float(st.session_state.get("miss_assess_thr", 10.0) or 0.0)
             _p_thr_now = float(st.session_state.get("miss_assess_part_thr", 10.0) or 0.0)
             _ck = st.session_state.get("_miss_curve_n", 0)
-            _pid_c = st.session_state.get("id_col") or _guess_id_col(df, exclude=set(_model_vars) | set(feats_l))
+            _pid_c = id_col
             _excl_rows_set = set(_excl_part_rows)
 
             def _part_entries(rows):
@@ -1570,7 +1584,7 @@ if _show_miss_tools:
             # ── per batch ──
             st.markdown("**Missing values per batch**")
             _has_batch = df[site_col].notna()
-            _pid = st.session_state.get("id_col") or _guess_id_col(df, exclude=set(_model_vars) | set(feats_l))
+            _pid = id_col
             _bt = []
             for b in natural_sorted(df.loc[_has_batch, site_col].astype(str).unique()):
                 _in = _has_batch & (df[site_col].astype(str) == b)
@@ -1607,7 +1621,7 @@ if _show_miss_tools:
 
             # ── per participant ──
             st.markdown("**Missing values per participant**")
-            _pid = st.session_state.get("id_col") or _guess_id_col(df, exclude=set(_model_vars) | set(feats_l))
+            _pid = id_col
             _rows = part_pct > 0
             _first = (df.loc[_rows, _pid].astype(str).values if _pid in df.columns
                       else np.flatnonzero(_rows.values) + 1)
@@ -1663,7 +1677,7 @@ if _show_miss_tools:
     _xp_thr = (st.session_state.get("_excl_part_info") or {}).get("threshold")
     _n_feat_all = len(feature_cols) + len([d for d in _xf if d["Feature"] not in set(feature_cols)])
     _mv_rows = df.index[df[_model_vars].isna().any(axis=1) & ~df.index.isin(_excl_part_rows)]
-    _pid_s = st.session_state.get("id_col") or _guess_id_col(df, exclude=set(_model_vars) | set(feature_cols))
+    _pid_s = id_col
 
     def _pl(r):
         return str(df.at[r, _pid_s]) if _pid_s in df.columns and pd.notna(df.at[r, _pid_s]) else f"Row {df.index.get_loc(r) + 1}"
