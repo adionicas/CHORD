@@ -402,6 +402,7 @@ TEMPLATE = """<!DOCTYPE html>
   The dataset comprised <b>{{ n_participants }}</b> participants acquired across
   <b>{{ n_sites }}</b> batches ({{ site_list }}).
   A total of <b>{{ n_features }}</b> imaging features were submitted for harmonization.
+  {% if recoded_text %}{{ recoded_text }}{% endif %}
   {% if n_retained != n_participants %}
   {% if excl_reasons %}
   After excluding {{ n_participants - n_retained }} participants
@@ -1079,6 +1080,7 @@ def generate_report(
     covariates_cat=None,
     ancova_covars=None,
     fig_icc_ci=None,
+    recoded_text="",
 ) -> str:
 
     sites = natural_sorted(df_raw[site_col].dropna().unique().astype(str))
@@ -1132,6 +1134,7 @@ def generate_report(
     tmpl = Template(TEMPLATE)
     html = tmpl.render(
         data_prep_tables     = data_prep_tables,
+        recoded_text         = recoded_text,
         part_table_label     = part_table_label,
         overview_table_label = overview_table_label,
         missing_overview     = missing_overview,

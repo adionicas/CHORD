@@ -120,6 +120,30 @@ elif st.session_state.get("use_demo"):
 if df is None:
     st.stop()
 
+# Values set to missing in the demographics check (Step 2). They are applied here, before
+# anything reads the table, so every step, the harmonized table and the report treat them as
+# missing; df_original keeps the values as loaded, to choose them from.
+def _value_label(v):
+    """A value as shown in CHORD's lists: whole numbers without decimals (1, not 1.0)."""
+    return f"{v:g}" if isinstance(v, (int, float, np.number)) else str(v)
+
+
+def _save_recode(key, col):
+    st.session_state.setdefault("_recode_store", {}).setdefault(key, {})[col] = \
+        list(st.session_state.get(f"recode_w_{col}", []))
+
+
+df_original = df
+recoded = []                                   # (column, value, participants) for the report
+_recode_now = {c: v for c, v in st.session_state.get("_recode_store", {}).get(data_key, {}).items()
+               if v and c in df.columns}
+if _recode_now:
+    df = df.copy()
+    for _c, _vals in _recode_now.items():
+        _labs = df[_c].map(lambda x: _value_label(x) if pd.notna(x) else None)
+        recoded += [(_c, _val, int((_labs == _val).sum())) for _val in _vals if (_labs == _val).any()]
+        df.loc[_labs.isin(_vals), _c] = np.nan
+
 st.success(f"Data loaded: **{df.shape[0]} participants** × **{df.shape[1]} columns**")
 with st.expander("Preview data", expanded=True):
     _whole = st.toggle("Show the whole table", key="preview_whole_table")
@@ -451,80 +475,151 @@ def _fmt_val(v):
     return f"{v:g}" if isinstance(v, (int, float, np.number)) else str(v)
 
 
-def _by_batch_table(data, batch_col, variables, categorical=None):
+def _by_batch_table(data, batch_col, variables, categorical=None, ids=None):
     """
     One row per batch plus an Overall row (participants with a batch value), with two header
     levels: N, then for each variable either Mean (SD), Range and Missing n (%) when it is
     continuous, or n (%) per value and Missing when it is in ``categorical`` (as the user set it;
     by default the categorical covariates) or is not a number. Missing is always shown.
+    ``table.attrs["cells"]`` holds, per (batch, column), a sort key and, for every count, the IDs
+    of the participants it counts (``ids``: a Series of participant IDs aligned with ``data``).
     """
     categorical = set(categorical_covariates if categorical is None else categorical)
     data = data[data[batch_col].notna()]
+    ids = (ids.loc[data.index].astype(str) if ids is not None
+           else pd.Series([f"row {k + 1}" for k in data.index], index=data.index))
     labels = natural_sorted(data[batch_col].unique().astype(str)) + ["Overall"]
-
-    def n_pct(n, total):
-        return f"{n} ({100 * n / total:.0f}%)" if total else "0"
-
     subsets = [data if lab == "Overall" else data[data[batch_col].astype(str) == lab] for lab in labels]
+    cells = {}
+
+    def count(lab, col, sub, mask):
+        n = int(mask.sum())
+        cells[(lab, col)] = {"k": n, "ids": ids.loc[sub.index[mask.values]].tolist()}
+        return f"{n} ({100 * n / len(sub):.0f}%)" if len(sub) else "0"
+
     columns = {("Batch", ""): labels, ("N", ""): [len(sub) for sub in subsets]}
+    for k, lab in enumerate(labels):
+        cells[(lab, ("Batch", ""))] = {"k": k}
+        cells[(lab, ("N", ""))] = {"k": len(subsets[k])}
     for var in variables:
         if var not in categorical and pd.api.types.is_numeric_dtype(data[var]):
-            means, ranges, miss = [], [], []
-            for sub in subsets:
+            cm, cr, cx = (var, "Mean (SD)"), (var, "Range"), (var, "Missing, n (%)")
+            columns[cm], columns[cr], columns[cx] = [], [], []
+            for lab, sub in zip(labels, subsets):
                 vals = sub[var].dropna()
-                means.append(f"{vals.mean():.2f} ({vals.std():.2f})" if len(vals) else "—")
-                ranges.append(f"{_fmt_num(vals.min())} to {_fmt_num(vals.max())}" if len(vals) else "—")
-                miss.append(n_pct(int(sub[var].isna().sum()), len(sub)))
-            columns[(var, "Mean (SD)")] = means
-            columns[(var, "Range")] = ranges
-            columns[(var, "Missing, n (%)")] = miss
+                columns[cm].append(f"{vals.mean():.2f} ({vals.std():.2f})" if len(vals) else "—")
+                columns[cr].append(f"{_fmt_num(vals.min())} to {_fmt_num(vals.max())}" if len(vals) else "—")
+                cells[(lab, cm)] = {"k": float(vals.mean()) if len(vals) else None}
+                cells[(lab, cr)] = {"k": float(vals.min()) if len(vals) else None}
+                columns[cx].append(count(lab, cx, sub, sub[var].isna()))
         else:
             head = f"{var}, n (%)"
-            order = natural_sorted(data[var].dropna().map(_fmt_val).unique())
+            labs_all = data[var].map(lambda v: _fmt_val(v) if pd.notna(v) else None)
+            order = natural_sorted(labs_all.dropna().unique())
             shown, rest = order[:8], order[8:]
             for v in shown:
-                columns[(head, v)] = [n_pct(int((sub[var].dropna().map(_fmt_val) == v).sum()), len(sub))
-                                      for sub in subsets]
+                columns[(head, v)] = [count(lab, (head, v), sub, labs_all.loc[sub.index] == v)
+                                      for lab, sub in zip(labels, subsets)]
             if rest:
-                columns[(head, f"{len(rest)} other values")] = [
-                    n_pct(int(sub[var].dropna().map(_fmt_val).isin(rest).sum()), len(sub)) for sub in subsets]
-            columns[(head, "Missing")] = [n_pct(int(sub[var].isna().sum()), len(sub)) for sub in subsets]
+                c_rest = (head, f"{len(rest)} other values")
+                columns[c_rest] = [count(lab, c_rest, sub, labs_all.loc[sub.index].isin(rest))
+                                   for lab, sub in zip(labels, subsets)]
+            columns[(head, "Missing")] = [count(lab, (head, "Missing"), sub, sub[var].isna())
+                                          for lab, sub in zip(labels, subsets)]
     out = pd.DataFrame(columns)
     out.columns = pd.MultiIndex.from_tuples(out.columns)
+    out.attrs["cells"] = cells
     return out
 
 
-def _show_by_batch_table(table, key):
-    """The by-batch table with two header levels (variable, then what is shown), and a CSV download."""
-    from html import escape
+def _participant_ids(data):
+    """IDs to list in the tables: the ID column chosen (or guessed), else the row number."""
+    col = st.session_state.get("id_col") or _guess_id_col(data, exclude={site_col})
+    return (data[col] if col in data.columns else None), col
+
+
+def _show_by_batch_table(table, key, id_col=None):
+    """
+    The by-batch table with two header levels (variable, then what is shown): a click on a
+    column header sorts by it (Overall stays last), a click on a count lists the participants
+    it counts. A CSV download keeps the table's values.
+    """
+    import json as _json
+    cells = table.attrs.get("cells", {})
+    cols = list(table.columns)
     groups = []                                   # [top header, number of columns]
-    for top, _ in table.columns:
+    for top, _ in cols:
         if groups and groups[-1][0] == top:
             groups[-1][1] += 1
         else:
             groups.append([top, 1])
-    head1, head2 = [], []
-    for top, n in groups:
-        subs = [sub for t, sub in table.columns if t == top]
-        if subs == [""]:
-            head1.append(f'<th rowspan="2">{escape(str(top))}</th>')
-        else:
-            head1.append(f'<th colspan="{n}">{escape(str(top))}</th>')
-            head2 += [f"<th>{escape(str(sub))}</th>" for sub in subs]
-    body = []
+    rows = []
     for _, row in table.iterrows():
-        cells = "".join(f'<td class="{"num" if k > 0 else "lab"}">{escape(str(v))}</td>' for k, v in enumerate(row))
-        body.append(f'<tr class="overall">{cells}</tr>' if row[("Batch", "")] == "Overall" else f"<tr>{cells}</tr>")
-    st.markdown(
-        "<style>.chord-bybatch{overflow-x:auto;margin:0 0 .5rem}"
-        ".chord-bybatch table{border-collapse:collapse;font-size:.85rem;width:100%}"
-        ".chord-bybatch th,.chord-bybatch td{border:1px solid rgba(128,128,128,.3);padding:.3rem .55rem;white-space:nowrap}"
-        ".chord-bybatch th{font-weight:600;text-align:center;background:rgba(128,128,128,.08)}"
-        ".chord-bybatch td.num{text-align:right}.chord-bybatch td.lab{text-align:left}"
-        ".chord-bybatch tr.overall td{font-weight:600;border-top:2px solid rgba(128,128,128,.6)}</style>"
-        f'<div class="chord-bybatch"><table><thead><tr>{"".join(head1)}</tr><tr>{"".join(head2)}</tr></thead>'
-        f'<tbody>{"".join(body)}</tbody></table></div>',
-        unsafe_allow_html=True)
+        lab = row[("Batch", "")]
+        rows.append({"overall": lab == "Overall",
+                     "c": [{"t": str(row[c]), **{k: v for k, v in cells.get((lab, c), {}).items()}} for c in cols]})
+    payload = {"groups": groups, "cols": [[str(t), str(s_)] for t, s_ in cols], "rows": rows,
+               "idcol": id_col or "row number"}
+    page = """<style>
+body{margin:0;font-family:"Source Sans Pro",-apple-system,system-ui,sans-serif;color:#31333F;background:transparent}
+table{border-collapse:collapse;font-size:14px;width:100%}
+th,td{border:1px solid rgba(128,128,128,.3);padding:5px 9px;white-space:nowrap}
+th{font-weight:600;text-align:center;background:rgba(128,128,128,.08)}
+th.leaf{cursor:pointer;user-select:none}th.leaf:hover{background:rgba(128,128,128,.18)}
+th .arr{color:#888;font-size:11px;margin-left:4px}
+td.num{text-align:right}td.lab{text-align:left}
+td.ids{cursor:pointer;text-decoration:underline dotted rgba(128,128,128,.7);text-underline-offset:3px}
+td.ids:hover{background:rgba(255,75,75,.08)}td.sel{background:rgba(255,75,75,.15)!important}
+tr.overall td{font-weight:600;border-top:2px solid rgba(128,128,128,.6)}
+.wrap{overflow-x:auto}.hint{font-size:12.5px;color:#808495;margin:6px 0}
+.panel{border:1px solid rgba(128,128,128,.3);border-radius:6px;padding:8px 10px;margin-top:6px;font-size:13.5px}
+.panel textarea{width:100%;box-sizing:border-box;height:72px;font:12.5px ui-monospace,Menlo,monospace;margin-top:5px}
+.panel button{float:right;border:1px solid rgba(128,128,128,.4);background:#fff;border-radius:5px;cursor:pointer}
+</style><div class="wrap"><table><thead id="h"></thead><tbody id="b"></tbody></table></div>
+<div class="hint">Click a column header to sort; click a count to list the participants it counts (IDs from <b id="idc"></b>).</div>
+<div id="p"></div>
+<script>
+const D = __DATA__;
+let sortCol = null, asc = true, selected = null;
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+document.getElementById('idc').textContent = D.idcol;
+function head() {
+  let r1 = '', r2 = '', ci = 0;
+  for (const [top, n] of D.groups) {
+    const subs = D.cols.slice(ci, ci + n).map(c => c[1]);
+    if (n === 1 && subs[0] === '') { r1 += `<th rowspan="2" class="leaf" data-c="${ci}">${esc(top)}${arrow(ci)}</th>`; }
+    else { r1 += `<th colspan="${n}">${esc(top)}</th>`; subs.forEach((s, k) => { r2 += `<th class="leaf" data-c="${ci + k}">${esc(s)}${arrow(ci + k)}</th>`; }); }
+    ci += n;
+  }
+  document.getElementById('h').innerHTML = `<tr>${r1}</tr><tr>${r2}</tr>`;
+  document.querySelectorAll('th.leaf').forEach(th => th.onclick = () => {
+    const c = +th.dataset.c; if (sortCol === c) asc = !asc; else { sortCol = c; asc = true; } draw(); });
+}
+function arrow(c) { return sortCol === c ? `<span class="arr">${asc ? '▲' : '▼'}</span>` : ''; }
+function draw() {
+  head();
+  const body = D.rows.filter(r => !r.overall), tail = D.rows.filter(r => r.overall);
+  if (sortCol !== null) body.sort((a, b) => {
+    const x = a.c[sortCol].k, y = b.c[sortCol].k;
+    if (x === null || x === undefined) return 1; if (y === null || y === undefined) return -1;
+    return (x < y ? -1 : x > y ? 1 : 0) * (asc ? 1 : -1); });
+  document.getElementById('b').innerHTML = body.concat(tail).map((r, ri) => `<tr class="${r.overall ? 'overall' : ''}">` +
+    r.c.map((c, k) => `<td class="${k ? 'num' : 'lab'}${c.ids ? ' ids' : ''}" data-r="${D.rows.indexOf(r)}" data-c="${k}">${esc(c.t)}</td>`).join('') + '</tr>').join('');
+  document.querySelectorAll('td.ids').forEach(td => td.onclick = () => show(+td.dataset.r, +td.dataset.c, td));
+}
+function show(r, c, td) {
+  document.querySelectorAll('td.sel').forEach(x => x.classList.remove('sel')); td.classList.add('sel');
+  const row = D.rows[r], cell = row.c[c], col = D.cols[c];
+  const what = col[1] === 'Missing' || col[1].startsWith('Missing') ? `missing ${col[0].replace(/, n \(%\)$/, '')}` : `${col[0].replace(/, n \(%\)$/, '')} = ${col[1]}`;
+  document.getElementById('p').innerHTML = `<div class="panel"><button onclick="document.getElementById('p').innerHTML='';document.querySelectorAll('td.sel').forEach(x=>x.classList.remove('sel'))">Close</button>` +
+    `<b>${esc(row.c[0].t)}</b>, ${esc(what)}: ${cell.ids.length} participant(s)` +
+    (cell.ids.length ? `<textarea readonly onclick="this.select()">${esc(cell.ids.join(', '))}</textarea>` : '') + '</div>';
+}
+draw();
+</script>""".replace("__DATA__", _json.dumps(payload).replace("</", "<\\/"))
+    from streamlit.components.v1 import html as _html_component
+    _html_component(page, height=min(90 + 34 * len(rows) + 150, 900), scrolling=True)
+    st.session_state.setdefault("_by_batch_tables", {})[key] = table   # for the interface tests
     flat = table.copy()
     flat.columns = [top if sub == "" else f"{top}: {sub}" for top, sub in table.columns]
     st.download_button("Download this table (CSV)", flat.to_csv(index=False).encode("utf-8"),
@@ -561,7 +656,9 @@ if st.toggle("Check the batch and the covariates", value=False, key="show_demo_t
         st.caption("A variable in both lists is described as a category: "
                    + ", ".join(sorted(set(_demo_cont) & _demo_cat_set)) + ".")
     st.markdown("By batch")
-    _show_by_batch_table(_by_batch_table(df, site_col, _demo_vars, categorical=_demo_cat_set), "demo_by_batch_table")
+    _pids, _pid_col = _participant_ids(df)
+    _show_by_batch_table(_by_batch_table(df, site_col, _demo_vars, categorical=_demo_cat_set, ids=_pids),
+                         "demo_by_batch_table", _pid_col)
     _no_batch = int(df[site_col].isna().sum())
     st.caption("Continuous variables: mean (SD), range and missing n (%); categorical variables: n (%) per value "
                "and missing n (%). Missing is shown also when it is 0."
@@ -639,30 +736,21 @@ if st.toggle("Check the batch and the covariates", value=False, key="show_demo_t
                 _h1, _h2 = st.columns([3, 2])
                 with _h1:
                     if _by_b:
-                        # boxes per batch, and under them each batch's present and missing values
-                        _f = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3],
-                                           vertical_spacing=0.12)
+                        # boxes per batch; under each, the batch's n and its missing values
+                        _f = go.Figure()
+                        _ticks = []
                         for _bb in _border:
-                            _yy = _bdf.loc[_bdf["_batch"] == _bb, _c].dropna()
+                            _all_b = _bdf.loc[_bdf["_batch"] == _bb, _c]
+                            _yy = _all_b.dropna()
+                            _nm = int(_all_b.isna().sum())
                             _f.add_trace(go.Box(x=[str(_bb)] * len(_yy), y=_yy, name=str(_bb), boxpoints="outliers",
-                                                marker_color="#2A6EBB", line_color="#2A6EBB", showlegend=False),
-                                         row=1, col=1)
-                        _mb = [100 * float(_bdf.loc[_bdf["_batch"] == _bb, _c].isna().mean()) for _bb in _border]
-                        _f.add_trace(go.Bar(x=[str(b) for b in _border], y=[100 - m for m in _mb], name="Present",
-                                            marker_color="#DDDDDD", hovertemplate="Batch %{x}: %{y:.1f}% present<extra></extra>"),
-                                     row=2, col=1)
-                        _f.add_trace(go.Bar(x=[str(b) for b in _border], y=_mb, name="Missing", marker_color="#222222",
-                                            hovertemplate="Batch %{x}: %{y:.1f}% missing<extra></extra>"),
-                                     row=2, col=1)
-                        _f.add_trace(go.Scatter(x=[str(b) for b in _border], y=[102] * len(_border), mode="text",
-                                                text=[f"{m:.1f}% missing" if m > 0 else "" for m in _mb],
-                                                textposition="top center", showlegend=False, hoverinfo="skip"),
-                                     row=2, col=1)
-                        _f.update_layout(height=460, barmode="stack", legend=dict(orientation="h", y=-0.18),
-                                         **{**_plot_layout, "margin": dict(l=70, r=10, t=10, b=40)})
-                        _f.update_yaxes(title_text=_c, row=1, col=1)
-                        _f.update_yaxes(title_text="% of batch", range=[0, 125], tickvals=[0, 50, 100], row=2, col=1)
-                        _f.update_xaxes(type="category", title_text="Batch", row=2, col=1)
+                                                marker_color="#2A6EBB", line_color="#2A6EBB", showlegend=False))
+                            _ticks.append(f"{_bb}<br>n = {len(_yy)}<br>"
+                                          f"{_nm} missing ({100 * _nm / max(len(_all_b), 1):.1f}%)")
+                        _f.update_layout(height=380, **{**_plot_layout, "margin": dict(l=70, r=10, t=10, b=80)})
+                        _f.update_yaxes(title_text=_c)
+                        _f.update_xaxes(type="category", tickvals=[str(b) for b in _border], ticktext=_ticks,
+                                        title_text="Batch")
                     else:
                         # the distribution, and next to it how many values are present and missing
                         _f = make_subplots(rows=1, cols=2, column_widths=[0.82, 0.18], horizontal_spacing=0.06)
@@ -691,6 +779,27 @@ if st.toggle("Check the batch and the covariates", value=False, key="show_demo_t
                         hide_index=True, use_container_width=True)
             else:
                 st.markdown(f"**{_c}** ({_role}): no values; {_miss_txt}")
+            if _c != site_col:
+                # values that are codes, not data (Refused, Unknown, -999), set to missing
+                _raw = df_original[_c].dropna()
+                if _cat or not pd.api.types.is_numeric_dtype(_raw):
+                    _ropts = natural_sorted(_raw.map(_value_label).unique())
+                else:
+                    _u = list(np.sort(_raw.unique()))
+                    _ropts = [_value_label(x) for x in (_u if len(_u) <= 20 else _u[:10] + _u[-10:])]
+                _store = st.session_state.setdefault("_recode_store", {}).setdefault(data_key, {})
+                st.multiselect(
+                    "Set values to missing", options=_ropts,
+                    default=[v for v in _store.get(_c, []) if v in _ropts], key=f"recode_w_{_c}",
+                    on_change=_save_recode, args=(data_key, _c),
+                    placeholder="for example Refused, Unknown or -999",
+                    help="For values that are codes rather than data. They then count as missing everywhere in "
+                         "CHORD: when this variable is a covariate, the participants with them are left out of "
+                         "the harmonization. The report and the Methods paragraph say which values were set to "
+                         "missing. For numbers, the 10 lowest and 10 highest values are offered.")
+                _done = [(v, n) for c_, v, n in recoded if c_ == _c]
+                if _done:
+                    st.caption("Set to missing: " + ", ".join(f"{v} (n = {n})" for v, n in _done) + ".")
 
 exclude_meta  = {site_col, age_col, sex_col} | set(extra_cont_add) | set(extra_cat_add)
 auto_features = [c for c in num_cols if c not in exclude_meta]
@@ -1594,9 +1703,10 @@ st.caption(
     "the rest. Excluded batches are left out of the harmonization and the report. The table shows "
     "the model variables; for other variables, use \"Show a demographic table by batch\" in Step 2."
 )
+_xpids, _xpid_col = _participant_ids(df)
 _show_by_batch_table(
     _by_batch_table(df, site_col, [c for c in [age_used, sex_used] + extra_continuous + extra_categorical
-                                   if c and c in df.columns]), "exclusion_by_batch_table")
+                                   if c and c in df.columns], ids=_xpids), "exclusion_by_batch_table", _xpid_col)
 st.caption("N = participants per batch. Continuous variables: mean (SD), range and missing n (%); "
            "categorical variables: n (%) per value and missing n (%).")
 
@@ -2011,7 +2121,10 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
         else:
             fdr_note = ("Benjamini-Hochberg false discovery rate correction was applied across all "
                         f"{len(feature_cols)} features.")
+        recoded_text = ("The following values were recoded as missing before harmonization: "
+                        + "; ".join(f"{c} = {v} (n = {n})" for c, v, n in recoded) + ".") if recoded else ""
         html_report = generate_report(
+            recoded_text=recoded_text,
             df_raw=df, site_col=site_col, age_col=age_col, sex_col=sex_col,
             feature_cols=feature_cols, n_retained=n_retained,
             modality_groups=modality_groups,
@@ -2067,9 +2180,9 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
             include_extra_assoc=(include_extra_assoc and len(extra_assoc_df) > 0),
             assoc_cont_vars=assoc_cont_vars,
             assoc_cat_vars=assoc_cat_vars,
-            data_prep_text=data_prep_sentence(
+            data_prep_text=" ".join(x for x in (recoded_text, data_prep_sentence(
                 missing_overview, st.session_state.get("_excl_info"),
-                st.session_state.get("_excl_part_info") if _excl_part_rows else None, missing_mode),
+                st.session_state.get("_excl_part_info") if _excl_part_rows else None, missing_mode)) if x),
         )
 
         progress.progress(100, "Done.")
