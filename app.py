@@ -1205,10 +1205,11 @@ def _matrix_figure(data_key, rows_key, site_col, covariate_cols, feats, groups, 
         missing_only=missing_only, title=title, order_by_missing=order_by_missing)
 
 
-def _show_matrix_preview(rows_df, rows_key, feats, title, marked=None, missing_only=None):
+def _show_matrix_preview(rows_df, rows_key, feats, title, marked=None, missing_only=None, groups_override=None):
     covs = [c for c in [age_col, sex_col] + extra_continuous + extra_categorical
             if c and c in rows_df.columns]
-    groups = tuple((g, tuple(c)) for g, c in modality_groups.items()) if modality_groups else None
+    _src_groups = groups_override or modality_groups
+    groups = tuple((g, tuple(c)) for g, c in _src_groups.items()) if _src_groups else None
     try:
         fig, note = _matrix_figure(
             data_key, rows_key, site_col, tuple(covs), tuple(feats), groups,
@@ -1246,10 +1247,16 @@ with _pv2:
                    "of missing values.")
 _preview_excluded = [d.get("Feature") for d in st.session_state.get("_excl_feat_list", [])
                      if d.get("Feature") in df.columns]
+# with modality groups, each excluded feature goes back to the group it was in when excluded,
+# so the map shows it right after that group
+_excl_group_of = {d.get("Feature"): d.get("Modality group") for d in st.session_state.get("_excl_feat_list", [])}
+_preview_groups = ({g: list(c) + [f for f in _preview_excluded if _excl_group_of.get(f) == g and f not in c]
+                    for g, c in modality_groups.items()} if modality_groups and _preview_excluded else None)
 _show_matrix_preview(
     df, "all", list(feature_cols) + [f for f in _preview_excluded if f not in feature_cols],
     "Before exclusions",
-    marked=("Excluded for missingness", _preview_excluded) if _preview_excluded else None)
+    marked=("Excluded for missingness", _preview_excluded) if _preview_excluded else None,
+    groups_override=_preview_groups)
 
 # ── Missing value assessment ────────────────────────────────────────────────
 st.markdown("---")
@@ -1354,13 +1361,16 @@ if _show_miss_tools:
             # ── features by share missing: the curve, then the threshold under it ──
             st.markdown("**How many features and participants are above each percentage missing**")
             st.caption("The first curve gives, for every percentage x, the features with more than x% of the "
-                       "participants missing" + (", one line per modality group as defined above"
+                       "participants missing" + (", for each modality group as defined above"
                                                  if modality_groups else
                        " (define the groups under \"Multiple imaging modalities or measure types\" above "
                        "to get one line per modality or measure type)")
                        + "; the second, the participants missing more than x% of the selected features. "
                        "Set a threshold in the box under each curve, or click a point on a line to see who or "
-                       "what is above it; both can exclude them with that threshold.")
+                       "what is above it; both can exclude them with that threshold. After an exclusion, the solid "
+                       "line shows the participants and features still included and the grey dashed line all of "
+                       "them before the exclusions; the feature percentages are counted on the participants still "
+                       "included.")
             _f_thr_now = float(st.session_state.get("miss_assess_thr", 10.0) or 0.0)
             _p_thr_now = float(st.session_state.get("miss_assess_part_thr", 10.0) or 0.0)
             _ck = st.session_state.get("_miss_curve_n", 0)
@@ -1375,9 +1385,24 @@ if _show_miss_tools:
                          "Features missing (%)": round(float(part_pct[r]), 1)}
                         for r in rows if r not in _excl_rows_set]
 
+            # after exclusions the curves show the participants and features still included (solid),
+            # with all of them before the exclusions as a grey dashed line
+            _kept_rows = df.index[~df.index.isin(_excl_part_rows)]
+            _any_excl = bool(_excluded_before) or bool(_excl_part_rows)
+            feat_pct = 100 * df.loc[_kept_rows, feats_l].isna().mean()     # on the participants still included
+            _before_cols = feats_l + [c for c in _excluded_before if c not in feats_l]
+            _f_before = 100 * df[_before_cols].isna().mean() if _any_excl else None
+            _p_before = 100 * df[_before_cols].isna().mean(axis=1) if _any_excl else None
+            _measure_all = ({c: _col_group.get(c) or _excl_group_of.get(c) or "Not in a group" for c in _before_cols}
+                            if modality_groups else None)
+            _sep = bool(modality_groups) and st.toggle(
+                "One plot per modality group", value=True, key="miss_curve_separate",
+                help="Each modality group in its own plot; off: all groups as lines in one plot.")
+
             _clicked = None
             # features
-            _ev_f = st.plotly_chart(plot_missing_curve(feat_pct, measure_of or None, _f_thr_now),
+            _ev_f = st.plotly_chart(plot_missing_curve(feat_pct, _measure_all or None, _f_thr_now,
+                                                       before=_f_before, separate=_sep),
                                     use_container_width=True, on_select="rerun", selection_mode="points",
                                     key=f"miss_curve_f_{_ck}")
             _pts = (_ev_f or {}).get("selection", {}).get("points", []) if _ev_f else []
@@ -1385,20 +1410,28 @@ if _show_miss_tools:
                 _clicked = ("features", float(_pts[0]["x"]))
             fc1, fc2 = st.columns([1, 3])
             with fc1:
+                st.session_state.setdefault("miss_assess_thr", 10.0)   # also set by a click on the curve
                 a_thr = st.number_input("Threshold: participants missing (%)", min_value=0.0, max_value=100.0,
-                                        value=10.0, step=1.0, key="miss_assess_thr")
+                                        step=1.0, key="miss_assess_thr")
             _f_over = feat_pct[feat_pct > a_thr].sort_values(ascending=False)
             with fc2:
                 st.markdown(
                     f"<br>**Features:** **{len(_f_over)} of {len(feats_l)} "
                     f"({100 * len(_f_over) / max(len(feats_l), 1):.1f}%)** have more than "
                     f"{a_thr:g}% of the participants missing.", unsafe_allow_html=True)
+                if modality_groups and feats_l:
+                    _g_size = pd.Series([measure_of[c] for c in feats_l]).value_counts()
+                    _g_over = pd.Series([measure_of[c] for c in _f_over.index], dtype=object).value_counts()
+                    st.markdown("By modality group: " + "; ".join(
+                        f"**{g}** {int(_g_over.get(g, 0))} of {int(_g_size[g])} "
+                        f"({100 * _g_over.get(g, 0) / _g_size[g]:.1f}%)" for g in measures if g in _g_size))
                 if len(_f_over):
                     st.button(f"Exclude these {len(_f_over)} feature(s)", key="curve_excl_feats",
                               on_click=_record_feature_exclusion,
                               args=(list(_f_over.index), a_thr, _f_over.to_dict(), modality_groups))
             # participants
-            _ev_p = st.plotly_chart(plot_missing_curve(part_pct, None, _p_thr_now, kind="participants"),
+            _ev_p = st.plotly_chart(plot_missing_curve(part_pct.loc[_kept_rows], None, _p_thr_now,
+                                                       kind="participants", before=_p_before),
                                     use_container_width=True, on_select="rerun", selection_mode="points",
                                     key=f"miss_curve_p_{_ck}")
             _pts = (_ev_p or {}).get("selection", {}).get("points", []) if _ev_p else []
@@ -1406,8 +1439,9 @@ if _show_miss_tools:
                 _clicked = ("participants", float(_pts[0]["x"]))
             pc1, pc2 = st.columns([1, 3])
             with pc1:
+                st.session_state.setdefault("miss_assess_part_thr", 10.0)   # also set by a click on the curve
                 p_thr = st.number_input("Threshold: features missing (%)", min_value=0.0, max_value=100.0,
-                                        value=10.0, step=1.0, key="miss_assess_part_thr")
+                                        step=1.0, key="miss_assess_part_thr")
             _p_over = part_pct[(part_pct > p_thr) & ~part_pct.index.isin(_excl_part_rows)]
             with pc2:
                 st.markdown(
@@ -1636,28 +1670,29 @@ if _show_miss_tools:
     missing_mode = _MISS_OPTS[missing_mode_label]
     per_feature = (missing_mode == "per_feature")
 
-    st.markdown("**What each method does**")
-    _methods = pd.DataFrame([
-        {"Method": "Complete case",
-         "What it does": "Drops any participant missing any feature in the run",
-         "Empirical Bayes": "Yes",
-         "Participants used": "Only participants complete on all features"},
-        {"Method": "Median imputation (default)",
-         "What it does": "Fills each missing value with that feature's median, harmonizes, then restores the originally missing cells to blank; suits data with few missing values",
-         "Empirical Bayes": "Yes",
-         "Participants used": "All participants"},
-        {"Method": "Missing-pattern grouping",
-         "What it does": "Harmonizes together the features missing in the same participants, one Empirical Bayes run per pattern; suits scattered missing data",
-         "Empirical Bayes": "Yes, except for a feature whose missing pattern no other feature shares",
-         "Participants used": "Each participant, for the features they have"},
-        {"Method": "Do not use Empirical Bayes",
-         "What it does": "Harmonizes each feature on its own complete cases, one feature at a time; Step 4 then runs EB=FALSE only",
-         "Empirical Bayes": "No",
-         "Participants used": "Each participant, for the features they have"},
-    ])
-    # a plain table without row numbers, with the text wrapped
-    st.markdown("| " + " | ".join(_methods.columns) + " |\n|" + "---|" * len(_methods.columns) + "\n"
-                + "\n".join("| " + " | ".join(str(v) for v in r) + " |" for r in _methods.itertuples(index=False)))
+    # the table of the methods only on request (Oni, 29 October 2026)
+    if st.toggle("Show what each method does", value=False, key="show_method_table"):
+        _methods = pd.DataFrame([
+            {"Method": "Complete case",
+             "What it does": "Drops any participant missing any feature in the run",
+             "Empirical Bayes": "Yes",
+             "Participants used": "Only participants complete on all features"},
+            {"Method": "Median imputation (default)",
+             "What it does": "Fills each missing value with that feature's median, harmonizes, then restores the originally missing cells to blank; suits data with few missing values",
+             "Empirical Bayes": "Yes",
+             "Participants used": "All participants"},
+            {"Method": "Missing-pattern grouping",
+             "What it does": "Harmonizes together the features missing in the same participants, one Empirical Bayes run per pattern; suits scattered missing data",
+             "Empirical Bayes": "Yes, except for a feature whose missing pattern no other feature shares",
+             "Participants used": "Each participant, for the features they have"},
+            {"Method": "Do not use Empirical Bayes",
+             "What it does": "Harmonizes each feature on its own complete cases, one feature at a time; Step 4 then runs EB=FALSE only",
+             "Empirical Bayes": "No",
+             "Participants used": "Each participant, for the features they have"},
+        ])
+        # a plain table without row numbers, with the text wrapped
+        st.markdown("| " + " | ".join(_methods.columns) + " |\n|" + "---|" * len(_methods.columns) + "\n"
+                    + "\n".join("| " + " | ".join(str(v) for v in r) + " |" for r in _methods.itertuples(index=False)))
     # How many participants remain under the chosen handling (after the participants
     # excluded by missing percentage)
     _work = df.drop(index=_excl_part_rows)
@@ -1761,9 +1796,11 @@ with eval_c1:
             "penalize that intended correction, whereas the consistency form measures whether the relative "
             "ordering of participants is preserved. This is the primary metric for assessing whether "
             "harmonization preserved within-batch biological variability. Minimum 3 participants per batch "
-            "required (pingouin constraint)."
+            "required."
         ),
     )
+    st.caption("Adds computing time with many features and batches; untick it if you only need the "
+               "harmonized data.")
     include_cohens_f = st.checkbox(
         "Batch effect size (ANOVA Cohen's f), recommended",
         value=True, key="inc_cohens_f",
@@ -1931,9 +1968,16 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
         # overall, pooled ICC is intentionally not computed. The per-batch values
         # feed the by-batch distribution figure and are summarized per feature as
         # median [IQR] across batches for the feature-level tables.
-        icc_site_ebt = (compute_icc_by_site(df_harm, harm_ebt, feature_cols, site_col)
+        # progress after each batch, which also lets the Stop button take effect during this step
+        def _icc_progress(label, start):
+            return lambda done, total: progress.progress(
+                start + int(5 * done / max(total, 1)),
+                f"Computing within-batch ICC(3,1), {label}: batch {done} of {total}...")
+        icc_site_ebt = (compute_icc_by_site(df_harm, harm_ebt, feature_cols, site_col,
+                                            progress=_icc_progress("EB=TRUE", 55))
                         if harm_ebt is not None else None)
-        icc_site_ebf = (compute_icc_by_site(df_harm, harm_ebf, feature_cols, site_col)
+        icc_site_ebf = (compute_icc_by_site(df_harm, harm_ebf, feature_cols, site_col,
+                                            progress=_icc_progress("EB=FALSE", 60))
                         if harm_ebf is not None else None)
         icc_ebt = (compute_icc_within_summary(df_harm, harm_ebt, feature_cols, site_col, by=icc_site_ebt)
                    if harm_ebt is not None else None)

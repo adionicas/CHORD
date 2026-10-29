@@ -313,35 +313,49 @@ def ancova_site_effect(
 # ---------------------------------------------------------------------------
 # 6. ICC by site — ICC(C,1) per site, distribution across features
 # ---------------------------------------------------------------------------
-def compute_icc_by_site(df_raw, df_harm, features, site_col):
+def _icc_c1_two(raw, harm):
+    """
+    ICC(3,1) = ICC(C,1), two-way, consistency, single measurement, for two "raters"
+    (raw and harmonized) over the same n participants (McGraw and Wong 1996; Shrout and
+    Fleiss 1979): (MSR - MSE) / (MSR + MSE). The same value as pingouin's ICC(C,1).
+    """
+    y = np.column_stack([raw, harm]).astype(float)
+    n, k = y.shape
+    m = y.mean()
+    ss_r = k * ((y.mean(axis=1) - m) ** 2).sum()
+    ss_c = n * ((y.mean(axis=0) - m) ** 2).sum()
+    ss_e = ((y - m) ** 2).sum() - ss_r - ss_c
+    ms_r, ms_e = ss_r / (n - 1), ss_e / ((n - 1) * (k - 1))
+    den = ms_r + (k - 1) * ms_e
+    return float((ms_r - ms_e) / den) if den != 0 else float("nan")
+
+
+def compute_icc_by_site(df_raw, df_harm, features, site_col, progress=None):
+    """
+    Within-batch ICC(3,1) between raw and harmonized values, per feature per batch,
+    on the participants with both values (at least 3). ``progress(done, total)`` is
+    called after each batch, so a long run reports how far it is.
+    """
     if site_col not in df_harm.columns:
         return pd.DataFrame()
     rows = []
-    for site in natural_sorted(df_harm[site_col].dropna().unique().astype(str)):
+    sites = natural_sorted(df_harm[site_col].dropna().unique().astype(str))
+    for k_site, site in enumerate(sites):
         raw_site  = df_raw[df_raw[site_col].astype(str) == site] if site_col in df_raw.columns else df_raw
         harm_site = df_harm[df_harm[site_col].astype(str) == site]
         common_idx = raw_site.index.intersection(harm_site.index)
-        if len(common_idx) < 3:
-            continue
-        for f in features:
-            if f not in raw_site.columns or f not in harm_site.columns:
-                continue
-            rv = raw_site.loc[common_idx, f].dropna()
-            hv = harm_site.loc[common_idx, f].dropna()
-            idx2 = rv.index.intersection(hv.index)
-            if len(idx2) < 3:
-                continue
-            long = pd.DataFrame({
-                "subject": list(idx2) * 2,
-                "rater":   ["raw"] * len(idx2) + ["harmonized"] * len(idx2),
-                "value":   list(rv[idx2]) + list(hv[idx2]),
-            })
-            try:
-                icc_res = pg.intraclass_corr(data=long, targets="subject", raters="rater", ratings="value")
-                row3 = icc_res[icc_res["Type"] == "ICC(C,1)"].iloc[0]
-                rows.append({"site": site, "feature": f, "icc3": float(row3["ICC"]), "n": len(idx2)})
-            except Exception:
-                continue
+        if len(common_idx) >= 3:
+            for f in features:
+                if f not in raw_site.columns or f not in harm_site.columns:
+                    continue
+                rv = raw_site.loc[common_idx, f].to_numpy(dtype=float)
+                hv = harm_site.loc[common_idx, f].to_numpy(dtype=float)
+                ok = ~(np.isnan(rv) | np.isnan(hv))
+                if ok.sum() < 3:
+                    continue
+                rows.append({"site": site, "feature": f, "icc3": _icc_c1_two(rv[ok], hv[ok]), "n": int(ok.sum())})
+        if progress is not None:
+            progress(k_site + 1, len(sites))
     return pd.DataFrame(rows)
 
 

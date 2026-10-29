@@ -1074,7 +1074,9 @@ def plot_data_matrix(
     values in the block, so no missing value is hidden.
 
     marked_block = (label, columns) places those feature columns last, under a
-    labelled band (used to show the features excluded for missingness).
+    labelled band (used to show the features excluded for missingness); with
+    modality groups, each group's marked columns follow that group under a grey
+    band "<group>: excluded (n)".
 
     order_by_missing: participants are ordered within each batch, and features
     within each group, so that similar missing-value patterns sit together
@@ -1089,21 +1091,27 @@ def plot_data_matrix(
 
     # feature groups, in display order: modality groups, then any feature in
     # no group, then the marked block
-    groups = []
+    groups, marked_labels = [], set()
     if modality_groups:
         placed = set()
         for g, gcols in modality_groups.items():
             cols_g = [c for c in gcols if c in main_feats and c not in placed]
-            placed.update(cols_g)
+            excl_g = [c for c in gcols if c in marked_set and c not in placed]
+            placed.update(cols_g + excl_g)
             if cols_g:
                 groups.append((g, cols_g))
+            if excl_g:                              # this group's excluded features, right after it
+                groups.append((f"{g}: excluded", excl_g))
+                marked_labels.add(f"{g}: excluded")
         rest = [c for c in main_feats if c not in placed]
         if rest:
             groups.append(("Not in a group", rest))
+        marked_cols = [c for c in marked_cols if c not in placed]
     elif main_feats:
         groups.append((None, main_feats))
     if marked_cols:
         groups.append((marked_label, marked_cols))
+        marked_labels.add(marked_label)
     feats = [c for _, cols_g in groups for c in cols_g]
     cov = [c for c in covariate_cols if c in df.columns and c not in set(feats)]
     cols = cov + feats
@@ -1226,7 +1234,7 @@ def plot_data_matrix(
         for (g, c), n_blk in zip(groups, blocks_per_group):
             x1 = x0 + n_blk
             if g is not None:
-                if g == marked_label:
+                if g in marked_labels:
                     color = "#888888"
                 else:
                     color = band_palette[gi_color % len(band_palette)]
@@ -1281,42 +1289,79 @@ def plot_data_matrix(
 # ── Missing-value assessment figures ─────────────────────────────────────────
 
 def plot_missing_curve(feature_pct: pd.Series, measure_of: dict | None = None,
-                       threshold: float | None = None, kind: str = "features") -> go.Figure:
+                       threshold: float | None = None, kind: str = "features",
+                       before: pd.Series | None = None, separate: bool = False) -> go.Figure:
     """
     For every share x from 0 to 100%, the features with more than x% of the
     participants missing: one line per modality group as defined by the user,
     or one line for all selected features when no groups are defined. The y-axis
     is the share of the group's features, so groups of different sizes compare;
-    the hover gives the count.
+    the hover gives the count. ``separate`` draws each modality group in its own
+    plot. ``before`` holds the same values before the exclusions (features and
+    participants excluded for missing values), drawn as a grey dashed line, so the
+    solid line shows what is left.
     """
     # kind "participants": feature_pct holds each participant's share of the
     # selected features missing, and the line counts participants
     unit = "features" if kind == "features" else "participants"
-    if measure_of and kind == "features":
-        groups = list(dict.fromkeys(measure_of[c] for c in feature_pct.index))
-        members = {g: [c for c in feature_pct.index if measure_of[c] == g] for g in groups}
-    else:
+
+    def split(series):
+        if measure_of and kind == "features":
+            gs = list(dict.fromkeys(measure_of.get(c, "Not in a group") for c in series.index))
+            return gs, {g: [c for c in series.index if measure_of.get(c, "Not in a group") == g] for g in gs}
         g0 = "All selected features" if kind == "features" else "All participants"
-        groups, members = [g0], {g0: list(feature_pct.index)}
-    top = float(feature_pct.max()) if len(feature_pct) else 0.0
+        return [g0], {g0: list(series.index)}
+
+    groups, members = split(feature_pct)
+    b_members = split(before)[1] if before is not None and len(before) else {}
+    vals = feature_pct.values if not b_members else np.concatenate([feature_pct.values, before.values])
+    top = float(np.nanmax(vals)) if len(vals) else 0.0
     x_max = min(100.0, max(5.0, top * 1.1 + 1))
-    xs = np.unique(np.concatenate([np.linspace(0, x_max, 401), feature_pct.values]))
+    xs = np.unique(np.concatenate([np.linspace(0, x_max, 401), vals]))
     xs = xs[xs <= x_max]
     palette = px.colors.qualitative.Bold
-    fig = go.Figure()
+    sep = separate and len(groups) > 1
+    ncols = 2 if sep else 1
+    nrows = int(np.ceil(len(groups) / ncols)) if sep else 1
+    after_word = "still included" if b_members else ""
+    if sep:
+        fig = make_subplots(rows=nrows, cols=ncols, horizontal_spacing=0.08,
+                            vertical_spacing=min(0.12, 0.6 / max(nrows, 1)),
+                            subplot_titles=[f"{g} ({len(members[g])} {unit}{' ' + after_word if after_word else ''})"
+                                            for g in groups])
+    else:
+        fig = go.Figure()
+    shown_before = False
     for i, g in enumerate(groups):
+        rc = dict(row=i // ncols + 1, col=i % ncols + 1) if sep else {}
+        color = palette[i % len(palette)] if kind == "features" else "#2A6EBB"
+        if g in b_members:
+            pb = np.sort(before[b_members[g]].values)
+            nb = len(pb) - np.searchsorted(pb, xs, side="right")
+            fig.add_trace(go.Scatter(
+                x=xs, y=100 * nb / max(len(pb), 1), mode="lines", line_shape="hv",
+                name=f"Before exclusions (n={len(pb)}{' per group' if len(groups) > 1 and not sep else ''})",
+                legendgroup="before", showlegend=not shown_before,
+                line=dict(color="#9AA0A6", width=1.6, dash="dash"),
+                hovertemplate=(f"{g}, before exclusions<br>more than %{{x:.1f}}% missing: %{{customdata}} of "
+                               f"{len(pb)} {unit} (%{{y:.1f}}%)<extra></extra>"),
+                customdata=nb), **rc)
+            shown_before = True
         p = np.sort(feature_pct[members[g]].values)
         n_over = len(p) - np.searchsorted(p, xs, side="right")      # features with more than x% missing
         fig.add_trace(go.Scatter(
-            x=xs, y=100 * n_over / len(p), mode="lines+markers", line_shape="hv", name=f"{g} (n={len(p)})",
-            line=dict(color=palette[i % len(palette)] if kind == "features" else "#2A6EBB", width=2.2),
+            x=xs, y=100 * n_over / max(len(p), 1), mode="lines+markers", line_shape="hv",
+            name=((f"{unit.capitalize()} still included (n={len(p)})" if len(groups) == 1 else
+                   f"{g}, still included (n={len(p)})") if after_word else f"{g} (n={len(p)})"),
+            showlegend=not sep,
+            line=dict(color=color, width=2.2),
             marker=dict(size=7, opacity=0),          # invisible points, so a click on the line selects one
             customdata=np.stack([n_over, np.full(len(xs), len(p))], axis=1),
             hovertemplate=(f"{g}<br>more than %{{x:.1f}}% missing: %{{customdata[0]}} of "
                            f"%{{customdata[1]}} {unit} (%{{y:.1f}}%)<br>click to see them or exclude them<extra></extra>"),
-        ))
+        ), **rc)
     sizes = {len(members[g]) for g in groups}
-    if len(sizes) == 1:
+    if not sep and len(sizes) == 1:
         n_all = sizes.pop()
         fig.add_trace(go.Scatter(x=[0, 0], y=[0, 0], yaxis="y2", mode="lines", line=dict(width=0),
                                  showlegend=False, hoverinfo="skip"))
@@ -1325,13 +1370,26 @@ def plot_missing_curve(feature_pct: pd.Series, measure_of: dict | None = None,
                                       showgrid=False))
     if threshold is not None and threshold <= x_max:
         fig.add_vline(x=threshold, line_dash="dot", line_color=GREY, line_width=1.5,
-                      annotation_text=f"{threshold:g}%", annotation_position="top right")
+                      annotation_text=f"{threshold:g}%", annotation_position="top right",
+                      **(dict(row="all", col="all") if sep else {}))
     if kind == "features":
         title, x_title = "Features with more than x% of participants missing", "Participants missing (x, %)"
-        y_title = "Features (% of each modality group)" if len(groups) > 1 else "Features (%)"
+        y_title = ("Features (%)" if sep else
+                   "Features (% of each modality group)" if len(groups) > 1 else "Features (%)")
     else:
         title, x_title, y_title = ("Participants missing more than x% of the selected features",
                                    "Features missing (x, %)", "Participants (%)")
+    if sep:
+        fig.update_layout(title=title, **WHITE_BG, height=120 + 250 * nrows,
+                          margin=dict(l=10, r=20, t=80, b=110), legend=dict(BOTTOM_LEGEND),
+                          showlegend=shown_before)
+        fig.update_xaxes(range=[0, x_max], autorange=False, showgrid=True, gridcolor="#EEEEEE")
+        fig.update_yaxes(range=[0, 102], autorange=False, showgrid=True, gridcolor="#EEEEEE")
+        for r in range(1, nrows + 1):
+            fig.update_yaxes(title_text=y_title, row=r, col=1)
+        for c in range(1, ncols + 1):
+            fig.update_xaxes(title_text=x_title, row=nrows, col=c)
+        return fig
     fig.update_layout(
         title=title, **WHITE_BG, height=430,
         margin=dict(l=10, r=60, t=60, b=120), legend=dict(BOTTOM_LEGEND),
