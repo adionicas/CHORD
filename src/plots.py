@@ -1289,7 +1289,7 @@ def plot_data_matrix(
 # ── Missing-value assessment figures ─────────────────────────────────────────
 
 def plot_missing_curve(feature_pct: pd.Series, measure_of: dict | None = None,
-                       threshold: float | None = None, kind: str = "features",
+                       threshold: float | dict | None = None, kind: str = "features",
                        before: pd.Series | None = None, separate: bool = False) -> go.Figure:
     """
     For every share x from 0 to 100%, the features with more than x% of the
@@ -1368,7 +1368,17 @@ def plot_missing_curve(feature_pct: pd.Series, measure_of: dict | None = None,
         fig.update_layout(yaxis2=dict(title=f"{unit.capitalize()} (n" + (" per group)" if len(groups) > 1 else ")"),
                                       overlaying="y", side="right", range=[0, n_all * 1.02], autorange=False,
                                       showgrid=False))
-    if threshold is not None and threshold <= x_max:
+    if isinstance(threshold, dict):
+        # a threshold per modality group: each group's line (in its own plot, or in its colour)
+        for i, g in enumerate(groups):
+            t = threshold.get(g)
+            if t is None or t > x_max:
+                continue
+            fig.add_vline(x=t, line_dash="dot", line_width=1.5,
+                          line_color=GREY if sep else palette[i % len(palette)],
+                          annotation_text=f"{t:g}%", annotation_position="top right",
+                          **(dict(row=i // ncols + 1, col=i % ncols + 1) if sep else {}))
+    elif threshold is not None and threshold <= x_max:
         fig.add_vline(x=threshold, line_dash="dot", line_color=GREY, line_width=1.5,
                       annotation_text=f"{threshold:g}%", annotation_position="top right",
                       **(dict(row="all", col="all") if sep else {}))

@@ -180,7 +180,9 @@ def _data_prep_tables(excl_feat_html, overview, excl_part_list):
         ov = pd.DataFrame([
             {"": "Features", "Total": overview["n_features"],
              "Above the threshold": f"{overview['feat_over']} (participants missing more than {thr:g}%)",
-             "Excluded by the user": excluded(overview["feat_excl"], overview["feat_excl_thr"])},
+             "Excluded by the user": (f"{overview['feat_excl']} (threshold per modality group: {overview['feat_excl_text']})"
+                                      if overview.get("feat_excl_text") and overview["feat_excl"]
+                                      else excluded(overview["feat_excl"], overview["feat_excl_thr"]))},
             {"": "Participants", "Total": overview["n_participants"],
              "Above the threshold": f"{overview['part_over']} (features missing more than {pthr:g}%)",
              "Excluded by the user": excluded(overview["part_excl"], overview["part_excl_thr"])},
@@ -478,7 +480,7 @@ TEMPLATE = """<!DOCTYPE html>
   {% endif %}
   {% if excl_info and excl_info.n > 0 %}
   {{ excl_info.n }} feature{{ 's' if excl_info.n != 1 else '' }}
-  with a missing rate above {{ '%g'|format(excl_info.threshold) }}% {{ 'were' if excl_info.n != 1 else 'was' }}
+  with a missing rate above {% if excl_info.threshold_text %}a threshold set per modality group ({{ excl_info.threshold_text }}){% else %}{{ '%g'|format(excl_info.threshold) }}%{% endif %} {{ 'were' if excl_info.n != 1 else 'was' }}
   excluded, leaving {{ n_features }} features for harmonization
   (see Table S1a for the list of excluded features and their missing rates).
   {% endif %}
@@ -921,7 +923,12 @@ def data_prep_sentence(missing_overview=None, excl_info=None, excl_part_info=Non
         return ""
     out = []
     n_f, n_p = missing_overview["n_features"], missing_overview["n_participants"]
-    if excl_info and excl_info.get("n") and excl_info.get("threshold") is not None:
+    if excl_info and excl_info.get("n") and excl_info.get("by_group"):
+        out.append("Features were excluded when missing in more than a threshold set per modality group: "
+                   + "; ".join(f"{g}, more than {v['threshold']:g}% of the participants (n = {v['n']}"
+                               + (f" of {v['of']})" if v.get("of") else ")") for g, v in excl_info["by_group"].items())
+                   + f" ({excl_info['n']} of {n_f} features in all).")
+    elif excl_info and excl_info.get("n") and excl_info.get("threshold") is not None:
         out.append(f"Features missing in more than {excl_info['threshold']:g}% of the participants were "
                    f"excluded (n = {excl_info['n']} of {n_f}).")
     if excl_part_info and excl_part_info.get("n") and excl_part_info.get("threshold") is not None:

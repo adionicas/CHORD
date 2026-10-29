@@ -274,6 +274,17 @@ def _record_feature_exclusion(cols_to_drop, threshold, pcts, groups):
     st.session_state["_excl_feat_list"] = lst
 
 
+def _record_feature_exclusion_by_group(drop_by_group, thresholds, sizes, pcts, groups):
+    """Remove features with a threshold per modality group, and record each group's threshold and count."""
+    prev_by = dict((st.session_state.get("_excl_info") or {}).get("by_group") or {})
+    _record_feature_exclusion([c for cols in drop_by_group.values() for c in cols], None, pcts, groups)
+    for g, cols in drop_by_group.items():
+        prev_by[g] = {"n": prev_by.get(g, {}).get("n", 0) + len(cols), "threshold": thresholds[g], "of": sizes.get(g)}
+    info = st.session_state["_excl_info"]
+    info["by_group"] = prev_by
+    info["threshold_text"] = "; ".join(f"{g}: more than {v['threshold']:g}% (n = {v['n']})" for g, v in prev_by.items())
+
+
 def _record_participant_exclusion(entries, threshold, key_of_data):
     """Record participants as excluded, with the threshold used."""
     prev = [d for d in st.session_state.get("_excl_part_list", []) if d.get("data_key") == key_of_data]
@@ -1448,7 +1459,11 @@ if _show_miss_tools:
 
             _clicked = None
             # features
-            _ev_f = st.plotly_chart(plot_missing_curve(feat_pct, _measure_all or None, _f_thr_now,
+            # a threshold per modality group when asked for; else one for all features
+            _thr_by_g = bool(modality_groups) and bool(st.session_state.get("miss_thr_by_group"))
+            _thr_plot = ({g: float(st.session_state.get(f"miss_thr_g_{g}", _f_thr_now) or 0.0) for g in measures}
+                         if _thr_by_g else _f_thr_now)
+            _ev_f = st.plotly_chart(plot_missing_curve(feat_pct, _measure_all or None, _thr_plot,
                                                        before=_f_before, separate=_sep),
                                     use_container_width=True, on_select="rerun", selection_mode="points",
                                     key=f"miss_curve_f_{_ck}")
@@ -1459,20 +1474,43 @@ if _show_miss_tools:
             with fc1:
                 st.session_state.setdefault("miss_assess_thr", 10.0)   # also set by a click on the curve
                 a_thr = st.number_input("Threshold: participants missing (%)", min_value=0.0, max_value=100.0,
-                                        step=1.0, key="miss_assess_thr")
-            _f_over = feat_pct[feat_pct > a_thr].sort_values(ascending=False)
+                                        step=1.0, key="miss_assess_thr", disabled=_thr_by_g)
+                _g_thr = {}
+                if modality_groups:
+                    _thr_by_g = st.toggle("A different threshold for each modality group", key="miss_thr_by_group",
+                                          help="One threshold per modality group, for example when one measure "
+                                               "is missing more often than the others.")
+                    if _thr_by_g:
+                        for g in measures:
+                            st.session_state.setdefault(f"miss_thr_g_{g}", float(a_thr))
+                            _g_thr[g] = st.number_input(f"{g}: participants missing (%)", min_value=0.0,
+                                                        max_value=100.0, step=1.0, key=f"miss_thr_g_{g}")
+            if _g_thr:
+                _f_over = feat_pct[[feat_pct[c] > _g_thr[measure_of[c]] for c in feat_pct.index]
+                                   ].sort_values(ascending=False)
+            else:
+                _f_over = feat_pct[feat_pct > a_thr].sort_values(ascending=False)
             with fc2:
                 st.markdown(
                     f"<br>**Features:** **{len(_f_over)} of {len(feats_l)} "
-                    f"({100 * len(_f_over) / max(len(feats_l), 1):.1f}%)** have more than "
-                    f"{a_thr:g}% of the participants missing.", unsafe_allow_html=True)
+                    f"({100 * len(_f_over) / max(len(feats_l), 1):.1f}%)** "
+                    + ("are above their modality group's threshold." if _g_thr else
+                       f"have more than {a_thr:g}% of the participants missing."), unsafe_allow_html=True)
+                _g_size = pd.Series([measure_of[c] for c in feats_l]).value_counts() if modality_groups and feats_l else {}
                 if modality_groups and feats_l:
-                    _g_size = pd.Series([measure_of[c] for c in feats_l]).value_counts()
                     _g_over = pd.Series([measure_of[c] for c in _f_over.index], dtype=object).value_counts()
                     st.markdown("By modality group: " + "; ".join(
-                        f"**{g}** {int(_g_over.get(g, 0))} of {int(_g_size[g])} "
+                        f"**{g}**" + (f" (more than {_g_thr[g]:g}%)" if _g_thr else "")
+                        + f" {int(_g_over.get(g, 0))} of {int(_g_size[g])} "
                         f"({100 * _g_over.get(g, 0) / _g_size[g]:.1f}%)" for g in measures if g in _g_size))
-                if len(_f_over):
+                if len(_f_over) and _g_thr:
+                    _drop_g = {g: [c for c in _f_over.index if measure_of[c] == g] for g in measures}
+                    st.button(f"Exclude these {len(_f_over)} feature(s)", key="curve_excl_feats",
+                              on_click=_record_feature_exclusion_by_group,
+                              args=({g: c for g, c in _drop_g.items() if c}, _g_thr,
+                                    {g: int(_g_size[g]) for g in measures if g in _g_size},
+                                    _f_over.to_dict(), modality_groups))
+                elif len(_f_over):
                     st.button(f"Exclude these {len(_f_over)} feature(s)", key="curve_excl_feats",
                               on_click=_record_feature_exclusion,
                               args=(list(_f_over.index), a_thr, _f_over.to_dict(), modality_groups))
@@ -1639,6 +1677,9 @@ if _show_miss_tools:
     st.dataframe(pd.DataFrame([
         {"": "Features", "Before cleaning": _n_feat_all,
          "Removed": (f"{len(_xf)} (missing in more than {_xf_thr:g}% of the participants)" if _xf and _xf_thr is not None
+                     else f"{len(_xf)} (threshold per modality group: "
+                          f"{(st.session_state.get('_excl_info') or {}).get('threshold_text')})"
+                     if _xf and (st.session_state.get("_excl_info") or {}).get("threshold_text")
                      else str(len(_xf))),
          "Kept": len(feature_cols)},
         {"": "Participants", "Before cleaning": len(df),
@@ -2179,6 +2220,7 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True)
             "part_any": int((_pp_all > 0).sum()), "part_over": int((_pp_all > _thr_p).sum()),
             "part_threshold": _thr_p,
             "feat_excl": int(_xi.get("n") or 0), "feat_excl_thr": _xi.get("threshold"),
+            "feat_excl_text": _xi.get("threshold_text"),
             "part_excl": len(_excl_part_rows), "part_excl_thr": _xpi.get("threshold"),
             "by_group": [
                 {"Modality group": g, "Features": len(gc),
