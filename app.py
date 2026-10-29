@@ -413,37 +413,82 @@ def _fmt_val(v):
 
 def _by_batch_table(data, batch_col, variables, categorical=None):
     """
-    One row per batch plus an Overall row (participants with a batch value):
-    N, then for each variable mean (SD) and range when it is continuous, or n (%)
-    per category when it is in ``categorical`` (as the user set it; by default
-    the categorical covariates) or is not a number, and always the missing
-    values, n (%).
+    One row per batch plus an Overall row (participants with a batch value), with two header
+    levels: N, then for each variable either Mean (SD), Range and Missing n (%) when it is
+    continuous, or n (%) per value and Missing when it is in ``categorical`` (as the user set it;
+    by default the categorical covariates) or is not a number. Missing is always shown.
     """
     categorical = set(categorical_covariates if categorical is None else categorical)
     data = data[data[batch_col].notna()]
-    rows = []
-    for label in natural_sorted(data[batch_col].unique().astype(str)) + ["Overall"]:
-        sub = data if label == "Overall" else data[data[batch_col].astype(str) == label]
-        row = {"Batch": label, "N": len(sub)}
-        for var in variables:
-            col = sub[var]
-            vals = col.dropna()
-            n_miss = int(col.isna().sum())
-            miss_txt = f"{n_miss} ({100 * n_miss / len(sub):.0f}%)" if len(sub) else "0"
-            if var not in categorical and pd.api.types.is_numeric_dtype(data[var]):
-                head = f"{var} [mean (SD); range; missing n (%)]"
-                row[head] = (f"{vals.mean():.2f} ({vals.std():.2f}); {_fmt_num(vals.min())} to "
-                             f"{_fmt_num(vals.max())}; {miss_txt}") if len(vals) else f"—; —; {miss_txt}"
-            else:
-                head = f"{var} [n (%) per value; missing n (%)]"
-                vc = vals.map(_fmt_val).value_counts()
-                order = natural_sorted(vc.index)
-                parts = [f"{v}: {vc[v]} ({100 * vc[v] / len(sub):.0f}%)" for v in order[:8]]
-                if len(order) > 8:
-                    parts.append(f"+ {len(order) - 8} more")
-                row[head] = ", ".join(parts) + f"; missing {miss_txt}"
-        rows.append(row)
-    return pd.DataFrame(rows)
+    labels = natural_sorted(data[batch_col].unique().astype(str)) + ["Overall"]
+
+    def n_pct(n, total):
+        return f"{n} ({100 * n / total:.0f}%)" if total else "0"
+
+    subsets = [data if lab == "Overall" else data[data[batch_col].astype(str) == lab] for lab in labels]
+    columns = {("Batch", ""): labels, ("N", ""): [len(sub) for sub in subsets]}
+    for var in variables:
+        if var not in categorical and pd.api.types.is_numeric_dtype(data[var]):
+            means, ranges, miss = [], [], []
+            for sub in subsets:
+                vals = sub[var].dropna()
+                means.append(f"{vals.mean():.2f} ({vals.std():.2f})" if len(vals) else "—")
+                ranges.append(f"{_fmt_num(vals.min())} to {_fmt_num(vals.max())}" if len(vals) else "—")
+                miss.append(n_pct(int(sub[var].isna().sum()), len(sub)))
+            columns[(var, "Mean (SD)")] = means
+            columns[(var, "Range")] = ranges
+            columns[(var, "Missing, n (%)")] = miss
+        else:
+            head = f"{var}, n (%)"
+            order = natural_sorted(data[var].dropna().map(_fmt_val).unique())
+            shown, rest = order[:8], order[8:]
+            for v in shown:
+                columns[(head, v)] = [n_pct(int((sub[var].dropna().map(_fmt_val) == v).sum()), len(sub))
+                                      for sub in subsets]
+            if rest:
+                columns[(head, f"{len(rest)} other values")] = [
+                    n_pct(int(sub[var].dropna().map(_fmt_val).isin(rest).sum()), len(sub)) for sub in subsets]
+            columns[(head, "Missing")] = [n_pct(int(sub[var].isna().sum()), len(sub)) for sub in subsets]
+    out = pd.DataFrame(columns)
+    out.columns = pd.MultiIndex.from_tuples(out.columns)
+    return out
+
+
+def _show_by_batch_table(table, key):
+    """The by-batch table with two header levels (variable, then what is shown), and a CSV download."""
+    from html import escape
+    groups = []                                   # [top header, number of columns]
+    for top, _ in table.columns:
+        if groups and groups[-1][0] == top:
+            groups[-1][1] += 1
+        else:
+            groups.append([top, 1])
+    head1, head2 = [], []
+    for top, n in groups:
+        subs = [sub for t, sub in table.columns if t == top]
+        if subs == [""]:
+            head1.append(f'<th rowspan="2">{escape(str(top))}</th>')
+        else:
+            head1.append(f'<th colspan="{n}">{escape(str(top))}</th>')
+            head2 += [f"<th>{escape(str(sub))}</th>" for sub in subs]
+    body = []
+    for _, row in table.iterrows():
+        cells = "".join(f'<td class="{"num" if k > 0 else "lab"}">{escape(str(v))}</td>' for k, v in enumerate(row))
+        body.append(f'<tr class="overall">{cells}</tr>' if row[("Batch", "")] == "Overall" else f"<tr>{cells}</tr>")
+    st.markdown(
+        "<style>.chord-bybatch{overflow-x:auto;margin:0 0 .5rem}"
+        ".chord-bybatch table{border-collapse:collapse;font-size:.85rem;width:100%}"
+        ".chord-bybatch th,.chord-bybatch td{border:1px solid rgba(128,128,128,.3);padding:.3rem .55rem;white-space:nowrap}"
+        ".chord-bybatch th{font-weight:600;text-align:center;background:rgba(128,128,128,.08)}"
+        ".chord-bybatch td.num{text-align:right}.chord-bybatch td.lab{text-align:left}"
+        ".chord-bybatch tr.overall td{font-weight:600;border-top:2px solid rgba(128,128,128,.6)}</style>"
+        f'<div class="chord-bybatch"><table><thead><tr>{"".join(head1)}</tr><tr>{"".join(head2)}</tr></thead>'
+        f'<tbody>{"".join(body)}</tbody></table></div>',
+        unsafe_allow_html=True)
+    flat = table.copy()
+    flat.columns = [top if sub == "" else f"{top}: {sub}" for top, sub in table.columns]
+    st.download_button("Download this table (CSV)", flat.to_csv(index=False).encode("utf-8"),
+                       file_name="by_batch_table.csv", mime="text/csv", key=f"dl_{key}")
 
 
 # ── Check the demographics (before choosing the features) ──────────────────
@@ -476,11 +521,10 @@ if st.toggle("Check the batch and the covariates", value=False, key="show_demo_t
         st.caption("A variable in both lists is described as a category: "
                    + ", ".join(sorted(set(_demo_cont) & _demo_cat_set)) + ".")
     st.markdown("By batch")
-    st.dataframe(_by_batch_table(df, site_col, _demo_vars, categorical=_demo_cat_set),
-                 use_container_width=True, hide_index=True)
+    _show_by_batch_table(_by_batch_table(df, site_col, _demo_vars, categorical=_demo_cat_set), "demo_by_batch_table")
     _no_batch = int(df[site_col].isna().sum())
-    st.caption("Each column says what it shows: for continuous variables mean (SD); range; missing n (%), "
-               "for categories n (%) per value; missing n (%). Missing is shown also when it is 0."
+    st.caption("Continuous variables: mean (SD), range and missing n (%); categorical variables: n (%) per value "
+               "and missing n (%). Missing is shown also when it is 0."
                + (f" {_no_batch} participant(s) without a batch value are not in the table." if _no_batch else ""))
 
     st.markdown("The values of each variable")
@@ -1510,11 +1554,11 @@ st.caption(
     "the rest. Excluded batches are left out of the harmonization and the report. The table shows "
     "the model variables; for other variables, use \"Show a demographic table by batch\" in Step 2."
 )
-st.dataframe(
+_show_by_batch_table(
     _by_batch_table(df, site_col, [c for c in [age_used, sex_used] + extra_continuous + extra_categorical
-                                   if c and c in df.columns]),
-    use_container_width=True, hide_index=True)
-st.caption("N = participants per batch. Numeric variables: mean (SD); range. Categories: n (%).")
+                                   if c and c in df.columns]), "exclusion_by_batch_table")
+st.caption("N = participants per batch. Continuous variables: mean (SD), range and missing n (%); "
+           "categorical variables: n (%) per value and missing n (%).")
 
 all_sites_n = df[site_col].value_counts()
 all_sites_n = all_sites_n[natural_sorted(all_sites_n.index)]
