@@ -278,10 +278,10 @@ def plot_age_correlations(age_df: pd.DataFrame) -> go.Figure:
         # — every combination is unique on both dimensions
         PURPLE = "#6A0DAD"
         for sub, label, mc, sym, sz, op, border in [
-            (ns,       "Not significant (neither)",       GREY,   "circle",  7,  0.40, "rgba(150,150,150,0.3)"),
-            (new_sig,  f"{_sig} after only",      color,  "circle",  9,  0.85, "white"),
-            (lost_sig, f"{_sig} before only",     ORANGE, "diamond", 9,  0.85, "white"),
-            (both_sig, f"{_sig} before and after",PURPLE, "square",  9,  0.85, "white"),
+            (ns,       "Not significant (neither)",       GREY,   "circle",  5,  0.30, "rgba(150,150,150,0.3)"),
+            (new_sig,  f"{_sig} after only",      color,  "circle",  6,  0.60, "white"),
+            (lost_sig, f"{_sig} before only",     ORANGE, "diamond", 6,  0.60, "white"),
+            (both_sig, f"{_sig} before and after",PURPLE, "square",  6,  0.60, "white"),
         ]:
             if len(sub) == 0:
                 continue
@@ -290,7 +290,7 @@ def plot_age_correlations(age_df: pd.DataFrame) -> go.Figure:
                 mode="markers", name=label,
                 legendgroup=label, showlegend=show,
                 marker=dict(color=mc, symbol=sym, size=sz, opacity=op,
-                            line=dict(color=border, width=0.8)),
+                            line=dict(color=border, width=0.4)),
                 text=sub["feature"],
                 hovertemplate="<b>%{text}</b><br>Before: %{x:.3f}<br>After: %{y:.3f}<extra></extra>",
             ), row=1, col=col_i)
@@ -515,15 +515,15 @@ def plot_icc_by_site(
 
     # When there are many sites, long batch labels overlap. Above a threshold we
     # number the sites 1..N on the x-axis and print a key mapping numbers to
-    # batch names below the figure. Otherwise labels are shown in full, angled
-    # 45 degrees, with the font size shrinking as the number of sites grows.
+    # batch names below the figure. Otherwise labels are shown in full, turned
+    # 90 degrees (Oni, 29 October 2026), with the font size shrinking as the number of sites grows.
     n_sites     = len(sites)
     use_numbers = n_sites > 12
     tick_size   = max(7, 11 - max(0, n_sites - 10) // 3)
 
     def _site_label(s):
         if site_n and s in site_n:
-            return f"{s}<br>(n={site_n[s]})"
+            return f"{s} (n={site_n[s]})"
         return s
 
     rng          = np.random.default_rng(42)
@@ -599,7 +599,7 @@ def plot_icc_by_site(
             tickvals=list(range(len(sites))),
             ticktext=([str(i + 1) for i in range(n_sites)] if use_numbers
                       else [_site_label(s) for s in sites]),
-            tickangle=0,
+            tickangle=0 if use_numbers else -90,
             tickfont=dict(size=tick_size),
             row=1, col=col_i,
         )
@@ -620,11 +620,13 @@ def plot_icc_by_site(
             showarrow=False, align="left", font=dict(size=8, color="black"),
         )
 
-    bottom   = (150 + 22 * n_key_lines) if use_numbers else 140
+    # room below the plot for the turned labels, then the legend
+    _label_px = int(0.62 * tick_size * max((len(str(_site_label(s_))) for s_ in sites), default=0))
+    bottom   = (150 + 22 * n_key_lines) if use_numbers else 80 + _label_px
     fig.update_yaxes(title_text="ICC(3,1)", range=[0, 1.08], row=1, col=1)
     fig.update_layout(
         title="Within-batch consistency by batch, ICC(3,1) (Koo & Li 2016)",
-        height=520 + (18 * n_key_lines if use_numbers else 0), **WHITE_BG,
+        height=520 + (18 * n_key_lines if use_numbers else max(0, bottom - 140)), **WHITE_BG,
         margin=dict(r=40, b=bottom),
         legend=dict(BOTTOM_LEGEND, title_text="ICC(3,1) category"),
     )
@@ -745,10 +747,10 @@ def plot_extra_associations(assoc_df: pd.DataFrame) -> go.Figure | None:
             both    = merged[ merged["sig_b"] &  merged["sig_a"]]
 
             for sub, lbl, mc, sym, sz, op in [
-                (ns,      "Not significant (neither)",        GREY,   "circle",  7,  0.40),
-                (new_sig, f"{_sig} after only",       color,  "circle",  9,  0.85),
-                (lost,    f"{_sig} before only",      ORANGE, "diamond", 9,  0.85),
-                (both,    f"{_sig} before and after", PURPLE, "square",  9,  0.85),
+                (ns,      "Not significant (neither)",        GREY,   "circle",  5,  0.30),
+                (new_sig, f"{_sig} after only",       color,  "circle",  6,  0.60),
+                (lost,    f"{_sig} before only",      ORANGE, "diamond", 6,  0.60),
+                (both,    f"{_sig} before and after", PURPLE, "square",  6,  0.60),
             ]:
                 if len(sub) == 0:
                     continue
@@ -757,7 +759,7 @@ def plot_extra_associations(assoc_df: pd.DataFrame) -> go.Figure | None:
                     mode="markers", name=lbl,
                     legendgroup=lbl, showlegend=False,
                     marker=dict(color=mc, symbol=sym, size=sz, opacity=op,
-                                line=dict(color="white", width=0.8)),
+                                line=dict(color="white", width=0.4)),
                     text=sub["feature"],
                     hovertemplate="<b>%{text}</b><br>Before: %{x:.3f}<br>After: %{y:.3f}<extra></extra>",
                 ), row=row_i, col=col_i)
@@ -785,7 +787,7 @@ def plot_extra_associations(assoc_df: pd.DataFrame) -> go.Figure | None:
     ]:
         fig.add_trace(go.Scatter(
             x=[None], y=[None], mode="markers", name=lbl, legendgroup=lbl,
-            marker=dict(color=mc, symbol=sym, size=9, line=dict(color="white", width=0.8)),
+            marker=dict(color=mc, symbol=sym, size=7, line=dict(color="white", width=0.4)),
             showlegend=True,
         ), row=1, col=1)
     fig.add_trace(go.Scatter(
@@ -867,12 +869,12 @@ def plot_single_association(assoc_df: pd.DataFrame, variable: str) -> go.Figure 
         both    = merged[ merged["sig_b"] &  merged["sig_a"]]
 
         for grp, lbl, mc, sym, sz, op in [
-            (ns,      LBL_NS,   GREY,   "circle",  7,  0.40),
+            (ns,      LBL_NS,   GREY,   "circle",  5,  0.30),
             # one colour in every panel for "significant after only", so the
             # legend (built from the first panel) matches the markers everywhere
-            (new_sig, LBL_NEW,  AFTER_EBT, "circle",  9,  0.85),
-            (lost,    LBL_LOST, ORANGE, "diamond", 9,  0.85),
-            (both,    LBL_BOTH, PURPLE, "square",  9,  0.85),
+            (new_sig, LBL_NEW,  AFTER_EBT, "circle",  6,  0.60),
+            (lost,    LBL_LOST, ORANGE, "diamond", 6,  0.60),
+            (both,    LBL_BOTH, PURPLE, "square",  6,  0.60),
         ]:
             if len(grp) == 0:
                 continue
@@ -888,7 +890,7 @@ def plot_single_association(assoc_df: pd.DataFrame, variable: str) -> go.Figure 
                 x=grp["eff_b"], y=grp["eff_a"],
                 mode="markers", name=lbl, legendgroup=lbl, showlegend=False,
                 marker=dict(color=mc, symbol=sym, size=sz, opacity=op,
-                            line=dict(color="white", width=0.8)),
+                            line=dict(color="white", width=0.4)),
                 text=grp["feature"], customdata=cdata,
                 hovertemplate=htmpl,
             ), row=1, col=col_i)
@@ -913,7 +915,7 @@ def plot_single_association(assoc_df: pd.DataFrame, variable: str) -> go.Figure 
     ]:
         fig.add_trace(go.Scatter(
             x=[None], y=[None], mode="markers", name=lbl, legendgroup=lbl,
-            marker=dict(color=mc, symbol=sym, size=9, line=dict(color="white", width=0.8)),
+            marker=dict(color=mc, symbol=sym, size=7, line=dict(color="white", width=0.4)),
             showlegend=True,
         ), row=1, col=1)
     fig.add_trace(go.Scatter(

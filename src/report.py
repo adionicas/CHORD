@@ -343,6 +343,10 @@ TEMPLATE = """<!DOCTYPE html>
   /* ── Figures ── */
   .fig-wrap  { margin: 16px 0 8px 0; }
   details.names { margin: 4px 0 10px; }
+  .sig-switch { font-family: Arial, sans-serif; font-size: 10pt; margin: 8px 0 14px; padding: 8px 10px;
+                border: 1px solid #d0d7de; border-radius: 6px; }
+  .sig-switch label { margin: 0 12px 0 8px; cursor: pointer; }
+  .sig-note { display: block; color: #555; font-size: 9pt; margin-top: 4px; }
   details.names > summary { cursor: pointer; color: #2A6EBB; font-family: Arial, sans-serif; font-size: 9.5pt; }
   .fig-group { font-family: Arial, sans-serif; font-size: 10pt; font-weight: bold; margin: 14px 0 0; }
   .fig-caption { font-size: 9.5pt; font-family: Arial, sans-serif;
@@ -857,9 +861,20 @@ TEMPLATE = """<!DOCTYPE html>
 {% endif %}
 
 {% set fdr_on = not (fdr_note and fdr_note.startswith('No multiple')) %}
+{% set cls_sel = 'sig-fdr' if fdr_on else 'sig-unc' %}
+{% set cls_alt = 'sig-unc' if fdr_on else 'sig-fdr' %}
 {% if include_age %}
 {% set ns.fig = ns.fig + 1 %}
 <h3>S4.3 Preservation of Age-Related Associations</h3>
+{% if fig_age_alt or extra_has_alt %}
+<div class="sig-switch">
+  <b>Significance shown in the association figures:</b>
+  <label><input type="radio" name="sigmode" value="unc"{% if not fdr_on %} checked{% endif %}> uncorrected <em>p</em> &lt; .05</label>
+  <label><input type="radio" name="sigmode" value="fdr"{% if fdr_on %} checked{% endif %}> Benjamini&#8211;Hochberg FDR-corrected <em>p</em> &lt; .05</label>
+  <span class="sig-note">The counts in the text use the {{ 'FDR-corrected' if fdr_on else 'uncorrected' }} <em>p</em>-values selected in CHORD; the switch changes the figures and their captions.</span>
+</div>
+{% endif %}
+
 <p>
   Before harmonization, {{ age_before.n_sig }} of {{ age_before.n_total }} features
   ({{ age_before.pct_sig }}%) showed a statistically significant association with
@@ -875,7 +890,7 @@ TEMPLATE = """<!DOCTYPE html>
   shown in Figure S{{ ns.fig }}.
 </p>
 
-<div class="fig-wrap">{{ fig_age }}</div>
+<div class="fig-wrap">{% if fig_age_alt %}<div class="{{ cls_sel }}">{{ fig_age }}</div><div class="{{ cls_alt }}">{{ fig_age_alt }}</div>{% else %}{{ fig_age }}{% endif %}</div>
 <p class="fig-caption">
   <b>Figure S{{ ns.fig }}.</b> Age associations before versus after harmonization.
   Each point represents one imaging feature. The x-axis shows Pearson <em>r</em>
@@ -884,9 +899,9 @@ TEMPLATE = """<!DOCTYPE html>
   independently for each condition; no formal test of the difference between
   correlations was applied. Points above the diagonal indicate a strengthened age
   association after harmonization; points below indicate weakening.
-  Symbol and color encode the significance category ({% if fdr_on %}Benjamini&#8211;Hochberg
-  FDR-corrected <em>p</em> &lt; .05, applied separately within each condition{% else %}uncorrected
-  <em>p</em> &lt; .05{% endif %}):
+  Symbol and color encode the significance category (<span class="sig-fdr">Benjamini&#8211;Hochberg
+  FDR-corrected <em>p</em> &lt; .05, applied separately within each condition</span><span class="sig-unc">uncorrected
+  <em>p</em> &lt; .05</span>):
   grey circle = not significant in either condition;
   filled circle = significant after harmonization only (new association);
   orange diamond = significant before harmonization only (lost association);
@@ -898,6 +913,15 @@ TEMPLATE = """<!DOCTYPE html>
 {% if include_extra_assoc and extra_assoc_figs %}
 {% set sec = 4 if include_age else 3 %}
 <h3>S4.{{ sec }}. Additional Variable Associations</h3>
+{% if not include_age %}{% if fig_age_alt or extra_has_alt %}
+<div class="sig-switch">
+  <b>Significance shown in the association figures:</b>
+  <label><input type="radio" name="sigmode" value="unc"{% if not fdr_on %} checked{% endif %}> uncorrected <em>p</em> &lt; .05</label>
+  <label><input type="radio" name="sigmode" value="fdr"{% if fdr_on %} checked{% endif %}> Benjamini&#8211;Hochberg FDR-corrected <em>p</em> &lt; .05</label>
+  <span class="sig-note">The counts in the text use the {{ 'FDR-corrected' if fdr_on else 'uncorrected' }} <em>p</em>-values selected in CHORD; the switch changes the figures and their captions.</span>
+</div>
+{% endif %}
+{% endif %}
 <p>
   Associations between additional variables
   ({% if assoc_cont_vars %}continuous: {{ assoc_cont_vars | join(", ") }}{% endif %}{% if assoc_cont_vars and assoc_cat_vars %}; {% endif %}{% if assoc_cat_vars %}categorical: {{ assoc_cat_vars | join(", ") }}{% endif %})
@@ -909,14 +933,14 @@ TEMPLATE = """<!DOCTYPE html>
   Each additional variable is shown in its own figure below.
 </p>
 {% for item in extra_assoc_figs %}
-<div class="fig-wrap">{{ item.html | safe }}</div>
+<div class="fig-wrap">{% if item.html_alt %}<div class="{{ cls_sel }}">{{ item.html | safe }}</div><div class="{{ cls_alt }}">{{ item.html_alt | safe }}</div>{% else %}{{ item.html | safe }}{% endif %}</div>
 <p class="fig-caption">
   <b>Figure S4.{{ sec }}.{{ loop.index }}.</b> {{ item.variable }} association before versus after harmonization.
   Each point represents one imaging feature. Effect size on the x-axis = before harmonization;
   y-axis = after harmonization. Continuous variables use Pearson <em>r</em>.
   Categorical variables use Cohen's <em>f</em> (partial eta-squared converted to Cohen's <em>f</em>).
-  Symbol and color encode the significance category ({% if fdr_on %}Benjamini&#8211;Hochberg FDR-corrected
-  <em>p</em> &lt; .05 per variable{% else %}uncorrected <em>p</em> &lt; .05{% endif %}).
+  Symbol and color encode the significance category (<span class="sig-fdr">Benjamini&#8211;Hochberg FDR-corrected
+  <em>p</em> &lt; .05 per variable</span><span class="sig-unc">uncorrected <em>p</em> &lt; .05</span>).
   Grey circle = not significant in either condition.
   Filled circle = significant after harmonization only.
   Orange diamond = significant before harmonization only.
@@ -959,6 +983,21 @@ TEMPLATE = """<!DOCTYPE html>
 {% endif %}
 
 <!-- ─────────────────────────────────────── Refs ────────────────────────── -->
+<script>
+// uncorrected or FDR-corrected significance in the association figures (Oni, 29 October 2026)
+(function () {
+  function setSig(m) {
+    document.querySelectorAll('.sig-unc').forEach(function (e) { e.style.display = m === 'unc' ? '' : 'none'; });
+    document.querySelectorAll('.sig-fdr').forEach(function (e) { e.style.display = m === 'fdr' ? '' : 'none'; });
+    window.dispatchEvent(new Event('resize'));
+  }
+  var radios = document.querySelectorAll('input[name=sigmode]');
+  radios.forEach(function (r) { r.addEventListener('change', function () { setSig(r.value); }); });
+  var c = document.querySelector('input[name=sigmode]:checked');
+  setSig(c ? c.value : '{{ "fdr" if fdr_on else "unc" }}');
+})();
+</script>
+
 <h2>References</h2>
 <ol class="ref-list">
   <li id="ref1">Johnson WE, Li C, Rabinovic A. Adjusting batch effects in microarray expression data using empirical Bayes methods. <em>Biostatistics</em>. 2007;8(1):118&#8211;127.</li>
@@ -1173,6 +1212,7 @@ def generate_report(
     fig_extra_assoc=None,
     extra_assoc_figs=None,
     group_figs=None,
+    fig_age_alt=None,
     fdr_note=None,
     assoc_cont_vars=None,
     assoc_cat_vars=None,
@@ -1315,10 +1355,14 @@ def generate_report(
         fig_icc_site    = (_figs_html(group_figs, "fig_icc_site", fig_icc_site) if fig_icc_site is not None else None),
         fig_spearman    = (_fig_html(fig_spearman) if fig_spearman is not None else ""),
         fig_age         = (_figs_html(group_figs, "fig_age", fig_age) if fig_age is not None else ""),
+        fig_age_alt     = (_figs_html(group_figs, "fig_age_alt", fig_age_alt) if fig_age_alt is not None else ""),
+        extra_has_alt   = any(d.get("fig_alt") is not None for d in (extra_assoc_figs or [])),
         fig_extra_assoc = (_fig_html(fig_extra_assoc) if fig_extra_assoc is not None else ""),
         extra_assoc_figs = [
             {"variable": d["variable"],
-             "html": (_figs_html({"x": d["groups"]}, "x", d["fig"]) if d.get("groups") else _fig_html(d["fig"]))}
+             "html": (_figs_html({"x": d["groups"]}, "x", d["fig"]) if d.get("groups") else _fig_html(d["fig"])),
+             "html_alt": (_figs_html({"x": d["groups_alt"]}, "x", d["fig_alt"]) if d.get("groups_alt")
+                          else _fig_html(d["fig_alt"]) if d.get("fig_alt") is not None else "")}
             for d in (extra_assoc_figs or []) if d.get("fig") is not None
         ],
         fdr_note = fdr_note or "",

@@ -16,7 +16,7 @@ from src.naming    import measure_keys, natural_sorted
 from src.harmonize import (run_combat, run_combat_grouped, run_combat_per_feature,
                            run_combat_by_missing_pattern, run_combat_with_imputation,
                            missing_pattern_groups)
-from src.metrics   import (site_mean_deviation, spearman_raw_vs_harm,
+from src.metrics   import (site_mean_deviation, spearman_raw_vs_harm, _apply_significance,
                             compute_icc, age_correlations, ancova_site_effect,
                             demographic_summary,
                             compute_icc_by_site, compute_icc_within_summary,
@@ -2278,6 +2278,19 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True,
                 if _rf is not None:
                     extra_assoc_figs.append({"variable": _rv, "fig": _rf})
 
+        # the association figures also with the other correction (FDR when it was not ticked, uncorrected
+        # when it was), so the report can switch between the two (Oni, 29 October 2026)
+        def _resig(d, by):
+            if not isinstance(d, pd.DataFrame) or len(d) == 0 or "p_value" not in d.columns:
+                return d
+            return pd.concat([_apply_significance(sub, use_fdr=not use_fdr, feature_group=_feature_group)
+                              for _, sub in d.groupby(by, sort=False)], ignore_index=True)
+        age_alt = _resig(age_all, ["harmonization"])
+        extra_alt = _resig(extra_assoc_df, ["harmonization", "variable"])
+        fig_age_alt = plot_age_correlations(age_alt) if fig_age is not None else None
+        for _it in extra_assoc_figs:
+            _it["fig_alt"] = plot_single_association(extra_alt, _it["variable"])
+
         # With modality groups each group is harmonized on its own, so every figure is also drawn once per
         # group (Oni, 29 October 2026: "a separate plot for each modality"); the pooled figures stay for the app.
         group_figs = {}
@@ -2310,10 +2323,15 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True,
                     if fig_age is not None:
                         group_figs.setdefault("fig_age", []).append(
                             (_g, _titled(plot_age_correlations(_only(age_all, _cols)), _g)))
+                        group_figs.setdefault("fig_age_alt", []).append(
+                            (_g, _titled(plot_age_correlations(_only(age_alt, _cols)), _g)))
                     for _it in extra_assoc_figs:
                         _gf = plot_single_association(_only(extra_assoc_df, _cols), _it["variable"])
                         if _gf is not None:
                             _it.setdefault("groups", []).append((_g, _titled(_gf, _g)))
+                        _ga = plot_single_association(_only(extra_alt, _cols), _it["variable"])
+                        if _ga is not None:
+                            _it.setdefault("groups_alt", []).append((_g, _titled(_ga, _g)))
                 except Exception as _gerr:
                     st.warning(f"The figures for the modality group {_g} could not be drawn: {_gerr}")
 
@@ -2461,7 +2479,7 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True,
             anc_before=anc_before, anc_ebt=anc_ebt, anc_ebf=anc_ebf,
             age_df=age_all,
             fig_site_dev=fig_site, fig_icc=fig_icc, fig_icc_site=fig_icc_site,
-            fig_spearman=None, fig_age=fig_age, fig_cohens_f=fig_anc,
+            fig_spearman=None, fig_age=fig_age, fig_age_alt=fig_age_alt, fig_cohens_f=fig_anc,
             extra_continuous=extra_continuous,
             extra_categorical=extra_categorical,
             covariates_cont=continuous_covariates,
