@@ -27,7 +27,7 @@ from src.plots     import (plot_site_deviation, plot_spearman, plot_icc, plot_da
                            plot_icc_by_site, plot_spearman_by_site,
                            plot_extra_associations, plot_single_association,
                            plot_icc_ci_compare, plot_missing_curve,
-                           plot_missing_by_batch_bars, plot_missing_by_batch_groups)
+                           plot_present_missing_by_batch)
 from src.report    import generate_report, build_methods_paragraph, data_prep_sentence
 
 # ── Update this URL once the repo is live ─────────────────────────────────
@@ -69,7 +69,7 @@ Input: a table in which each row is a participant, containing a batch column and
 - Batch effect size (ANCOVA, Cohen's f)
 
 **Optional metrics:**
-- Age associations (Pearson r, FDR-corrected). Optional: can be confounded by head motion, and are uninformative when the age range is narrow
+- Age associations (Pearson r; FDR correction when ticked). Optional: can be confounded by head motion, and are uninformative when the age range is narrow
 - Additional variable associations (OLS) — e.g. injury severity, time since injury
     """)
     st.divider()
@@ -1628,21 +1628,23 @@ if _show_miss_tools:
             if (~_has_batch).any():
                 st.caption(f"{int((~_has_batch).sum())} participant(s) without a batch value are not in this table.")
             _btab = pd.DataFrame(_bt)
+            # present against missing feature values in each batch (Oni, 29 October 2026)
+            _hb = feat_isna[_has_batch]
+            _bb = df.loc[_has_batch, site_col].astype(str)
+            def _pm(cols):
+                _m = _hb[cols].sum(axis=1).groupby(_bb).sum()
+                return ([int(len(cols) * (_bb == b).sum() - _m.get(b, 0)) for b in _btab["Batch"]],
+                        [int(_m.get(b, 0)) for b in _btab["Batch"]])
             if modality_groups and st.toggle("Split by modality group", key="batch_split_groups",
-                                             help="One bar per modality group in each batch: the share of that "
-                                                  "group's feature values that is missing."):
-                st.plotly_chart(plot_missing_by_batch_groups(
-                    list(_btab["Batch"]), list(_btab["Participants (n)"]),
-                    {m: list(_btab[f"{m}: values missing (%)"]) for m in measures},
-                    {m: 100 * float(feat_isna.loc[_has_batch, [c for c in feats_l if measure_of[c] == m]].values.mean())
-                     for m in measures}), use_container_width=True)
+                                             help="One panel per modality group: in each batch, the group's "
+                                                  "feature values present and missing."):
+                _panels = {m: _pm([c for c in feats_l if measure_of[c] == m]) for m in measures}
             else:
-                st.plotly_chart(plot_missing_by_batch_bars(
-                    list(_btab["Batch"]), list(_btab["Participants (n)"]),
-                    list(_btab["Feature values missing (% of the batch's values)"]),
-                    list(_btab[f"Participants missing more than {p_thr:g}% of the features (% of the batch)"]),
-                    p_thr, 100 * float(feat_isna[_has_batch].values.mean()),
-                    100 * float((part_pct[_has_batch] > p_thr).mean())), use_container_width=True)
+                _panels = {"All selected features": _pm(list(feats_l))}
+            st.plotly_chart(plot_present_missing_by_batch(
+                list(_btab["Batch"]), list(_btab["Participants (n)"]),
+                {k: v[0] for k, v in _panels.items()}, {k: v[1] for k, v in _panels.items()}),
+                use_container_width=True)
 
             # ── per participant ──
             st.markdown("**Missing values per participant**")
@@ -1673,8 +1675,24 @@ if _show_miss_tools:
 
             # ── map ──
             st.markdown("**Map of missing values**")
-            # missing values at a glance, as vis_miss in the R package naniar
-            _show_matrix_preview(df, "all", feature_cols, "Missing values", missing_only=True)
+            # missing values at a glance, as vis_miss in the R package naniar; before or after the data
+            # cleaning in the same place, so the change is seen by switching (Oni, 29 October 2026)
+            _amap = (st.radio("Data shown", ["Before the data cleaning", "After the data cleaning"],
+                              horizontal=True, key="assess_map_stage",
+                              help="Before: every participant and every selected or excluded feature, the excluded "
+                                   "features after their group. After: the participants who enter the "
+                                   "harmonization and the features kept.")
+                     if (_preview_excluded or _excl_part_rows) else "Before the data cleaning")
+            if _amap.startswith("After"):
+                _show_matrix_preview(df.loc[final_rows], ("final", tuple(map(str, final_rows))), feature_cols,
+                                     "Missing values after the data cleaning", missing_only=True)
+            else:
+                _show_matrix_preview(
+                    df, "all", list(feature_cols) + [f for f in _preview_excluded if f not in feature_cols],
+                    "Missing values before the data cleaning" if (_preview_excluded or _excl_part_rows)
+                    else "Missing values", missing_only=True,
+                    marked=("Excluded for missingness", _preview_excluded) if _preview_excluded else None,
+                    groups_override=_preview_groups)
         except Exception as _miss_err:
             st.error(f"Missing-value assessment could not be generated: {_miss_err}")
 
@@ -1708,30 +1726,33 @@ if _show_miss_tools:
         return str(df.at[r, _pid_s]) if _pid_s in df.columns and pd.notna(df.at[r, _pid_s]) else f"Row {df.index.get_loc(r) + 1}"
     _rm_parts = []
     if len(_mv_rows):
-        _rm_parts.append(f"{len(_mv_rows)} missing the batch or a covariate")
+        _rm_parts.append(f"{len(_mv_rows)} with missing batch or covariate data")
     if _xp:
-        _rm_parts.append(f"{len(_xp)} missing more than {_xp_thr:g}% of the features" if _xp_thr is not None
-                         else f"{len(_xp)} excluded for missing features")
+        _rm_parts.append(f"{len(_xp)} with missing data in more than {_xp_thr:g}% of the features"
+                         if _xp_thr is not None else f"{len(_xp)} excluded for missing feature data")
     _n_rm_p = len(_mv_rows) + len(_xp)
-    cleaning_summary = pd.DataFrame([
-        {"": "Features", "Before cleaning": _n_feat_all,
-         "Removed": (f"{len(_xf)} (missing in more than {_xf_thr:g}% of the participants)" if _xf and _xf_thr is not None
-                     else f"{len(_xf)} (threshold per modality group: "
-                          f"{(st.session_state.get('_excl_info') or {}).get('threshold_text')})"
-                     if _xf and (st.session_state.get("_excl_info") or {}).get("threshold_text")
-                     else str(len(_xf))),
-         "Kept": len(feature_cols)},
-    ] + ([] if not modality_groups else [
+
+    def _np(k, tot):
+        """n (%) of the total before the cleaning (Oni, 29 October 2026: the table needs percentages)."""
+        return f"{k} ({100 * k / tot:.1f}%)" if tot else str(k)
+    _xf_why = (f"missing data in more than {_xf_thr:g}% of participants" if _xf and _xf_thr is not None
+               else f"threshold per modality group: {(st.session_state.get('_excl_info') or {}).get('threshold_text')}"
+               if _xf and (st.session_state.get("_excl_info") or {}).get("threshold_text") else "")
+    _grp_rows = []
+    for g, gcols in (modality_groups or {}).items():
         # the features of each modality group: before, removed and kept (Oni, 29 October 2026)
-        {"": f"   {g}",
-         "Before cleaning": len([c for c in gcols if c in set(feature_cols)])
-                            + sum(1 for d in _xf if d.get("Modality group") == g),
-         "Removed": str(sum(1 for d in _xf if d.get("Modality group") == g)),
-         "Kept": len([c for c in gcols if c in set(feature_cols)])}
-        for g, gcols in modality_groups.items()]) + [
-        {"": "Participants", "Before cleaning": len(df),
-         "Removed": f"{_n_rm_p} ({'; '.join(_rm_parts)})" if _rm_parts else "0",
-         "Kept": len(df) - _n_rm_p},
+        _gk = len([c for c in gcols if c in set(feature_cols)])
+        _gx = sum(1 for d in _xf if d.get("Modality group") == g)
+        _grp_rows.append({"": f"   {g}", "Before cleaning, n": _gk + _gx,
+                          "Removed, n (%)": _np(_gx, _gk + _gx), "Kept, n (%)": _np(_gk, _gk + _gx)})
+    cleaning_summary = pd.DataFrame([
+        {"": "Features", "Before cleaning, n": _n_feat_all,
+         "Removed, n (%)": _np(len(_xf), _n_feat_all) + (f": {_xf_why}" if _xf_why else ""),
+         "Kept, n (%)": _np(len(feature_cols), _n_feat_all)},
+    ] + _grp_rows + [
+        {"": "Participants", "Before cleaning, n": len(df),
+         "Removed, n (%)": _np(_n_rm_p, len(df)) + (f": {'; '.join(_rm_parts)}" if _rm_parts else ""),
+         "Kept, n (%)": _np(len(df) - _n_rm_p, len(df))},
     ])
     st.dataframe(cleaning_summary, use_container_width=True, hide_index=True)
     if _xf:
@@ -2251,6 +2272,45 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True,
                 if _rf is not None:
                     extra_assoc_figs.append({"variable": _rv, "fig": _rf})
 
+        # With modality groups each group is harmonized on its own, so every figure is also drawn once per
+        # group (Oni, 29 October 2026: "a separate plot for each modality"); the pooled figures stay for the app.
+        group_figs = {}
+        result_groups = {g: [c for c in cols if c in set(feature_cols)] for g, cols in (modality_groups or {}).items()}
+        result_groups = {g: c for g, c in result_groups.items() if c}
+        if len(result_groups) > 1:
+            def _only(d, cols):
+                return (d[d["feature"].isin(cols)]
+                        if isinstance(d, pd.DataFrame) and "feature" in d.columns else d)
+
+            def _titled(fig, g):
+                if fig is not None:
+                    _t = fig.layout.title.text or ""
+                    fig.update_layout(title_text=f"{g}: {_t}" if _t else g)
+                return fig
+            _site_n_dev = df_harm[site_col].value_counts().to_dict()
+            for _g, _cols in result_groups.items():
+                try:
+                    group_figs.setdefault("fig_site_dev", []).append((_g, _titled(plot_site_deviation(
+                        _only(dev_before, _cols), _only(dev_ebt, _cols) if dev_ebt is not None else pd.DataFrame(),
+                        _only(dev_ebf, _cols), site_n=_site_n_dev), _g)))
+                    if fig_anc is not None:
+                        group_figs.setdefault("fig_cohens_f", []).append((_g, _titled(plot_cohens_f(
+                            _only(anc_before, _cols), _only(anc_ebt, _cols) if anc_ebt is not None else pd.DataFrame(),
+                            _only(anc_ebf, _cols)), _g)))
+                    if fig_icc_site is not None:
+                        group_figs.setdefault("fig_icc_site", []).append((_g, _titled(plot_icc_by_site(
+                            _only(icc_site_ebt, _cols) if icc_site_ebt is not None else pd.DataFrame(),
+                            _only(icc_site_ebf, _cols), site_n=site_n), _g)))
+                    if fig_age is not None:
+                        group_figs.setdefault("fig_age", []).append(
+                            (_g, _titled(plot_age_correlations(_only(age_all, _cols)), _g)))
+                    for _it in extra_assoc_figs:
+                        _gf = plot_single_association(_only(extra_assoc_df, _cols), _it["variable"])
+                        if _gf is not None:
+                            _it.setdefault("groups", []).append((_g, _titled(_gf, _g)))
+                except Exception as _gerr:
+                    st.warning(f"The figures for the modality group {_g} could not be drawn: {_gerr}")
+
         # ── Report ─────────────────────────────────────────────────────────
         progress.progress(94, "Building report...")
         n_retained = len(harm_primary) if harm_primary is not None else 0
@@ -2408,6 +2468,7 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True,
             extra_assoc_df=extra_assoc_df if len(extra_assoc_df) > 0 else None,
             fig_extra_assoc=fig_extra_assoc,
             extra_assoc_figs=extra_assoc_figs,
+            group_figs=group_figs,
             assoc_cont_vars=assoc_cont_vars,
             assoc_cat_vars=assoc_cat_vars,
             fdr_note=fdr_note,
@@ -2436,9 +2497,17 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True,
 
         progress.progress(100, "Done.")
 
-        # build harmonized CSVs for download
-        harm_csv_ebt = harm_ebt.to_csv(index=False).encode() if harm_ebt is not None else None
-        harm_csv_ebf = harm_ebf.to_csv(index=False).encode() if harm_ebf is not None else None
+        # build the CSVs for download. Features excluded for missing values are left out of every table,
+        # so no column with unharmonized values sits among the harmonized ones; the cleaned table has the
+        # same participants and features as the harmonized tables, with the values before harmonization
+        # (Oni, 29 October 2026)
+        _drop_out = [c for c in _excluded_before if c not in set(feature_cols)]
+        harm_csv_ebt = (harm_ebt.drop(columns=_drop_out, errors="ignore").to_csv(index=False).encode()
+                        if harm_ebt is not None else None)
+        harm_csv_ebf = (harm_ebf.drop(columns=_drop_out, errors="ignore").to_csv(index=False).encode()
+                        if harm_ebf is not None else None)
+        clean_csv = (df_harm.loc[harm_primary.index].drop(columns=_drop_out, errors="ignore")
+                     .to_csv(index=False).encode() if harm_primary is not None else None)
 
         st.session_state.update(dict(
             results_ready=True,
@@ -2448,11 +2517,13 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True,
             fig_age=fig_age,   fig_anc=fig_anc,
             fig_icc_site=fig_icc_site,
             fig_extra_assoc=fig_extra_assoc,
+            group_figs=group_figs, result_groups=result_groups,
             html_report=html_report,
             icc_ebt=icc_ebt, icc_ebf=icc_ebf,
             run_ebt=run_ebt, run_ebf=run_ebf,
             harm_csv_ebt=harm_csv_ebt,
             harm_csv_ebf=harm_csv_ebf,
+            clean_csv=clean_csv,
             include_cohens_f=include_cohens_f,
             include_icc_by_site=include_icc_by_site,
             include_age_corr=include_age_corr,
@@ -2472,7 +2543,7 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True,
 def _download_buttons(where):
     """The report and the harmonized tables. Shown at the top of the Results and again at the end,
     so they never depend on scrolling to the end of a long page (Oni, 29 October 2026)."""
-    dl1, dl2, dl3 = st.columns(3)
+    dl1, dl2, dl3, dl4 = st.columns(4)
     with dl1:
         st.download_button(
             label="⬇  Report (HTML)",
@@ -2504,6 +2575,17 @@ def _download_buttons(where):
                 use_container_width=True,
                 key=f"dl_ebf_{where}",
             )
+    with dl4:
+        if st.session_state.get("clean_csv"):
+            st.download_button(
+                label="⬇  Cleaned data, not harmonized",
+                data=st.session_state["clean_csv"],
+                file_name=f"{data_stem}_cleaned.csv",
+                mime="text/csv",
+                use_container_width=True,
+                key=f"dl_clean_{where}",
+            )
+            st.caption("The same participants and features as the harmonized data, before harmonization")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2513,7 +2595,9 @@ if st.session_state.get("results_ready"):
 
     st.divider()
     st.subheader("Results")
-    st.caption("Download the report and the harmonized data here; the same buttons are also at the end of the page.")
+    st.caption("Download the report, the harmonized data and the cleaned data before harmonization here; the "
+               "same buttons are also at the end of the page. Features excluded for missing values are not in "
+               "these tables; the report lists them.")
     _download_buttons("top")
     if st.session_state.pop("_scroll_to_results", False):
         # once, right after a run: bring the Results into view instead of leaving the page where the Run button was
@@ -2562,11 +2646,27 @@ if st.session_state.get("results_ready"):
         tab_names.append(str(_v))
     tab_names.append("Methods paragraph")
 
+    _gfigs = st.session_state.get("group_figs") or {}
+    _rgroups = st.session_state.get("result_groups") or {}
+    _by_group = bool(_gfigs) and st.radio(
+        "Plots", ["One plot per modality group", "All features in one plot"], horizontal=True,
+        key="results_by_group",
+        help="Each modality group is harmonized on its own, so its results are shown on their own; the "
+             "report shows one plot per modality group.") == "One plot per modality group"
+
+    def _show_fig(key, pooled):
+        """The pooled figure, or one figure per modality group when that is chosen."""
+        if _by_group and _gfigs.get(key):
+            for _g, _f in _gfigs[key]:
+                st.plotly_chart(_f, use_container_width=True)
+        elif pooled is not None:
+            st.plotly_chart(pooled, use_container_width=True)
+
     tabs = st.tabs(tab_names)
     tab_idx = 0
 
     with tabs[tab_idx]:
-        st.plotly_chart(st.session_state["fig_site"], use_container_width=True)
+        _show_fig("fig_site_dev", st.session_state["fig_site"])
         st.caption(
             "Each point = one (batch, feature) pair. Batch means should cluster near zero after harmonization. "
             "Each feature is standardized to a z-score for display only, so that features measured on different "
@@ -2578,7 +2678,7 @@ if st.session_state.get("results_ready"):
     if _inc_cohens_f:
         with tabs[tab_idx]:
             if st.session_state.get("fig_anc"):
-                st.plotly_chart(st.session_state["fig_anc"], use_container_width=True)
+                _show_fig("fig_cohens_f", st.session_state["fig_anc"])
                 st.caption("Each point = one feature. Batch effect from ANCOVA Type II (Age + Sex as covariates); significance is the uncorrected p-value (p < 0.05), not corrected for multiple comparisons. Colour encodes the after-harmonization status (red = p < 0.05, green = p >= 0.05) and fill encodes the before-harmonization status (filled = p < 0.05, open = p >= 0.05), as summarised in the 2 x 2 legend. Points below the diagonal = reduced batch effect size.")
             else:
                 st.info("Cohen's f not computed for this run.")
@@ -2587,7 +2687,7 @@ if st.session_state.get("results_ready"):
     if _inc_icc_site:
         with tabs[tab_idx]:
             if st.session_state.get("fig_icc_site"):
-                st.plotly_chart(st.session_state["fig_icc_site"], use_container_width=True)
+                _show_fig("fig_icc_site", st.session_state["fig_icc_site"])
                 st.caption(
                     "Each box = distribution of ICC(3,1) across features for that batch. "
                     "Within-batch ICC is the primary recommended metric; it measures whether harmonization "
@@ -2626,17 +2726,29 @@ if st.session_state.get("results_ready"):
         with tabs[tab_idx]:
             _fig_v = plot_single_association(_assoc_uni, _v)
             if _fig_v is not None:
-                st.plotly_chart(_fig_v, use_container_width=True)
+                if _by_group and _rgroups:
+                    for _g, _cols in _rgroups.items():
+                        _fg = plot_single_association(_assoc_uni[_assoc_uni["feature"].isin(_cols)], _v)
+                        if _fg is not None:
+                            _fg.update_layout(title_text=f"{_g}: {_fg.layout.title.text or ''}")
+                            st.plotly_chart(_fg, use_container_width=True)
+                else:
+                    st.plotly_chart(_fig_v, use_container_width=True)
                 _sub_v = _assoc_uni[_assoc_uni["variable"] == _v]
                 _vt_v  = _sub_v["var_type"].iloc[0] if len(_sub_v) else "continuous"
                 _eff_v = "Pearson r" if _vt_v == "continuous" else "Cohen's f"
+                # the wording follows the correction actually applied (FDR only when ticked)
+                _fdr_v = ("correction" in _sub_v.columns
+                          and _sub_v["correction"].astype(str).str.startswith("FDR").any())
+                _sw = "FDR significant" if _fdr_v else "significant"
                 st.caption(
                     f"Each point = one feature. Effect size for {_v} before (x-axis) versus after "
-                    f"(y-axis) harmonization, shown as {_eff_v}. Significance is the FDR-corrected "
-                    f"(Benjamini-Hochberg, per variable) p-value from a linear model that controls for "
-                    f"the other preserved covariates (excluding {_v}). Grey circle = not significant in "
-                    f"either condition. Filled circle = FDR significant after only. Orange diamond = FDR "
-                    f"significant before only. Purple square = FDR significant in both. Dashed diagonal = no change."
+                    f"(y-axis) harmonization, shown as {_eff_v}. Significance is the "
+                    + ("FDR-corrected (Benjamini-Hochberg, per variable) p-value" if _fdr_v
+                       else "uncorrected p-value (p < 0.05)")
+                    + f" from a linear model that controls for the other preserved covariates (excluding {_v}). "
+                    f"Grey circle = not significant in either condition. Filled circle = {_sw} after only. "
+                    f"Orange diamond = {_sw} before only. Purple square = {_sw} in both. Dashed diagonal = no change."
                 )
             else:
                 st.info(f"No association could be computed for {_v}.")

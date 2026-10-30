@@ -5,6 +5,7 @@ supplementary material section.
 """
 
 import plotly.io as pio
+import re
 import pandas as pd
 import numpy as np
 from datetime import datetime
@@ -105,6 +106,13 @@ def _fig_html(fig):
                        config={"responsive": True})
 
 
+def _figs_html(group_figs, key, pooled):
+    """One plot per modality group when the run had groups (Oni, 29 October 2026), else the pooled plot."""
+    if group_figs and group_figs.get(key):
+        return "".join(_fig_html(f) for _, f in group_figs[key] if f is not None)
+    return _fig_html(pooled) if pooled is not None else ""
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # DataFrame → HTML table
 # ─────────────────────────────────────────────────────────────────────────────
@@ -114,8 +122,21 @@ def _df_table(df, max_rows=300, float_fmt=4):
     d = df.head(max_rows).copy()
     for col in d.select_dtypes(include="float").columns:
         d[col] = d[col].map(lambda x: f"{x:.{float_fmt}f}" if pd.notna(x) else "")
-    return d.to_html(index=False, border=0, classes="data-table",
-                     justify="left", na_rep="")
+    return _italic_headers(d.to_html(index=False, border=0, classes="data-table",
+                                     justify="left", na_rep=""))
+
+
+def _italic_headers(html):
+    """Statistical symbols in the column headers in italics, as reporting guidelines ask (APA: Latin
+    letters such as n, N, M, SD, p, r, f in italics; Greek letters upright): n, N, SD, p, r, Cohen's f,
+    partial eta squared as eta^2 with subscript p (Oni, 29 October 2026)."""
+    def fix(m):
+        t = m.group(2)
+        t = t.replace("η²p", "η<sup>2</sup><sub>p</sub>")
+        t = re.sub(r"Cohen's f\b", "Cohen's <em>f</em>", t)
+        t = re.sub(r"(?<![\w<>/&;])(n|N|SD|p|r)(?![\w>])", r"<em>\1</em>", t)
+        return m.group(1) + t + m.group(3)
+    return re.sub(r"(<th[^>]*>)(.*?)(</th>)", fix, html, flags=re.S)
 
 
 def _demo_table(df):
@@ -167,7 +188,8 @@ def _data_prep_tables(excl_feat_html, overview, excl_part_list):
         return label
 
     if excl_feat_html:
-        table("Features excluded due to missingness.", excl_feat_html,
+        table("Features excluded due to missingness.",
+              _collapsed(excl_feat_html, "Show the names of the excluded features"),
               "Features listed above were removed from the analysis before harmonization because their "
               "missing rate exceeded the user-specified threshold. Participants missing (%) is computed "
               "across all uploaded participants.")
@@ -176,30 +198,30 @@ def _data_prep_tables(excl_feat_html, overview, excl_part_list):
         pthr = overview.get("part_threshold", thr)
 
         def excluded(n, t):
-            return f"{n} (more than {t:g}% missing)" if n and t is not None else str(n or 0)
+            return f"{n} (threshold {t:g}%)" if n and t is not None else str(n or 0)
         ov = pd.DataFrame([
             {"": "Features", "Total": overview["n_features"],
-             "Above the threshold": f"{overview['feat_over']} (missing in more than {thr:g}% of the participants)",
-             "Excluded by the user": (f"{overview['feat_excl']} (threshold per modality group: {overview['feat_excl_text']})"
+             "Above threshold": f"{overview['feat_over']} (missing data in > {thr:g}% of participants)",
+             "Excluded": (f"{overview['feat_excl']} (threshold per modality group: {overview['feat_excl_text']})"
                                       if overview.get("feat_excl_text") and overview["feat_excl"]
                                       else excluded(overview["feat_excl"], overview["feat_excl_thr"]))},
             {"": "Participants", "Total": overview["n_participants"],
-             "Above the threshold": f"{overview['part_over']} (missing more than {pthr:g}% of the features)",
-             "Excluded by the user": excluded(overview["part_excl"], overview["part_excl_thr"])},
+             "Above threshold": f"{overview['part_over']} (missing data in > {pthr:g}% of features)",
+             "Excluded": excluded(overview["part_excl"], overview["part_excl_thr"])},
         ])
         overview_label = table(
             "Missing values before harmonization.", _df_table(ov),
-            f"Counted in all {overview['n_participants']} uploaded participants. Features: over the "
-            f"{overview['n_features']} selected features, including those later excluded; a feature is above "
-            f"the threshold when it is missing in more than {thr:g}% of the participants. Participants: over the "
-            f"{overview.get('n_features_kept', overview['n_features'])} features kept after the feature exclusion, "
-            f"as in the participant exclusion; a participant is above the threshold when they miss more than "
-            f"{pthr:g}% of these features.")
+            f"Computed across all {overview['n_participants']} uploaded participants. For features, the "
+            f"{overview['n_features']} selected features, including those subsequently excluded, were considered; "
+            f"a feature exceeded the threshold when data were missing for more than {thr:g}% of participants. "
+            f"For participants, the {overview.get('n_features_kept', overview['n_features'])} features retained "
+            f"after feature exclusion were considered, as in the participant exclusion; a participant exceeded "
+            f"the threshold when data were missing for more than {pthr:g}% of these features.")
         if overview.get("by_group"):
             table("Missing values per modality group before harmonization.",
                   _df_table(pd.DataFrame(overview["by_group"]), float_fmt=1),
-                  "Modality groups as defined by the user for harmonization, each with its features later "
-                  "excluded; counted over all uploaded participants.")
+                  "Modality groups as defined by the user, including the features subsequently excluded; "
+                  "computed across all uploaded participants.")
     if excl_part_list:
         part_label = table("Participants excluded due to missingness.",
                            _df_table(pd.DataFrame(excl_part_list), float_fmt=1),
@@ -209,6 +231,12 @@ def _data_prep_tables(excl_feat_html, overview, excl_part_list):
     return "\n".join(parts), part_label, overview_label
 
 
+def _collapsed(html, label):
+    """Long lists of feature names, collapsed until the reader opens them (Oni, 29 October 2026: with many
+    features the full lists make the report hard to work with)."""
+    return f'<details class="names"><summary>{label}</summary>{html}</details>' if html else ""
+
+
 def _feature_group_block(feature_cols, modality_groups):
     """S1.1: the harmonized features. When the run used modality groups, one row
     per group (as the user defined them) with its features in one cell;
@@ -216,13 +244,15 @@ def _feature_group_block(feature_cols, modality_groups):
     if not feature_cols:
         return ""
     if not modality_groups:
-        return _format_feature_list(feature_cols)
+        return _collapsed(_format_feature_list(feature_cols), f"Show the {len(feature_cols)} feature names")
     rows = [{
         "Modality group": g,
         "n features":     len([c for c in cols if c in set(feature_cols)]),
         "Features":       ", ".join(c for c in cols if c in set(feature_cols)),
     } for g, cols in modality_groups.items()]
-    return _df_table(pd.DataFrame(rows))
+    # the number of features per group in view, the names on request
+    return (_df_table(pd.DataFrame(rows)[["Modality group", "n features"]])
+            + _collapsed(_df_table(pd.DataFrame(rows)), f"Show the {len(feature_cols)} feature names"))
 
 
 def _comparison_table(icc_ebt, icc_ebf, anc_ebt, anc_ebf, spm_ebt, spm_ebf):
@@ -312,6 +342,9 @@ TEMPLATE = """<!DOCTYPE html>
                  font-family: Arial, sans-serif; margin: 16px 0 4px 0; }
   /* ── Figures ── */
   .fig-wrap  { margin: 16px 0 8px 0; }
+  details.names { margin: 4px 0 10px; }
+  details.names > summary { cursor: pointer; color: #2A6EBB; font-family: Arial, sans-serif; font-size: 9.5pt; }
+  .fig-group { font-family: Arial, sans-serif; font-size: 10pt; font-weight: bold; margin: 14px 0 0; }
   .fig-caption { font-size: 9.5pt; font-family: Arial, sans-serif;
                  color: #333; margin-bottom: 24px; }
   .fig-caption b { font-weight: bold; }
@@ -407,7 +440,7 @@ TEMPLATE = """<!DOCTYPE html>
   <b>{{ n_sites }}</b> batches ({{ site_list }}).
   {% if missing_overview and missing_overview.n_features > n_features %}
   Of the <b>{{ missing_overview.n_features }}</b> selected imaging features, {{ missing_overview.n_features - n_features }}
-  were excluded for missing values (S1.2) and <b>{{ n_features }}</b> were harmonized.
+  were excluded because of missing data (Section S1.2), and <b>{{ n_features }}</b> were harmonized.
   {% else %}
   A total of <b>{{ n_features }}</b> imaging features were submitted for harmonization.
   {% endif %}
@@ -418,7 +451,7 @@ TEMPLATE = """<!DOCTYPE html>
   ({{ excl_reasons | join("; ") }}),
   {% else %}
   After excluding participants with missing values in the batch variable or any covariate
-  (n = {{ n_participants - n_retained }}),
+  (<em>n</em> = {{ n_participants - n_retained }}),
   {% endif %}
   <b>{{ n_retained }}</b> participants were retained for harmonization.
   {% endif %}
@@ -436,51 +469,57 @@ TEMPLATE = """<!DOCTYPE html>
 
 <h3>S1.1 Imaging features</h3>
 <p>
-  The following {{ n_features }} features were included in the harmonization analysis:
+  {{ n_features }} features were included in the harmonization{% if modality_on %}; their number per modality
+  group is given below{% endif %}.
   {{ feature_group_table | safe }}
 </p>
 
 {% if cleaning_table or fig_clean_feat or fig_map_before or data_prep_tables %}
 <h3>S1.2 Data cleaning</h3>
 <p>
-  What was done to the data before harmonization{% if cleaning_table %}: the features{% if modality_on %}, by modality
-  group,{% endif %} and the participants before the data cleaning, removed and kept, are given in Table C1{% endif %}.
-  {% if fig_clean_feat %}Figures C1 and C2 show, for every share x, the features with more than x% of the participants
-  missing and the participants missing more than x% of the selected features, with the exclusion thresholds as dotted
-  lines.{% endif %}
-  {% if fig_map_before %}Figure C3 shows every missing value before{% if fig_map_after %} and after{% endif %} the data
-  cleaning.{% endif %}
-  {% if data_prep_tables %}The tables after the figures list the excluded features and participants and count the
-  missing values before harmonization.{% endif %}
+  {% if cleaning_table %}Table C1 gives the number of features{% if modality_on %} (overall and by modality
+  group){% endif %} and participants before data cleaning, the number excluded, and the number retained.{% endif %}
+  {% if fig_clean_feat %}Figure C1 shows the percentage of features with missing data in more than <em>x</em>% of
+  participants{% if modality_on %}, separately for each modality group{% endif %}, and Figure C2 the percentage of
+  participants with missing data in more than <em>x</em>% of the selected features; dotted vertical lines mark the
+  exclusion thresholds.{% endif %}
+  {% if fig_map_before %}Figure C3 shows the pattern of missing data before{% if fig_map_after %} and after{% endif %}
+  data cleaning.{% endif %}
+  {% if data_prep_tables %}The excluded features and participants and the extent of missing data before
+  harmonization are reported in the tables following the figures.{% endif %}
+  {% if missing_overview and missing_overview.feat_excl %}Features excluded because of missing data were omitted
+  from the harmonized data files and from the cleaned, unharmonized data file.{% endif %}
 </p>
 {% if cleaning_table %}
-<p class="table-title">Table C1. Data cleaning: features{% if modality_on %} (in all and by modality group){% endif %} and participants before the data cleaning, removed and kept.</p>
+<p class="table-title">Table C1. Features{% if modality_on %} (overall and by modality group){% endif %} and participants before data cleaning, excluded, and retained.</p>
 {{ cleaning_table }}
 {% endif %}
 {% if fig_clean_feat %}
 <div class="fig-wrap">{{ fig_clean_feat }}</div>
 <p class="fig-caption">
-  <b>Figure C1.</b> Features with more than x% of the participants missing{% if modality_on %}, one plot per
-  modality group{% endif %}. The dotted line marks the exclusion threshold. After exclusions, the solid line shows the
-  features still included, counted on the participants still included, and the grey dashed line all features before
-  the exclusions.
+  <b>Figure C1.</b> Percentage of features with missing data in more than <em>x</em>% of participants{% if modality_on %},
+  by modality group{% endif %}. The dotted vertical line marks the exclusion threshold. The solid line represents the
+  retained features, computed on the retained participants; the dashed grey line represents all features before
+  exclusion.
 </p>
 {% endif %}
 {% if fig_clean_part %}
 <div class="fig-wrap">{{ fig_clean_part }}</div>
 <p class="fig-caption">
-  <b>Figure C2.</b> Participants missing more than x% of the selected features. The dotted line marks the exclusion
-  threshold; the solid line shows the participants still included and the grey dashed line all participants before the
-  exclusions.
+  <b>Figure C2.</b> Percentage of participants with missing data in more than <em>x</em>% of the selected features. The
+  dotted vertical line marks the exclusion threshold. The solid line represents the retained participants; the dashed
+  grey line represents all participants before exclusion.
 </p>
 {% endif %}
 {% if fig_map_before %}
 <div class="fig-wrap">{{ fig_map_before }}</div>
 {% if fig_map_after %}<div class="fig-wrap">{{ fig_map_after }}</div>{% endif %}
 <p class="fig-caption">
-  <b>Figure C3.</b> Missing values (black) and present values (grey), one row per participant sorted by batch,
-  before{% if fig_map_after %} (top) and after (bottom){% endif %} the data cleaning{% if modality_on %}; the columns are
-  grouped by modality group, each group's excluded features after it{% endif %}.
+  <b>Figure C3.</b> Pattern of missing data before{% if fig_map_after %} (top) and after (bottom){% endif %} data
+  cleaning. Rows represent participants, ordered by batch; columns represent features{% if modality_on %}, ordered by
+  modality group, with the excluded features of each group placed after it{% endif %}. Black cells indicate missing
+  values and grey cells observed values; where the display is reduced, the shade of a cell gives the proportion of
+  missing values it contains.
 </p>
 {% endif %}
 {{ data_prep_tables }}
@@ -527,8 +566,8 @@ TEMPLATE = """<!DOCTYPE html>
   Before harmonization, {{ missing_overview.feat_over }} of the {{ missing_overview.n_features }} selected
   features {{ 'was' if missing_overview.feat_over == 1 else 'were' }} missing in more than {{ mthr }}% of the
   participants, and {{ missing_overview.part_over }} of the {{ missing_overview.n_participants }} participants
-  missed more than {{ pthr }}% of the {{ missing_overview.n_features_kept or missing_overview.n_features }} features
-  kept after the feature exclusion (Table {{ overview_table_label }}).
+  had missing data for more than {{ pthr }}% of the {{ missing_overview.n_features_kept or missing_overview.n_features }}
+  features retained after feature exclusion (Table {{ overview_table_label }}).
   {% endif %}
   {% if excl_info and excl_info.n > 0 %}
   {{ excl_info.n }} feature{{ 's' if excl_info.n != 1 else '' }}
@@ -562,10 +601,9 @@ TEMPLATE = """<!DOCTYPE html>
   Because the features contained scattered missing data, missing values were
   imputed with each feature's median before harmonization so that all
   participants could enter the model and Empirical Bayes could pool information
-  across features [<a href="#ref1">1</a>]. {% if keep_imputed %}At the user's request, the harmonized
-  imputed values were kept in the harmonized table.{% else %}After harmonization, the originally
-  missing cells were restored to missing so that imputed values were not
-  reported.{% endif %}
+  across features [<a href="#ref1">1</a>]. {% if keep_imputed %}The harmonized imputed values were retained in
+  the harmonized data file.{% else %}After harmonization, the imputed cells were reset to missing, so
+  that no imputed values were reported.{% endif %}
   {% elif missing_handling == 'pattern' %}
   Because the features contained scattered missing data, features were grouped
   by their shared pattern of missing participants{% if modality_on %}, within each of the
@@ -701,6 +739,12 @@ TEMPLATE = """<!DOCTYPE html>
 
 <!-- ─────────────────────────────────────── S4 ──────────────────────────── -->
 <h2>S4. Results</h2>
+{% if per_group_figs %}
+<p>
+  Because each modality group was harmonized separately, each figure in this section shows one plot per modality
+  group.
+</p>
+{% endif %}
 
 <h3>S4.1 Batch Effects Before and After Harmonization</h3>
 <p>
@@ -812,6 +856,7 @@ TEMPLATE = """<!DOCTYPE html>
 </p>
 {% endif %}
 
+{% set fdr_on = not (fdr_note and fdr_note.startswith('No multiple')) %}
 {% if include_age %}
 {% set ns.fig = ns.fig + 1 %}
 <h3>S4.3 Preservation of Age-Related Associations</h3>
@@ -839,12 +884,13 @@ TEMPLATE = """<!DOCTYPE html>
   independently for each condition; no formal test of the difference between
   correlations was applied. Points above the diagonal indicate a strengthened age
   association after harmonization; points below indicate weakening.
-  Symbol and color encode FDR significance category (Benjamini&#8211;Hochberg;
-  applied separately within each condition):
+  Symbol and color encode the significance category ({% if fdr_on %}Benjamini&#8211;Hochberg
+  FDR-corrected <em>p</em> &lt; .05, applied separately within each condition{% else %}uncorrected
+  <em>p</em> &lt; .05{% endif %}):
   grey circle = not significant in either condition;
-  filled circle = FDR significant after harmonization only (new association);
-  orange diamond = FDR significant before harmonization only (lost association);
-  purple square = FDR significant in both conditions (preserved association).
+  filled circle = significant after harmonization only (new association);
+  orange diamond = significant before harmonization only (lost association);
+  purple square = significant in both conditions (preserved association).
   Dashed diagonal = no change; dotted lines at <em>r</em> = 0.
 </p>
 {% endif %}
@@ -856,9 +902,9 @@ TEMPLATE = """<!DOCTYPE html>
   Associations between additional variables
   ({% if assoc_cont_vars %}continuous: {{ assoc_cont_vars | join(", ") }}{% endif %}{% if assoc_cont_vars and assoc_cat_vars %}; {% endif %}{% if assoc_cat_vars %}categorical: {{ assoc_cat_vars | join(", ") }}{% endif %})
   and each imaging feature were evaluated before and after harmonization.
-  For continuous variables, Pearson r between the variable and each feature is shown;
+  For continuous variables, Pearson <em>r</em> between the variable and each feature is shown;
   models controlled for the ComBat covariates (excluding the variable itself).
-  For categorical variables, Cohen's f (derived from partial eta-squared, OLS Type II) is shown.
+  For categorical variables, Cohen's <em>f</em> (derived from partial eta-squared, OLS Type II) is shown.
   {% if fdr_note %}{{ fdr_note }}{% if 'Benjamini' in fdr_note %} [<a href="#ref6">6</a>]{% endif %}{% else %}FDR correction (Benjamini&#8211;Hochberg) was applied across features per variable [<a href="#ref6">6</a>].{% endif %}
   Each additional variable is shown in its own figure below.
 </p>
@@ -867,13 +913,14 @@ TEMPLATE = """<!DOCTYPE html>
 <p class="fig-caption">
   <b>Figure S4.{{ sec }}.{{ loop.index }}.</b> {{ item.variable }} association before versus after harmonization.
   Each point represents one imaging feature. Effect size on the x-axis = before harmonization;
-  y-axis = after harmonization. Continuous variables use Pearson r.
-  Categorical variables use Cohen's f (partial eta-squared converted to Cohen's f).
-  Symbol and color encode FDR significance category (Benjamini&#8211;Hochberg per variable).
+  y-axis = after harmonization. Continuous variables use Pearson <em>r</em>.
+  Categorical variables use Cohen's <em>f</em> (partial eta-squared converted to Cohen's <em>f</em>).
+  Symbol and color encode the significance category ({% if fdr_on %}Benjamini&#8211;Hochberg FDR-corrected
+  <em>p</em> &lt; .05 per variable{% else %}uncorrected <em>p</em> &lt; .05{% endif %}).
   Grey circle = not significant in either condition.
-  Filled circle = FDR significant after harmonization only.
-  Orange diamond = FDR significant before harmonization only.
-  Purple square = FDR significant in both conditions.
+  Filled circle = significant after harmonization only.
+  Orange diamond = significant before harmonization only.
+  Purple square = significant in both conditions.
 </p>
 {% endfor %}
 {% endif %}
@@ -882,7 +929,7 @@ TEMPLATE = """<!DOCTYPE html>
 <h2>S5. Feature-Level Results</h2>
 
 <p class="table-title">Table S2. Feature-level harmonization metrics, EB=TRUE.</p>
-{{ table_ebt }}
+{{ table_ebt_c }}
 <p class="table-note">
   <em>Note.</em>
   ICC(3,1) = the consistency form of the intraclass correlation coefficient (two-way mixed effects, single rating;
@@ -896,13 +943,13 @@ TEMPLATE = """<!DOCTYPE html>
 
 {% if run_ebf %}
 <p class="table-title">Table S3. Feature-level harmonization metrics, EB=FALSE.</p>
-{{ table_ebf }}
+{{ table_ebf_c }}
 <p class="table-note">
   <em>Note.</em> See Table S2 note for metric descriptions.
 </p>
 
 <p class="table-title">Table S4. After-harmonization metrics: EB=TRUE vs EB=FALSE side-by-side.</p>
-{{ table_compare }}
+{{ table_compare_c }}
 <p class="table-note">
   <em>Note.</em> Each row is one feature. Paired columns allow direct comparison of the two ComBat configurations.
   ICC(3,1) median = across-batch median of the within-batch consistency-form intraclass correlation coefficient (higher is better).
@@ -977,25 +1024,25 @@ def data_prep_sentence(missing_overview=None, excl_info=None, excl_part_info=Non
     out = []
     n_f, n_p = missing_overview["n_features"], missing_overview["n_participants"]
     if excl_info and excl_info.get("n") and excl_info.get("by_group"):
-        out.append("Features were excluded when missing in more than a threshold set per modality group: "
-                   + "; ".join(f"{g}, more than {v['threshold']:g}% of the participants (n = {v['n']}"
+        out.append("Features were excluded when data were missing for more than a threshold set per modality "
+                   "group: " + "; ".join(f"{g}, more than {v['threshold']:g}% of participants (n = {v['n']}"
                                + (f" of {v['of']})" if v.get("of") else ")") for g, v in excl_info["by_group"].items())
                    + f" ({excl_info['n']} of {n_f} features in all).")
     elif excl_info and excl_info.get("n") and excl_info.get("threshold") is not None:
-        out.append(f"Features missing in more than {excl_info['threshold']:g}% of the participants were "
+        out.append(f"Features with missing data in more than {excl_info['threshold']:g}% of participants were "
                    f"excluded (n = {excl_info['n']} of {n_f}).")
     if excl_part_info and excl_part_info.get("n") and excl_part_info.get("threshold") is not None:
-        out.append(f"Participants missing more than {excl_part_info['threshold']:g}% of the selected "
-                   f"features were excluded (n = {excl_part_info['n']} of {n_p}).")
+        out.append(f"Participants with missing data in more than {excl_part_info['threshold']:g}% of the "
+                   f"selected features were excluded (n = {excl_part_info['n']} of {n_p}).")
     if missing_overview.get("feat_any"):
         out.append({
             "complete": "Participants with any remaining missing feature value were left out of the "
                         "ComBat run (complete-case analysis).",
-            "impute": ("Remaining missing feature values were filled with each feature's median for "
-                       "harmonization, and the harmonized imputed values were kept in the harmonized table."
+            "impute": ("Remaining missing feature values were imputed with the feature median for "
+                       "harmonization, and the harmonized imputed values were retained in the harmonized data."
                        if keep_imputed else
-                       "Remaining missing feature values were filled with each feature's median for "
-                       "harmonization and set back to missing afterwards."),
+                       "Remaining missing feature values were imputed with the feature median for "
+                       "harmonization and reset to missing afterwards."),
             "pattern": "Features missing in the same participants were harmonized together, so each "
                        "participant contributed the features they had.",
             "per_feature": "Each feature was harmonized on its own complete cases, without Empirical Bayes.",
@@ -1125,6 +1172,7 @@ def generate_report(
     extra_assoc_df=None,
     fig_extra_assoc=None,
     extra_assoc_figs=None,
+    group_figs=None,
     fdr_note=None,
     assoc_cont_vars=None,
     assoc_cat_vars=None,
@@ -1195,7 +1243,7 @@ def generate_report(
                            ("cov_missing",    "missing a covariate"),
                            ("features",       _feat_reason)]:
             if excl_counts.get(key):
-                excl_reasons.append(f"n = {excl_counts[key]} {label}")
+                excl_reasons.append(f"<em>n</em> = {excl_counts[key]} {label}")
 
     data_prep_tables, part_table_label, overview_table_label = _data_prep_tables(
         _excl_feat_block(excl_feat_list, bool(modality_groups)), missing_overview, excl_part_list)
@@ -1205,7 +1253,9 @@ def generate_report(
         data_prep_tables     = data_prep_tables,
         recoded_text         = recoded_text,
         keep_imputed         = keep_imputed,
-        cleaning_table       = _df_table(cleaning_df) if cleaning_df is not None and len(cleaning_df) else None,
+        cleaning_table       = (_df_table(cleaning_df.rename(columns={"Removed, n (%)": "Excluded, n (%)",
+                                                                 "Kept, n (%)": "Retained, n (%)"}))
+                                if cleaning_df is not None and len(cleaning_df) else None),
         fig_clean_feat       = _fig_html(fig_clean_feat) if fig_clean_feat is not None else None,
         fig_clean_part       = _fig_html(fig_clean_part) if fig_clean_part is not None else None,
         fig_map_before       = _fig_html(fig_map_before) if fig_map_before is not None else None,
@@ -1258,21 +1308,26 @@ def generate_report(
         age_before      = age_b,
         age_ebt         = age_t,
         age_ebf         = age_f,
-        fig_site_dev    = _fig_html(fig_site_dev),
-        fig_cohens_f    = (_fig_html(fig_cohens_f) if fig_cohens_f is not None else ""),
+        per_group_figs  = bool(group_figs),
+        fig_site_dev    = _figs_html(group_figs, "fig_site_dev", fig_site_dev),
+        fig_cohens_f    = (_figs_html(group_figs, "fig_cohens_f", fig_cohens_f) if fig_cohens_f is not None else ""),
         fig_icc         = (_fig_html(fig_icc) if fig_icc is not None else ""),
-        fig_icc_site    = (_fig_html(fig_icc_site) if fig_icc_site is not None else None),
+        fig_icc_site    = (_figs_html(group_figs, "fig_icc_site", fig_icc_site) if fig_icc_site is not None else None),
         fig_spearman    = (_fig_html(fig_spearman) if fig_spearman is not None else ""),
-        fig_age         = (_fig_html(fig_age) if fig_age is not None else ""),
+        fig_age         = (_figs_html(group_figs, "fig_age", fig_age) if fig_age is not None else ""),
         fig_extra_assoc = (_fig_html(fig_extra_assoc) if fig_extra_assoc is not None else ""),
         extra_assoc_figs = [
-            {"variable": d["variable"], "html": _fig_html(d["fig"])}
+            {"variable": d["variable"],
+             "html": (_figs_html({"x": d["groups"]}, "x", d["fig"]) if d.get("groups") else _fig_html(d["fig"]))}
             for d in (extra_assoc_figs or []) if d.get("fig") is not None
         ],
         fdr_note = fdr_note or "",
-        table_ebt       = _summary_table(icc_ebt, spm_ebt, anc_before, anc_ebt, "EB=TRUE"),
-        table_ebf       = _summary_table(icc_ebf, spm_ebf, anc_before, anc_ebf, "EB=FALSE") if run_ebf else "",
-        table_compare   = _comparison_table(icc_ebt, icc_ebf, anc_ebt, anc_ebf, spm_ebt, spm_ebf) if run_ebf else "",
+        table_ebt_c     = _collapsed(_summary_table(icc_ebt, spm_ebt, anc_before, anc_ebt, "EB=TRUE"),
+                                     f"Show the table ({len(feature_cols)} features)"),
+        table_ebf_c     = (_collapsed(_summary_table(icc_ebf, spm_ebf, anc_before, anc_ebf, "EB=FALSE"),
+                                      f"Show the table ({len(feature_cols)} features)") if run_ebf else ""),
+        table_compare_c = (_collapsed(_comparison_table(icc_ebt, icc_ebf, anc_ebt, anc_ebf, spm_ebt, spm_ebf),
+                                      f"Show the table ({len(feature_cols)} features)") if run_ebf else ""),
         fig_icc_ci      = (_fig_html(fig_icc_ci) if fig_icc_ci is not None else ""),
         pct             = pct,
     )

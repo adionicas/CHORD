@@ -244,6 +244,11 @@ def plot_age_correlations(age_df: pd.DataFrame) -> go.Figure:
     if not after_conds or len(before_df) == 0:
         return go.Figure()
 
+    # significance labels follow the correction actually applied (Oni, 29 October 2026: FDR was not ticked)
+    _fdr = ("correction" in age_df.columns
+            and age_df["correction"].astype(str).str.startswith("FDR").any())
+    _sig = "FDR significant" if _fdr else "Significant (uncorrected)"
+
     n_panels = len(after_conds)
     fig = make_subplots(rows=1, cols=n_panels,
                         subplot_titles=after_conds,
@@ -274,9 +279,9 @@ def plot_age_correlations(age_df: pd.DataFrame) -> go.Figure:
         PURPLE = "#6A0DAD"
         for sub, label, mc, sym, sz, op, border in [
             (ns,       "Not significant (neither)",       GREY,   "circle",  7,  0.40, "rgba(150,150,150,0.3)"),
-            (new_sig,  "FDR significant after only",      color,  "circle",  9,  0.85, "white"),
-            (lost_sig, "FDR significant before only",     ORANGE, "diamond", 9,  0.85, "white"),
-            (both_sig, "FDR significant before and after",PURPLE, "square",  9,  0.85, "white"),
+            (new_sig,  f"{_sig} after only",      color,  "circle",  9,  0.85, "white"),
+            (lost_sig, f"{_sig} before only",     ORANGE, "diamond", 9,  0.85, "white"),
+            (both_sig, f"{_sig} before and after",PURPLE, "square",  9,  0.85, "white"),
         ]:
             if len(sub) == 0:
                 continue
@@ -302,10 +307,10 @@ def plot_age_correlations(age_df: pd.DataFrame) -> go.Figure:
         fig.add_vline(x=0, line_dash="dot", line_color=GREY, opacity=0.35, row=1, col=col_i)
         fig.add_hline(y=0, line_dash="dot", line_color=GREY, opacity=0.35, row=1, col=col_i)
 
-    fig.update_xaxes(title_text="Pearson r (before harmonization)")
-    fig.update_yaxes(title_text="Pearson r (after harmonization)", row=1, col=1)
+    fig.update_xaxes(title_text="Pearson <i>r</i> (before harmonization)")
+    fig.update_yaxes(title_text="Pearson <i>r</i> (after harmonization)", row=1, col=1)
     fig.update_layout(
-        title="Age associations: Pearson r before vs after harmonization (each point = one feature)",
+        title="Age associations: Pearson <i>r</i> before vs after harmonization (each point = one feature)",
         height=520, **WHITE_BG,
         legend=BOTTOM_LEGEND,
         margin=dict(b=130),
@@ -397,9 +402,9 @@ def plot_cohens_f(anc_before: pd.DataFrame, anc_ebt: pd.DataFrame,
     _add_cohens_f_grid_legend(fig, RED, GREEN, has_ebf)
 
     fig.update_layout(
-        title="Batch effect size: Cohen's f before vs after harmonization",
-        xaxis_title="Cohen's f (before harmonization)",
-        yaxis_title="Cohen's f (after harmonization)",
+        title="Batch effect size: Cohen's <i>f</i> before vs after harmonization",
+        xaxis_title="Cohen's <i>f</i> (before harmonization)",
+        yaxis_title="Cohen's <i>f</i> (after harmonization)",
         height=560, **WHITE_BG,
         showlegend=False,
         xaxis_range=[0, max_val],
@@ -712,11 +717,15 @@ def plot_extra_associations(assoc_df: pd.DataFrame) -> go.Figure | None:
 
     colors_map = {"After (EB=TRUE)": AFTER_EBT, "After (EB=FALSE)": AFTER_EBF}
     PURPLE = "#6A0DAD"
+    # significance labels follow the correction actually applied
+    _fdr = ("correction" in assoc_df.columns
+            and assoc_df["correction"].astype(str).str.startswith("FDR").any())
+    _sig = "FDR significant" if _fdr else "Significant (uncorrected)"
 
     for row_i, var in enumerate(variables, start=1):
         var_rows = assoc_df[assoc_df["variable"] == var]
         vtype    = var_rows["var_type"].iloc[0] if len(var_rows) > 0 else "continuous"
-        eff_lbl  = "Pearson r" if vtype == "continuous" else "Cohen's f"
+        eff_lbl  = "Pearson <i>r</i>" if vtype == "continuous" else "Cohen's <i>f</i>"
 
         for col_i, cond in enumerate(after_conds, start=1):
             color = colors_map.get(cond, BLUE)
@@ -737,9 +746,9 @@ def plot_extra_associations(assoc_df: pd.DataFrame) -> go.Figure | None:
 
             for sub, lbl, mc, sym, sz, op in [
                 (ns,      "Not significant (neither)",        GREY,   "circle",  7,  0.40),
-                (new_sig, "FDR significant after only",       color,  "circle",  9,  0.85),
-                (lost,    "FDR significant before only",      ORANGE, "diamond", 9,  0.85),
-                (both,    "FDR significant before and after", PURPLE, "square",  9,  0.85),
+                (new_sig, f"{_sig} after only",       color,  "circle",  9,  0.85),
+                (lost,    f"{_sig} before only",      ORANGE, "diamond", 9,  0.85),
+                (both,    f"{_sig} before and after", PURPLE, "square",  9,  0.85),
             ]:
                 if len(sub) == 0:
                     continue
@@ -770,9 +779,9 @@ def plot_extra_associations(assoc_df: pd.DataFrame) -> go.Figure | None:
     # points in this run, so the full scheme is visible.
     for lbl, mc, sym in [
         ("Not significant (neither)",        GREY,      "circle"),
-        ("FDR significant after only",       AFTER_EBT, "circle"),
-        ("FDR significant before only",      ORANGE,    "diamond"),
-        ("FDR significant before and after", PURPLE,    "square"),
+        (f"{_sig} after only",       AFTER_EBT, "circle"),
+        (f"{_sig} before only",      ORANGE,    "diamond"),
+        (f"{_sig} before and after", PURPLE,    "square"),
     ]:
         fig.add_trace(go.Scatter(
             x=[None], y=[None], mode="markers", name=lbl, legendgroup=lbl,
@@ -816,7 +825,7 @@ def plot_single_association(assoc_df: pd.DataFrame, variable: str) -> go.Figure 
         return None
 
     vtype   = sub_all["var_type"].iloc[0]
-    eff_lbl = "Pearson r" if vtype == "continuous" else "Cohen's f"
+    eff_lbl = "Pearson <i>r</i>" if vtype == "continuous" else "Cohen's <i>f</i>"
     # significance labelling reflects whether FDR correction was applied
     _corr = str(sub_all["correction"].iloc[0]) if "correction" in sub_all.columns else "FDR (Benjamini-Hochberg)"
     _fdr  = _corr.startswith("FDR")
@@ -1163,7 +1172,8 @@ def plot_data_matrix(
             z=zz, x=x_labels, zmin=0, zmax=1,
             colorscale=[[0, "#DDDDDD"], [1, "black"]],
             showscale=reduced,
-            colorbar=dict(title="missing", thickness=12, x=1.01),
+            colorbar=dict(title="", thickness=12, x=1.01, tickvals=[0, 0.5, 1],
+                          ticktext=["present", "half missing", "missing"]),
             hovertemplate=("Column: %{x}<br>" + ("missing: %{z:.2f} of the block" if reduced else "missing: %{z:.0f}")
                            + "<extra></extra>"),
         )
@@ -1410,51 +1420,40 @@ def plot_missing_curve(feature_pct: pd.Series, measure_of: dict | None = None,
     return fig
 
 
-def plot_missing_by_batch_bars(batches: list, n: list, values_pct: list, over_pct: list,
-                               threshold: float, all_values_pct: float, all_over_pct: float) -> go.Figure:
+def plot_present_missing_by_batch(batches: list, n: list, present: dict, missing: dict) -> go.Figure:
     """
-    Per batch, two bars with their value printed: the feature values missing
-    (% of the batch's values) and the participants missing more than the
-    threshold (% of the batch); dotted lines give the same for all batches, so
-    a batch that stands out is easy to see.
+    Per batch, the batch's feature values split into present and missing (stacked bars, % of the
+    batch's values; the counts are in the hover), with the share missing printed above each bar.
+    ``present`` and ``missing`` map a panel name (for example "All selected features" or a modality
+    group) to one count per batch; there is one panel per name (Oni, 29 October 2026: present vs missing).
     """
     x = [f"{b}<br>(n={k})" for b, k in zip(batches, n)]
-    fig = go.Figure()
-    for name, y, color, ref in (
-            ("Feature values missing (% of the batch's values)", values_pct, "#2A6EBB", all_values_pct),
-            (f"Participants missing more than {threshold:g}% of the features (% of the batch)", over_pct,
-             "#E34A33", all_over_pct)):
-        fig.add_trace(go.Bar(x=x, y=y, name=f"{name}; all batches {ref:.1f}% (dotted line)",
-                             marker_color=color, text=[f"{v:.1f}%" for v in y],
-                             textposition="outside", cliponaxis=False,
-                             hovertemplate="%{x}<br>" + name + ": %{y:.1f}%<extra></extra>"))
-        fig.add_hline(y=ref, line_dash="dot", line_color=color, line_width=1.5)
-    top = max([*values_pct, *over_pct, all_values_pct, all_over_pct, 1.0])
+    names = list(present)
+    fig = make_subplots(rows=len(names), cols=1, shared_xaxes=True,
+                        subplot_titles=names if len(names) > 1 else None,
+                        vertical_spacing=min(0.12, 0.5 / max(len(names), 1)))
+    for r, nm in enumerate(names, start=1):
+        pres, miss = np.asarray(present[nm], float), np.asarray(missing[nm], float)
+        tot = np.where(pres + miss > 0, pres + miss, 1)
+        for lab, cnt, col in (("Present", pres, "#2A6EBB"), ("Missing", miss, "#222222")):
+            pct = 100 * cnt / tot
+            fig.add_trace(go.Bar(
+                x=x, y=pct, name=lab, legendgroup=lab, showlegend=(r == 1), marker_color=col,
+                customdata=np.stack([cnt, 100 * miss / tot], axis=1),
+                text=[f"{v:.1f}% missing" for v in 100 * miss / tot] if lab == "Missing" else None,
+                textposition="outside" if lab == "Missing" else None, cliponaxis=False,
+                textfont=dict(size=11),
+                hovertemplate="%{x}<br>" + lab + ": %{customdata[0]:,.0f} values (%{y:.1f}%)<extra></extra>"),
+                row=r, col=1)
+        fig.update_yaxes(title_text="Feature values (%)", range=[0, 112], tickvals=[0, 25, 50, 75, 100],
+                         showgrid=True, gridcolor="#EEEEEE", row=r, col=1)
     fig.update_layout(
-        title="Missing values per batch", barmode="group", **WHITE_BG, height=470,
-        margin=dict(l=10, r=30, t=60, b=140), legend=dict(BOTTOM_LEGEND),
-        yaxis=dict(title="%", range=[0, top * 1.18], showgrid=True, gridcolor="#EEEEEE"),
-        xaxis=dict(tickangle=0),
+        title=("Feature values present and missing per batch" if len(names) == 1
+               else "Feature values present and missing per batch, by modality group"),
+        barmode="stack", **WHITE_BG, height=(470 if len(names) == 1 else 140 + 230 * len(names)),
+        margin=dict(l=10, r=30, t=70, b=120), legend=dict(BOTTOM_LEGEND), bargap=0.35,
     )
+    fig.update_xaxes(tickangle=0)
     return fig
 
 
-def plot_missing_by_batch_groups(batches: list, n: list, by_group: dict, all_by_group: dict) -> go.Figure:
-    """Per batch, one bar per modality group: the feature values of that group missing
-    (% of the batch's values for the group); the legend gives each group's value over all batches."""
-    x = [f"{b}<br>(n={k})" for b, k in zip(batches, n)]
-    palette = px.colors.qualitative.Bold
-    fig = go.Figure()
-    for i, (g, vals) in enumerate(by_group.items()):
-        fig.add_trace(go.Bar(x=x, y=vals, name=f"{g}; all batches {all_by_group[g]:.1f}%",
-                             marker_color=palette[i % len(palette)], text=[f"{v:.1f}%" for v in vals],
-                             textposition="outside", cliponaxis=False,
-                             hovertemplate="%{x}<br>" + g + ": %{y:.1f}% of the values missing<extra></extra>"))
-    top = max([v for vals in by_group.values() for v in vals] + [1.0])
-    fig.update_layout(
-        title="Feature values missing per batch, by modality group", barmode="group", **WHITE_BG, height=470,
-        margin=dict(l=10, r=30, t=60, b=140), legend=dict(BOTTOM_LEGEND),
-        yaxis=dict(title="Feature values missing (%)", range=[0, top * 1.2], showgrid=True, gridcolor="#EEEEEE"),
-        xaxis=dict(tickangle=0),
-    )
-    return fig
