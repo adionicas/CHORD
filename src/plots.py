@@ -1315,6 +1315,8 @@ def plot_missing_curve(feature_pct: pd.Series, measure_of: dict | None = None,
     # kind "participants": feature_pct holds each participant's share of the
     # selected features missing, and the line counts participants
     unit = "features" if kind == "features" else "participants"
+    _miss_phrase = ("missing in more than %{x:.1f}% of participants" if kind == "features"
+                    else "missing more than %{x:.1f}% of the features")
 
     def split(series):
         if measure_of and kind == "features":
@@ -1354,7 +1356,7 @@ def plot_missing_curve(feature_pct: pd.Series, measure_of: dict | None = None,
                 name=f"Before exclusions (n={len(pb)}{' per group' if len(groups) > 1 and not sep else ''})",
                 legendgroup="before", showlegend=not shown_before,
                 line=dict(color="#9AA0A6", width=1.6, dash="dash"),
-                hovertemplate=(f"{g}, before exclusions<br>more than %{{x:.1f}}% missing: %{{customdata}} of "
+                hovertemplate=(f"{g}, before exclusions<br>{_miss_phrase}: %{{customdata}} of "
                                f"{len(pb)} {unit} (%{{y:.1f}}%)<extra></extra>"),
                 customdata=nb), **rc)
             shown_before = True
@@ -1368,7 +1370,7 @@ def plot_missing_curve(feature_pct: pd.Series, measure_of: dict | None = None,
             line=dict(color=color, width=2.2),
             marker=dict(size=7, opacity=0),          # invisible points, so a click on the line selects one
             customdata=np.stack([n_over, np.full(len(xs), len(p))], axis=1),
-            hovertemplate=(f"{g}<br>more than %{{x:.1f}}% missing: %{{customdata[0]}} of "
+            hovertemplate=(f"{g}<br>{_miss_phrase}: %{{customdata[0]}} of "
                            f"%{{customdata[1]}} {unit} (%{{y:.1f}}%)<br>click to see them or exclude them<extra></extra>"),
         ), **rc)
     sizes = {len(members[g]) for g in groups}
@@ -1394,12 +1396,15 @@ def plot_missing_curve(feature_pct: pd.Series, measure_of: dict | None = None,
                       annotation_text=f"{threshold:g}%", annotation_position="top right",
                       **(dict(row="all", col="all") if sep else {}))
     if kind == "features":
-        title, x_title = "Features with more than x% of participants missing", "Participants missing (x, %)"
-        y_title = ("Features (%)" if sep else
-                   "Features (% of each modality group)" if len(groups) > 1 else "Features (%)")
+        # both axes count missing values (Oni, 29 October 2026: "missing or present?")
+        title = "Features with more than x% of participants missing"
+        x_title = "x: participants missing the feature (%)"
+        y_title = ("Features missing in<br>more than x% of participants (%)" if sep or len(groups) == 1 else
+                   "Features missing in more than x% of<br>participants (% of each modality group)")
     else:
-        title, x_title, y_title = ("Participants missing more than x% of the selected features",
-                                   "Features missing (x, %)", "Participants (%)")
+        title = "Participants missing more than x% of the selected features"
+        x_title = "x: features missing for the participant (%)"
+        y_title = "Participants missing<br>more than x% of the features (%)"
     if sep:
         fig.update_layout(title=title, **WHITE_BG, height=120 + 250 * nrows,
                           margin=dict(l=70, r=20, t=80, b=110), legend=dict(BOTTOM_LEGEND),

@@ -1506,6 +1506,9 @@ if _show_miss_tools:
                                                        before=_f_before, separate=_sep),
                                     use_container_width=True, on_select="rerun", selection_mode="points",
                                     key=f"miss_curve_f_{_ck}")
+            st.caption("How to read it: both axes count missing values. Pick a share x on the horizontal axis; "
+                       "the curve gives the percentage of features that are missing in more than x% of the "
+                       "participants.")
             _pts = (_ev_f or {}).get("selection", {}).get("points", []) if _ev_f else []
             if _pts:
                 _clicked = ("features", float(_pts[0]["x"]))
@@ -1558,6 +1561,9 @@ if _show_miss_tools:
                                                        kind="participants", before=_p_before),
                                     use_container_width=True, on_select="rerun", selection_mode="points",
                                     key=f"miss_curve_p_{_ck}")
+            st.caption("How to read it: both axes count missing values. Pick a share x on the horizontal axis; "
+                       "the curve gives the percentage of participants who are missing more than x% of the "
+                       "selected features.")
             _pts = (_ev_p or {}).get("selection", {}).get("points", []) if _ev_p else []
             if _pts:
                 _clicked = ("participants", float(_pts[0]["x"]))
@@ -1826,6 +1832,40 @@ if _show_miss_tools:
     )
     missing_mode = _MISS_OPTS[missing_mode_label]
     per_feature = (missing_mode == "per_feature")
+    # How many participants remain under the chosen handling (after the participants
+    # excluded by missing percentage)
+    _work = df.drop(index=_excl_part_rows)
+    _cov_cols = [site_col] + continuous_covariates + categorical_covariates
+    _cov_ok = _work[_cov_cols].notna().all(axis=1)
+    _feat_ok_all = _work[list(feature_cols)].notna().all(axis=1)
+    _feat_ok_any = _work[list(feature_cols)].notna().any(axis=1)
+    if missing_mode == "complete":
+        _keep_mask = _cov_ok & _feat_ok_all
+    elif missing_mode == "impute":
+        _keep_mask = _cov_ok
+    else:  # pattern / per_feature
+        _keep_mask = _cov_ok & _feat_ok_any
+    _retained = int(_keep_mask.sum())
+    final_rows = _work.index[_keep_mask]
+    _dropped = len(_work) - _retained
+    _cov_drop = int((~_cov_ok).sum())
+    _feat_drop = max(_dropped - _cov_drop, 0)
+    _drop_parts = []
+    if _cov_drop:
+        _drop_parts.append(f"{_cov_drop} are missing a model variable (batch, age, sex, or a covariate)")
+    if _feat_drop:
+        _drop_parts.append(f"{_feat_drop} have missing feature values under this method")
+    _pct = (lambda k: 100 * k / len(_work) if len(_work) else 0.0)
+    _after = (f" Counted on the {len(_work)} participants left after the {len(_excl_part_rows)} excluded "
+              f"for missing data above." if _excl_part_rows else "")
+    if _dropped == 0:
+        st.info(f"This method drops no participant: all **{len(_work)}** are used.{_after}")
+    else:
+        _drop_expl = " and ".join(_drop_parts)
+        st.info(
+            f"This method would drop **{_dropped}** participants ({_pct(_dropped):.1f}%) and keep "
+            f"**{_retained}** ({_pct(_retained):.1f}%). Of the {_dropped} dropped, {_drop_expl}.{_after}"
+        )
     if missing_mode == "impute":
         keep_imputed = st.checkbox(
             "Keep the imputed values in the harmonized table", value=False, key="keep_imputed",
@@ -1859,40 +1899,6 @@ if _show_miss_tools:
         # a plain table without row numbers, with the text wrapped
         st.markdown("| " + " | ".join(_methods.columns) + " |\n|" + "---|" * len(_methods.columns) + "\n"
                     + "\n".join("| " + " | ".join(str(v) for v in r) + " |" for r in _methods.itertuples(index=False)))
-    # How many participants remain under the chosen handling (after the participants
-    # excluded by missing percentage)
-    _work = df.drop(index=_excl_part_rows)
-    _cov_cols = [site_col] + continuous_covariates + categorical_covariates
-    _cov_ok = _work[_cov_cols].notna().all(axis=1)
-    _feat_ok_all = _work[list(feature_cols)].notna().all(axis=1)
-    _feat_ok_any = _work[list(feature_cols)].notna().any(axis=1)
-    if missing_mode == "complete":
-        _keep_mask = _cov_ok & _feat_ok_all
-    elif missing_mode == "impute":
-        _keep_mask = _cov_ok
-    else:  # pattern / per_feature
-        _keep_mask = _cov_ok & _feat_ok_any
-    _retained = int(_keep_mask.sum())
-    final_rows = _work.index[_keep_mask]
-    _dropped = len(_work) - _retained
-    _cov_drop = int((~_cov_ok).sum())
-    _feat_drop = max(_dropped - _cov_drop, 0)
-    _drop_parts = []
-    if _cov_drop:
-        _drop_parts.append(f"{_cov_drop} are missing a model variable (batch, age, sex, or a covariate)")
-    if _feat_drop:
-        _drop_parts.append(f"{_feat_drop} have missing feature values under this method")
-    if _dropped == 0:
-        st.info(f"All **{len(_work)}** participants are used.")
-    else:
-        _drop_expl = " and ".join(_drop_parts)
-        st.info(
-            f"Participants with this method: **{len(_work)}** in the data"
-            + (f" (after the {len(_excl_part_rows)} excluded by missing percentage)" if _excl_part_rows else "")
-            + " "
-            f"→ **{_retained}** retained, **{_dropped}** dropped. "
-            f"Of the {_dropped} dropped, {_drop_expl}."
-        )
 else:
     missing_mode = "impute"   # the default; with no missing values all methods give the same result
     per_feature = False
