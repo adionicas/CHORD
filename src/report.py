@@ -179,25 +179,27 @@ def _data_prep_tables(excl_feat_html, overview, excl_part_list):
             return f"{n} (more than {t:g}% missing)" if n and t is not None else str(n or 0)
         ov = pd.DataFrame([
             {"": "Features", "Total": overview["n_features"],
-             "Above the threshold": f"{overview['feat_over']} (participants missing more than {thr:g}%)",
+             "Above the threshold": f"{overview['feat_over']} (missing in more than {thr:g}% of the participants)",
              "Excluded by the user": (f"{overview['feat_excl']} (threshold per modality group: {overview['feat_excl_text']})"
                                       if overview.get("feat_excl_text") and overview["feat_excl"]
                                       else excluded(overview["feat_excl"], overview["feat_excl_thr"]))},
             {"": "Participants", "Total": overview["n_participants"],
-             "Above the threshold": f"{overview['part_over']} (features missing more than {pthr:g}%)",
+             "Above the threshold": f"{overview['part_over']} (missing more than {pthr:g}% of the features)",
              "Excluded by the user": excluded(overview["part_excl"], overview["part_excl_thr"])},
         ])
         overview_label = table(
             "Missing values before harmonization.", _df_table(ov),
-            f"Counted over the {overview['n_features']} selected features (including any later excluded) "
-            f"in all {overview['n_participants']} uploaded participants. A feature is above the threshold "
-            f"when it is missing in more than {thr:g}% of the participants; a participant when they miss "
-            f"more than {pthr:g}% of the features.")
+            f"Counted in all {overview['n_participants']} uploaded participants. Features: over the "
+            f"{overview['n_features']} selected features, including those later excluded; a feature is above "
+            f"the threshold when it is missing in more than {thr:g}% of the participants. Participants: over the "
+            f"{overview.get('n_features_kept', overview['n_features'])} features kept after the feature exclusion, "
+            f"as in the participant exclusion; a participant is above the threshold when they miss more than "
+            f"{pthr:g}% of these features.")
         if overview.get("by_group"):
             table("Missing values per modality group before harmonization.",
                   _df_table(pd.DataFrame(overview["by_group"]), float_fmt=1),
-                  "Modality groups as defined by the user for harmonization; counted over all uploaded "
-                  "participants.")
+                  "Modality groups as defined by the user for harmonization, each with its features later "
+                  "excluded; counted over all uploaded participants.")
     if excl_part_list:
         part_label = table("Participants excluded due to missingness.",
                            _df_table(pd.DataFrame(excl_part_list), float_fmt=1),
@@ -403,7 +405,12 @@ TEMPLATE = """<!DOCTYPE html>
 <p>
   The dataset comprised <b>{{ n_participants }}</b> participants acquired across
   <b>{{ n_sites }}</b> batches ({{ site_list }}).
+  {% if missing_overview and missing_overview.n_features > n_features %}
+  Of the <b>{{ missing_overview.n_features }}</b> selected imaging features, {{ missing_overview.n_features - n_features }}
+  were excluded for missing values (S1.2) and <b>{{ n_features }}</b> were harmonized.
+  {% else %}
   A total of <b>{{ n_features }}</b> imaging features were submitted for harmonization.
+  {% endif %}
   {% if recoded_text %}{{ recoded_text }}{% endif %}
   {% if n_retained != n_participants %}
   {% if excl_reasons %}
@@ -427,9 +434,13 @@ TEMPLATE = """<!DOCTYPE html>
   Sex distribution reports the number and percentage of female participants.
 </p>
 
-{{ data_prep_tables }}
+<h3>S1.1 Imaging features</h3>
+<p>
+  The following {{ n_features }} features were included in the harmonization analysis:
+  {{ feature_group_table | safe }}
+</p>
 
-{% if cleaning_table or fig_clean_feat or fig_map_before %}
+{% if cleaning_table or fig_clean_feat or fig_map_before or data_prep_tables %}
 <h3>S1.2 Data cleaning</h3>
 <p>
   What was done to the data before harmonization{% if cleaning_table %}: the features{% if modality_on %}, by modality
@@ -439,6 +450,8 @@ TEMPLATE = """<!DOCTYPE html>
   lines.{% endif %}
   {% if fig_map_before %}Figure C3 shows every missing value before{% if fig_map_after %} and after{% endif %} the data
   cleaning.{% endif %}
+  {% if data_prep_tables %}The tables after the figures list the excluded features and participants and count the
+  missing values before harmonization.{% endif %}
 </p>
 {% if cleaning_table %}
 <p class="table-title">Table C1. Data cleaning: features{% if modality_on %} (in all and by modality group){% endif %} and participants before the data cleaning, removed and kept.</p>
@@ -470,13 +483,8 @@ TEMPLATE = """<!DOCTYPE html>
   grouped by modality group, each group's excluded features after it{% endif %}.
 </p>
 {% endif %}
+{{ data_prep_tables }}
 {% endif %}
-
-<h3>S1.1 Imaging features</h3>
-<p>
-  The following {{ n_features }} features were included in the harmonization analysis:
-  {{ feature_group_table | safe }}
-</p>
 
 <!-- ─────────────────────────────────────── S2 ──────────────────────────── -->
 <h2>S2. Harmonization Procedure</h2>
@@ -519,7 +527,8 @@ TEMPLATE = """<!DOCTYPE html>
   Before harmonization, {{ missing_overview.feat_over }} of the {{ missing_overview.n_features }} selected
   features {{ 'was' if missing_overview.feat_over == 1 else 'were' }} missing in more than {{ mthr }}% of the
   participants, and {{ missing_overview.part_over }} of the {{ missing_overview.n_participants }} participants
-  missed more than {{ pthr }}% of the features (Table {{ overview_table_label }}).
+  missed more than {{ pthr }}% of the {{ missing_overview.n_features_kept or missing_overview.n_features }} features
+  kept after the feature exclusion (Table {{ overview_table_label }}).
   {% endif %}
   {% if excl_info and excl_info.n > 0 %}
   {{ excl_info.n }} feature{{ 's' if excl_info.n != 1 else '' }}

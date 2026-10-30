@@ -1256,10 +1256,9 @@ def plot_data_matrix(
     top = 75 + int(5.6 * longest) if show_bands else 60
     no_ticks = dict(showgrid=False, zeroline=False, showline=False, ticks="")
     fig.update_layout(
+        # a short title, the details in the note under the figure, so the title is never cut off
         title=dict(text=f"{title}: {len(d)} participants x {len(feats)} features"
-                        f"{f' + {len(cov)} covariates' if cov else ''} (sorted by batch"
-                        f"{'; participants and features grouped by similar missing values' if order_by_missing else ''}"
-                        f"; {what})",
+                        f"{f' + {len(cov)} covariates' if cov else ''}",
                    y=0.995, yanchor="top"),
         xaxis=dict(showticklabels=False, range=[-0.5, 0.5], **no_ticks),
         # fixed range: the group labels above the bands would otherwise widen the axis
@@ -1275,7 +1274,9 @@ def plot_data_matrix(
         margin={"l": 130, "b": 90, "r": 60, "t": top},
     )
 
-    notes = []
+    notes = [f"Sorted by batch"
+             f"{'; participants and features grouped by similar missing values' if order_by_missing else ''}"
+             f"; {what}."]
     if reduced:
         how = ("each cell shows the fraction of its block that is missing"
                if missing_only else "each cell shows the middle participant and feature of its block")
@@ -1391,7 +1392,7 @@ def plot_missing_curve(feature_pct: pd.Series, measure_of: dict | None = None,
                                    "Features missing (x, %)", "Participants (%)")
     if sep:
         fig.update_layout(title=title, **WHITE_BG, height=120 + 250 * nrows,
-                          margin=dict(l=10, r=20, t=80, b=110), legend=dict(BOTTOM_LEGEND),
+                          margin=dict(l=70, r=20, t=80, b=110), legend=dict(BOTTOM_LEGEND),
                           showlegend=shown_before)
         fig.update_xaxes(range=[0, x_max], autorange=False, showgrid=True, gridcolor="#EEEEEE")
         fig.update_yaxes(range=[0, 102], autorange=False, showgrid=True, gridcolor="#EEEEEE")
@@ -1402,7 +1403,7 @@ def plot_missing_curve(feature_pct: pd.Series, measure_of: dict | None = None,
         return fig
     fig.update_layout(
         title=title, **WHITE_BG, height=430,
-        margin=dict(l=10, r=60, t=60, b=120), legend=dict(BOTTOM_LEGEND),
+        margin=dict(l=70, r=60, t=60, b=120), legend=dict(BOTTOM_LEGEND),
         xaxis=dict(title=x_title, range=[0, x_max], autorange=False, showgrid=True, gridcolor="#EEEEEE"),
         yaxis=dict(title=y_title, range=[0, 102], autorange=False, showgrid=True, gridcolor="#EEEEEE"),
     )

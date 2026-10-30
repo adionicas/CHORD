@@ -2279,12 +2279,20 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True,
         _feats_all = list(feature_cols) + [f for f in _excluded_before if f not in feature_cols]
         _na_all = df[_feats_all].isna()
         _fp_all, _pp_all = 100 * _na_all.mean(), 100 * _na_all.mean(axis=1)
+        # participants are counted over the features kept after the feature exclusion, as the
+        # participant exclusion is; groups include their excluded features (Oni's CENC run, 29 October 2026)
+        _pp_kept = 100 * df[list(feature_cols)].isna().mean(axis=1)
+        _xgrp = {d.get("Feature"): d.get("Modality group")
+                 for d in st.session_state.get("_excl_feat_list", []) if d.get("Modality group")}
+        _groups_all = {g: list(gc) + [f for f in _excluded_before if _xgrp.get(f) == g and f not in gc]
+                       for g, gc in (modality_groups or {}).items()}
         _xi = st.session_state.get("_excl_info") or {"n": 0, "threshold": None}
         _xpi = st.session_state.get("_excl_part_info") or {"n": 0, "threshold": None}
         missing_overview = {
             "threshold": _thr_a, "n_participants": len(df), "n_features": len(_feats_all),
             "feat_any": int((_fp_all > 0).sum()), "feat_over": int((_fp_all > _thr_a).sum()),
-            "part_any": int((_pp_all > 0).sum()), "part_over": int((_pp_all > _thr_p).sum()),
+            "part_any": int((_pp_all > 0).sum()), "part_over": int((_pp_kept > _thr_p).sum()),
+            "n_features_kept": len(feature_cols),
             "part_threshold": _thr_p,
             "feat_excl": int(_xi.get("n") or 0), "feat_excl_thr": _xi.get("threshold"),
             "feat_excl_text": _xi.get("threshold_text"),
@@ -2293,7 +2301,7 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True,
                 {"Modality group": g, "Features": len(gc),
                  f"More than {_thr_a:g}% missing": int((_fp_all[gc] > _thr_a).sum()),
                  "Median % missing": round(float(_fp_all[gc].median()), 1)}
-                for g, gc in (modality_groups or {}).items() if gc
+                for g, gc in _groups_all.items() if gc
             ],
         }
         excl_part_list = [{k: d[k] for k in ("Participant", "Batch", "Features missing (%)")}
