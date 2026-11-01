@@ -133,6 +133,13 @@ def _save_recode(key, col):
         list(st.session_state.get(f"recode_w_{col}", []))
 
 
+def _recode_toggle(key, col):
+    """Unticking "Set values to missing" gives the variable its values back."""
+    if not st.session_state.get(f"recode_on_{col}"):
+        st.session_state.setdefault("_recode_store", {}).setdefault(key, {})[col] = []
+        st.session_state.pop(f"recode_w_{col}", None)
+
+
 df_original = df
 recoded = []                                   # (column, value, participants) for the report
 _recode_now = {c: v for c, v in st.session_state.get("_recode_store", {}).get(data_key, {}).items()
@@ -398,70 +405,63 @@ id_col = None if id_col == _ROWNUM else id_col
 if id_col and df[id_col].duplicated().any():
     st.warning(f"{id_col} has the same value in more than one row; check that it is the participant ID.")
 
-# Age and sex are optional covariates, not required columns. They are suggested from the
-# column names and chosen (or set to None) in a list each in the covariate section below.
-_NONE = "None"
-age_cands = _age_candidates(df, [c for c in all_cols if c != site_col])
-sex_cands = _sex_candidates([c for c in all_cols if c != site_col])
+# Covariates are two lists, as in the demographics check: continuous and categorical, any column,
+# every covariate optional. Age and sex are only suggested from the column names (Oni, 31 October 2026:
+# the Age and Sex lists looked as if every dataset had to have them).
+age_cands = _age_candidates(df, [c for c in all_cols if c not in {site_col, id_col}])
+sex_cands = _sex_candidates([c for c in all_cols if c not in {site_col, id_col}])
 
 # ── Covariates to preserve in the ComBat model ────────────────────────────
-st.markdown("**Covariates to preserve in the ComBat model**")
+st.markdown("**Covariates to preserve in the ComBat model (optional)**")
 st.caption(
-    "ComBat harmonization can preserve the biological variability of key variables "
-    "of interest, for example age and sex, while removing batch-related variance. "
-    "Only the batch column is strictly required; every covariate is optional. The age and sex "
-    "columns are suggested from the column names; choose another column, or None, for example "
-    "in a study with a single sex or no age variability."
+    "ComBat harmonization can preserve the biological variability of variables of interest, for example "
+    "age and sex, while removing batch-related variance. Only the batch column is required; every "
+    "covariate is optional. Put each covariate in the list of its kind: ComBat models a continuous "
+    "covariate as a number with a straight-line effect, and a categorical covariate with one adjustment "
+    "per group, so a variable whose numbers are group codes (such as sex coded 1 and 2, or a diagnosis "
+    "coded 1, 2, 3) belongs in the categorical list."
 )
-
 cov_c1, cov_c2 = st.columns(2)
 with cov_c1:
-    st.markdown("**Continuous covariates** *(numeric values, for example age, days since injury)*")
-    _age_opts = [_NONE] + age_cands + [c for c in num_cols if c != site_col and c not in age_cands]
-    age_choice = st.selectbox("Age column", _age_opts, index=1 if age_cands else 0, key="age_choice",
-                              help="Suggested from the column names; columns that may hold an age are listed first.")
-    if len(age_cands) > 1:
-        st.caption("Columns that may hold an age: " + ", ".join(f"**{c}**" for c in age_cands)
-                   + ". Choose the age at the scan.")
-    elif not age_cands:
-        st.caption("No column name suggests an age; choose one if your study has age.")
+    cov_cont = st.multiselect(
+        "Continuous covariates (numbers, such as age or time since injury)",
+        options=[c for c in num_cols if c not in {site_col, id_col}],
+        default=[c for c in age_cands[:1] if c in num_cols],
+        key="cov_cont", placeholder="none",
+    )
 with cov_c2:
-    st.markdown("**Categorical covariates** *(group labels, for example sex, diagnosis, group)*")
-    _sex_opts = [_NONE] + sex_cands + [c for c in all_cols if c != site_col and c not in sex_cands]
-    sex_choice = st.selectbox("Sex column", _sex_opts, index=1 if sex_cands else 0, key="sex_choice",
-                              help="Suggested from the column names; columns named sex or gender are listed first.")
-    if len(sex_cands) > 1:
-        st.caption("Columns that may hold sex: " + ", ".join(f"**{c}**" for c in sex_cands) + ".")
-    elif not sex_cands:
-        st.caption("No column name suggests sex; choose one if your study has sex.")
+    cov_cat = st.multiselect(
+        "Categorical covariates (groups, such as sex or diagnosis)",
+        options=[c for c in all_cols if c not in {site_col, id_col}],
+        default=sex_cands[:1],
+        key="cov_cat", placeholder="none",
+    )
+_both = [c for c in cov_cont if c in cov_cat]
+if _both:
+    st.caption("In both lists, so used as categorical: " + ", ".join(f"**{c}**" for c in _both) + ".")
+cov_cont = [c for c in cov_cont if c not in _both]
+_sugg = ([f"**{age_cands[0]}** (an age)"] if age_cands else []) + ([f"**{sex_cands[0]}** (sex)"] if sex_cands else [])
+st.caption(("Suggested from the column names: " + " and ".join(_sugg) + "; remove them or add others."
+            if _sugg else "No column name suggests an age or a sex; add any covariates your study has.")
+           + (" Other columns that may hold an age: " + ", ".join(f"**{c}**" for c in age_cands[1:]) + "."
+              if len(age_cands) > 1 else ""))
 
-age_col = None if age_choice == _NONE else age_choice
-sex_col = None if sex_choice == _NONE else sex_choice
+# Which covariate the report describes as age (Table S1, the age associations) and as sex (Table S1):
+# the first covariate whose name says so, never a guess from the values
+age_col = next((c for c in age_cands if c in cov_cont), None)
+sex_col = next((c for c in sex_cands if c in cov_cat), None)
+if cov_cont or cov_cat:
+    st.caption(("Described as age in the report: " + (f"**{age_col}**" if age_col else "none")
+                + "; as sex: " + (f"**{sex_col}**" if sex_col else "none") + ".")
+               + ("" if (age_col or not cov_cont) else " No continuous covariate is named as an age, so the "
+                  "report has no age figures; every covariate still gets its own association plot."))
 inc_age, inc_sex = age_col is not None, sex_col is not None
-other_candidates = [c for c in all_cols if c not in {site_col, age_col, sex_col}]
-
-# Further covariates only when asked for
-extra_cont_add, extra_cat_add = [], []
-if st.checkbox("Add more covariates", key="add_more_covariates"):
-    add_c1, add_c2 = st.columns(2)
-    with add_c1:
-        extra_cont_add = st.multiselect(
-            "More continuous covariates",
-            options=[c for c in other_candidates if c in num_cols],
-            key="extra_cont",
-            placeholder="e.g. days since injury, TSI …",
-        )
-    with add_c2:
-        extra_cat_add = st.multiselect(
-            "More categorical covariates",
-            options=other_candidates,
-            key="extra_cat",
-            placeholder="e.g. Group, Diagnosis, Handedness …",
-        )
+extra_cont_add = [c for c in cov_cont if c != age_col]
+extra_cat_add = [c for c in cov_cat if c != sex_col]
 
 # Final covariate lists passed to ComBat
-continuous_covariates = ([age_col] if (inc_age and age_col) else []) + extra_cont_add
-categorical_covariates = ([sex_col] if (inc_sex and sex_col) else []) + extra_cat_add
+continuous_covariates = list(cov_cont)
+categorical_covariates = list(cov_cat)
 
 # Age and sex as actually used (None when not detected or unchecked); the
 # ANCOVA batch-effect model uses the same ones as ComBat
@@ -473,12 +473,8 @@ extra_continuous  = extra_cont_add
 extra_categorical = extra_cat_add
 
 # Summary box
-all_covars_display = (
-    ([f"{age_col} (continuous)"] if (inc_age and age_col) else [])
-    + [f"{c} (continuous)" for c in extra_cont_add]
-    + ([f"{sex_col} (categorical)"] if (inc_sex and sex_col) else [])
-    + [f"{c} (categorical)" for c in extra_cat_add]
-)
+all_covars_display = ([f"{c} (continuous)" for c in continuous_covariates]
+                      + [f"{c} (categorical)" for c in categorical_covariates])
 if all_covars_display:
     st.info(
         f"ComBat model: batch = **{site_col}**  |  covariates = "
@@ -813,15 +809,17 @@ if st.toggle("Check the batch and the covariates", value=False, key="show_demo_t
                             _f.add_trace(go.Bar(x=[str(b) for b in _border], y=_ys, name=_nm_, marker_color=_col,
                                                 text=[f"{y} ({100 * y / max(n, 1):.1f}%)" for y, n in zip(_ys, _n_b)],
                                                 textposition="outside", cliponaxis=False, textfont=dict(size=10),
+                                                textangle=-45,
                                                 customdata=_n_b, legendgroup="pm", showlegend=True,
                                                 hovertemplate=f"Batch %{{x}}: %{{y}} of %{{customdata}} {_nm_.lower()}"
                                                               "<extra></extra>"),
                                          row=2, col=1)
-                        _f.update_layout(height=540 + _bextra, barmode="group",
+                        _f.update_layout(height=580 + _bextra, barmode="group",
+                                         uniformtext=dict(minsize=10, mode="show"),   # angled labels kept readable
                                          legend=dict(orientation="h", x=0, xanchor="left", y=1.02, yanchor="bottom"),
                                          **{**_plot_layout, "margin": dict(l=70, r=10, t=40, b=60)})
                         _f.update_yaxes(title_text=_axis_lab, automargin=True, row=1, col=1)
-                        _f.update_yaxes(title_text="Participants (n)", range=[0, max(_n_b + [1]) * 1.3],
+                        _f.update_yaxes(title_text="Participants (n)", range=[0, max(_n_b + [1]) * 1.6],
                                         automargin=True, row=2, col=1)
                         _f.update_xaxes(type="category", automargin=True, row=1, col=1)
                         _f.update_xaxes(type="category", title_text="Batch", automargin=True, tickangle=_bangle,
@@ -863,8 +861,16 @@ if st.toggle("Check the batch and the covariates", value=False, key="show_demo_t
                     _u = list(np.sort(_raw.unique()))
                     _ropts = [_value_label(x) for x in (_u if len(_u) <= 20 else _u[:10] + _u[-10:])]
                 _store = st.session_state.setdefault("_recode_store", {}).setdefault(data_key, {})
+                # only when ticked; ticked already when values of this variable are set to missing, and
+                # unticking it gives them back
+                st.session_state.setdefault(f"recode_on_{_c}", bool(_store.get(_c)))
+                if not st.checkbox("Set values to missing", key=f"recode_on_{_c}",
+                                   on_change=_recode_toggle, args=(data_key, _c),
+                                   help="For values that are codes rather than data, such as Refused, Unknown or "
+                                        "-999."):
+                    continue
                 st.multiselect(
-                    "Set values to missing", options=_ropts,
+                    "Values to set to missing", options=_ropts,
                     default=[v for v in _store.get(_c, []) if v in _ropts], key=f"recode_w_{_c}",
                     on_change=_save_recode, args=(data_key, _c),
                     placeholder="for example Refused, Unknown or -999",
