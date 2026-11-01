@@ -1192,8 +1192,9 @@ if use_modality:
         "appears in that group's column names, for example a prefix such as `FA_`, "
         "`MD_` or `fMRI_`, which selects the names that start with it; any other "
         "text selects the names that contain it. Enter one token per line. "
-        "Each selected feature is assigned to the first group whose token it "
-        "matches. A group should be one measure, not a brain region."
+        "A feature that several tokens match goes to the most specific one, the longest "
+        "(for example `fMRI_Efficiency` before `fMRI_`); with equally long tokens, to the "
+        "first one listed. A group should be one measure, not a brain region."
     )
     if st.button("Suggest groups from column names"):
         st.session_state["modality_tokens_text"] = "\n".join(
@@ -1208,12 +1209,18 @@ if use_modality:
     )
     tokens = [t.strip() for t in tokens_text.splitlines() if t.strip()]
     if tokens:
-        groups, assigned = {}, set()
-        for t in tokens:
-            matched = [c for c in _token_matches(t, feature_cols) if c not in assigned]
-            if matched:
-                groups[t] = matched
-                assigned.update(matched)
+        # each feature goes to the most specific token it matches (the longest; the first listed among
+        # equally long ones), so a token added for a few columns (fMRI_Efficiency) takes them from a
+        # broader one (fMRI_) whatever their order (Oni, 1 November 2026)
+        _hits = {t: set(_token_matches(t, feature_cols)) for t in tokens}
+        _best = {}
+        for c in feature_cols:
+            _cands = [t for t in tokens if c in _hits[t]]
+            if _cands:
+                _best[c] = max(_cands, key=len)      # max keeps the first of equally long tokens
+        groups = {t: [c for c in feature_cols if _best.get(c) == t] for t in dict.fromkeys(tokens)}
+        groups = {t: cols for t, cols in groups.items() if cols}
+        assigned = set(_best)
         unassigned = [c for c in feature_cols if c not in assigned]
 
         st.caption(
