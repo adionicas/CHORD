@@ -8,6 +8,12 @@ import numpy as np
 import pandas as pd
 from neuroCombat import neuroCombat
 
+# Batches left out of a ComBat run because they had fewer than two participants in it, one entry per run:
+# {"batches": {label: n}, "features": number of features in the run}. The app clears it before harmonizing
+# and reports what it holds afterwards.
+SMALL_BATCHES = []
+MIN_BATCH_SIZE = 2
+
 
 def _encode_categorical(series: pd.Series) -> pd.Series:
     """Label-encode a column to integers (0, 1, 2, …)."""
@@ -86,6 +92,19 @@ def run_combat(
         raise ValueError(
             "No rows with complete data across site, all covariates, and all features."
         )
+    # A batch with fewer than two participants in the run has no within-batch variance, so neuroCombat's
+    # estimates for it are not a number. Without Empirical Bayes that blanks only its own participants; with
+    # Empirical Bayes it blanks every participant and feature of the run (the batch means are removed with
+    # the product of the batch design and the estimates of all batches, and 0 times not-a-number is not a
+    # number). This left a user's whole EB=TRUE table blank (2 November 2026). Such batches are left out of
+    # the run, so their participants are not in its output.
+    _bsize = work[site_col].value_counts()
+    _small = _bsize[_bsize < MIN_BATCH_SIZE]
+    if len(_small):
+        SMALL_BATCHES.append({"batches": {str(b): int(n) for b, n in _small.items()}, "features": len(usable)})
+        work = work[~work[site_col].isin(_small.index)]
+        if work[site_col].nunique() < 2:
+            raise ValueError("Fewer than two batches have at least two participants, so ComBat cannot run.")
     constant_features = [f for f in usable if work[f].nunique() <= 1]
     run_cols = [f for f in usable if f not in set(constant_features)]
     if not run_cols:

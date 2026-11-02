@@ -13,6 +13,8 @@ import plotly.express as px
 from plotly.subplots import make_subplots
 
 from src.naming    import measure_keys, natural_sorted
+from src.version   import version_text
+import src.harmonize as _harm_mod
 from src.harmonize import (run_combat, run_combat_grouped, run_combat_per_feature,
                            run_combat_by_missing_pattern, run_combat_with_imputation,
                            missing_pattern_groups)
@@ -58,6 +60,8 @@ st.markdown("""
 
 with st.sidebar:
     st.header("About")
+    # the version, also written into every report and Methods paragraph (2 November 2026)
+    st.caption(version_text(with_update=True))
     st.markdown("""
 **CHORD** performs ComBat harmonization of multisite neuroimaging data and produces a standardized evaluation report.
 
@@ -809,7 +813,7 @@ if st.toggle("Check the batch and the covariates", value=False, key="show_demo_t
                             _f.add_trace(go.Bar(x=[str(b) for b in _border], y=_ys, name=_nm_, marker_color=_col,
                                                 text=[f"{y} ({100 * y / max(n, 1):.1f}%)" for y, n in zip(_ys, _n_b)],
                                                 textposition="outside", cliponaxis=False, textfont=dict(size=10),
-                                                textangle=-45,
+                                                textangle=-90,
                                                 customdata=_n_b, legendgroup="pm", showlegend=True,
                                                 hovertemplate=f"Batch %{{x}}: %{{y}} of %{{customdata}} {_nm_.lower()}"
                                                               "<extra></extra>"),
@@ -819,10 +823,14 @@ if st.toggle("Check the batch and the covariates", value=False, key="show_demo_t
                                          legend=dict(orientation="h", x=0, xanchor="left", y=1.02, yanchor="bottom"),
                                          **{**_plot_layout, "margin": dict(l=70, r=10, t=40, b=60)})
                         _f.update_yaxes(title_text=_axis_lab, automargin=True, row=1, col=1)
-                        _f.update_yaxes(title_text="Participants (n)", range=[0, max(_n_b + [1]) * 1.6],
+                        _f.update_yaxes(title_text="Participants (n)", range=[0, max(_n_b + [1]) * 2.1],
                                         automargin=True, row=2, col=1)
-                        _f.update_xaxes(type="category", automargin=True, row=1, col=1)
+                        # the batches in their own order in both plots, also a batch without any value
+                        # (it has no box above and would otherwise go to the end)
+                        _f.update_xaxes(type="category", automargin=True, categoryorder="array",
+                                        categoryarray=[str(b) for b in _border], row=1, col=1)
                         _f.update_xaxes(type="category", title_text="Batch", automargin=True, tickangle=_bangle,
+                                        categoryorder="array", categoryarray=[str(b) for b in _border],
                                         row=2, col=1)
                     else:
                         # the distribution, and next to it how many values are present and missing
@@ -1428,6 +1436,8 @@ if _show_miss_tools:
             _ids = pd.DataFrame({
                 "Participant": (_inc[id_col].astype(str).values if id_col
                                 else [f"Row {df.index.get_loc(r) + 1}" for r in _inc.index]),
+                # the batch each participant comes from, "—" when the batch itself is missing (Oni, 2 November 2026)
+                "Batch":       _inc[site_col].map(lambda v: "—" if pd.isna(v) else str(v)).values,
                 "Missing":     [", ".join(v for v in _model_vars if pd.isna(r[v]))
                                 for _, r in _inc[_model_vars].iterrows()],
             })
@@ -1953,6 +1963,20 @@ if excluded_sites:
         f"Excluding {len(excluded_sites)} batch(es): {', '.join(str(s) for s in excluded_sites)}. "
         f"Remaining participants: {int((~df[site_col].isin(excluded_sites)).sum())}."
     )
+# ComBat needs at least two participants per batch; a batch of one would blank the whole EB=TRUE table
+# (2 November 2026), so CHORD leaves such batches out of the harmonization and says so here
+_fin_sizes = df.loc[final_rows, site_col].value_counts()
+_fin_sizes = _fin_sizes[~_fin_sizes.index.isin(excluded_sites)]
+_one = _fin_sizes[_fin_sizes < _harm_mod.MIN_BATCH_SIZE]
+if len(_one):
+    st.warning(
+        f"{len(_one)} batch(es) have a single participant in the final sample: "
+        + ", ".join(f"**{b}**" for b in natural_sorted(_one.index.astype(str)))
+        + ". ComBat needs at least two participants per batch to estimate a batch's spread, so CHORD "
+        "leaves these participants out of the harmonization (the report says so). You can also exclude "
+        "these batches here, or join each with a similar batch in your table, for example the same scanner "
+        "with a neighbouring software version."
+    )
 
 if _preview_excluded or excluded_sites or _excl_part_rows:
     st.markdown("**Data preview after exclusions**")
@@ -2095,6 +2119,7 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True,
 
         # ── Harmonize ──────────────────────────────────────────────────────
         harm_ebt, harm_ebf = None, None
+        _harm_mod.SMALL_BATCHES.clear()      # batches of one left out of a run, filled in by the runs
 
         def _harmonize(eb):
             if missing_mode == "impute":
@@ -2134,6 +2159,17 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True,
 
         # primary result for site deviation (before panel always uses raw)
         harm_primary = harm_ebt if harm_ebt is not None else harm_ebf
+        # batches of one left out of the runs: the participants missing from the harmonized table because of
+        # it, by batch (with pattern grouping or without Empirical Bayes they can be left out of some runs only)
+        _small_labels = sorted({b for r in _harm_mod.SMALL_BATCHES for b in r["batches"]})
+        _small_rows = (df_harm.index[df_harm[site_col].astype(str).isin(_small_labels)
+                                     & ~df_harm.index.isin(harm_primary.index)]
+                       if harm_primary is not None and _small_labels else pd.Index([]))
+        small_batch_note = ((f"{len(_small_rows)} participant(s) in batches with a single participant ("
+                             + ", ".join(_small_labels) + ") were left out of the harmonization: ComBat needs at "
+                             "least two participants per batch.") if len(_small_rows) else
+                            (f"In some ComBat runs a batch had a single participant ({', '.join(_small_labels)}); "
+                             "it was left out of those runs, so those values are blank.") if _small_labels else "")
 
         # Features harmonized in a run of their own although EB=TRUE was asked:
         # Empirical Bayes needs at least two features, so run_combat runs them
@@ -2365,10 +2401,13 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True,
             "missing_pct_excluded": int((_part_excl_mask & ~_site_excl_mask).sum()),
             "batch_missing":        int(_no_batch.sum()),
             "cov_missing":          int(_no_cov.sum()),
+            "small_batch":          int(len(_small_rows)),
+            "small_batch_names":    _small_labels,
         }
         excl_counts["features"] = (len(df) - n_retained - excl_counts["batch_excluded"]
                                    - excl_counts["missing_pct_excluded"]
-                                   - excl_counts["batch_missing"] - excl_counts["cov_missing"])
+                                   - excl_counts["batch_missing"] - excl_counts["cov_missing"]
+                                   - excl_counts["small_batch"])
         # missing values before harmonization, for the report's data preparation tables:
         # the selected features (with those later excluded) in all uploaded participants
         _thr_a = float(st.session_state.get("miss_assess_thr") or 10.0)
@@ -2526,7 +2565,10 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True,
             include_extra_assoc=(include_extra_assoc and len(extra_assoc_df) > 0),
             assoc_cont_vars=assoc_cont_vars,
             assoc_cat_vars=assoc_cat_vars,
-            data_prep_text=" ".join(x for x in (recoded_text, data_prep_sentence(
+            data_prep_text=" ".join(x for x in (recoded_text, (
+                f"Batches with a single participant ({', '.join(_small_labels)}) were excluded "
+                f"(n = {len(_small_rows)}), because ComBat requires at least two participants per batch."
+                if len(_small_rows) else ""), data_prep_sentence(
                 missing_overview, st.session_state.get("_excl_info"),
                 st.session_state.get("_excl_part_info") if _excl_part_rows else None, missing_mode,
                 keep_imputed=(missing_mode == "impute" and keep_imputed))) if x),
@@ -2570,6 +2612,7 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True,
             site_n_complete=site_n_complete,
             no_eb_features=no_eb_features,
             blank_features=blank_features,
+            small_batch_note=small_batch_note,
         ))
 
     except Exception as e:
@@ -2647,6 +2690,8 @@ if st.session_state.get("results_ready"):
         }, 400);
         </script>""", height=0)
 
+    if st.session_state.get("small_batch_note"):
+        st.warning(st.session_state["small_batch_note"])
     _blank = st.session_state.get("blank_features") or []
     if _blank:
         st.warning(
