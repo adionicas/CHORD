@@ -8,7 +8,7 @@ code is a git clone (also inside Docker, which copies the folder into the image)
 that computer last changed through git (clone, pull or commit). A ZIP download has no .git folder; then the
 report gives VERSION only.
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 VERSION = "2026.11.02"
@@ -38,8 +38,8 @@ def _git_updated(root):
     try:
         last = (Path(root) / ".git" / "logs" / "HEAD").read_text().strip().splitlines()[-1]
         stamp = int(last.split("\t")[0].split()[-2])
-        t = datetime.fromtimestamp(stamp)
-        return f"{t.day} {t:%B %Y, %H:%M}"
+        t = datetime.fromtimestamp(stamp, tz=timezone.utc)     # Docker runs on UTC; say so, never a bare time
+        return f"{t.day} {t:%B %Y, %H:%M} UTC"
     except (OSError, IndexError, ValueError):
         return None
 
