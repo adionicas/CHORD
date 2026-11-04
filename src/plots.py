@@ -1218,10 +1218,24 @@ def plot_data_matrix(
     n_rows_show = len(d) if len(d) * len(cols) <= max_cells else min(len(d), max_rows)
     max_cols = max(len(cov) + 1, max_cells // max(n_rows_show, 1))
     row_blocks = [(a, b) for a, b, _ in _proportional_blocks([site_n[s] for s in site_order], n_rows_show)]
+    # every batch at least as tall as its label: a small batch's rows are drawn several times over, so its
+    # label never overlaps its neighbours' (Oni, 4 November 2026)
+    for _ in range(2):
+        _px = max(400, min(len(row_blocks) * 4, 900)) / max(len(row_blocks), 1)
+        _min = int(np.ceil(15 / _px))
+        _new, _start = [], 0
+        for s_ in site_order:
+            _blk = [(a, b) for a, b in row_blocks if _start <= a < _start + site_n[s_]]
+            _rep = int(np.ceil(_min / len(_blk))) if len(_blk) < _min else 1
+            _new += [blk for blk in _blk for _ in range(_rep)]
+            _start += site_n[s_]
+        if len(_new) == len(row_blocks):
+            break
+        row_blocks = _new
     feat_blocks = _proportional_blocks([len(c) for _, c in groups], max(1, max_cols - len(cov)))
     col_blocks = [(i, i + 1) for i in range(len(cov))] + [(len(cov) + a, len(cov) + b) for a, b, _ in feat_blocks]
     blocks_per_group = [sum(1 for *_, g in feat_blocks if g == gi) for gi in range(len(groups))]
-    reduced = len(row_blocks) < len(d) or len(col_blocks) < len(cols)
+    reduced = any(b - a > 1 for a, b in row_blocks) or len(col_blocks) < len(cols)
 
     def _label(a, b):
         name = cols[a] if b - a == 1 else f"{cols[a]} to {cols[b - 1]} ({b - a} columns)"
@@ -1231,9 +1245,9 @@ def plot_data_matrix(
     x_labels = [_label(a, b) for a, b in col_blocks]
 
     if missing_only:
-        rs = np.array([a for a, _ in row_blocks])
         cs = np.array([a for a, _ in col_blocks])
-        counts = np.add.reduceat(np.add.reduceat(miss.astype(float), rs, axis=0), cs, axis=1)
+        _colsum = np.add.reduceat(miss.astype(float), cs, axis=1)
+        counts = np.array([_colsum[a:b].sum(axis=0) for a, b in row_blocks])
         sizes = np.outer([b - a for a, b in row_blocks], [b - a for a, b in col_blocks])
         zz = np.round(counts / sizes, 3)
         main = go.Heatmap(
@@ -1286,9 +1300,8 @@ def plot_data_matrix(
     fig.add_trace(strip, row=1, col=1)
     if has_marked:
         # excluded participants: a red strip next to the batch strip (share of the cell's participants excluded)
-        _rs = np.array([a for a, _ in row_blocks])
-        _share = np.add.reduceat(row_marked, _rs) / np.array([b - a for a, b in row_blocks])
-        _n_m = np.add.reduceat(row_marked, _rs).astype(int)
+        _n_m = np.array([row_marked[a:b].sum() for a, b in row_blocks]).astype(int)
+        _share = _n_m / np.array([b - a for a, b in row_blocks])
         fig.add_trace(go.Heatmap(
             x=[1], z=[[v if v > 0 else np.nan] for v in _share], zmin=0, zmax=1,
             colorscale=[[0, "#F4B6B6"], [1, "#C62828"]], showscale=False, hoverongaps=False,
@@ -1328,7 +1341,7 @@ def plot_data_matrix(
             x1 = x0 + n_blk
             if g is not None:
                 if g in marked_labels:
-                    color = "#C62828"   # excluded features in red (Oni, 4 November 2026)
+                    color = "#888888"
                 else:
                     color = band_palette[gi_color % len(band_palette)]
                     gi_color += 1
@@ -1338,7 +1351,9 @@ def plot_data_matrix(
                               y0=1.002, y1=1.028, fillcolor=color, line_width=0, layer="above")
                 fig.add_annotation(xref="x2", yref="paper", x=(x0 + x1 - 1) / 2, y=1.035,
                                    text=f"{g} ({len(c)})", showarrow=False, textangle=-45,
-                                   xanchor="left", yanchor="bottom", font=dict(size=13, color="#333333"))
+                                   xanchor="left", yanchor="bottom",
+                                   # the labels of excluded features in red (Oni, 4 November 2026)
+                                   font=dict(size=13, color="#C62828" if g in marked_labels else "#333333"))
             x0 = x1
 
     what = (f"missing values in black ({100 * miss.mean():.1f}% of cells), present in grey"
@@ -1425,10 +1440,15 @@ def plot_missing_curve(feature_pct: pd.Series, measure_of: dict | None = None,
     ncols = 2 if sep else 1
     nrows = int(np.ceil(len(groups) / ncols)) if sep else 1
     after_word = "still included" if b_members else ""
+
+    def _n_ex(g):
+        # how many were excluded, said on the figure (Oni, 4 November 2026)
+        return len(b_members[g]) - len(members[g]) if g in b_members else 0
     if sep:
         fig = make_subplots(rows=nrows, cols=ncols, horizontal_spacing=0.08,
                             vertical_spacing=min(0.12, 0.6 / max(nrows, 1)),
-                            subplot_titles=[f"{g} ({len(members[g])} {unit}{' ' + after_word if after_word else ''})"
+                            subplot_titles=[f"{g} ({len(members[g])} {unit}"
+                                            + (f" {after_word}, {_n_ex(g)} excluded" if after_word else "") + ")"
                                             for g in groups])
     else:
         fig = go.Figure()
@@ -1452,8 +1472,8 @@ def plot_missing_curve(feature_pct: pd.Series, measure_of: dict | None = None,
         n_over = len(p) - np.searchsorted(p, xs, side="right")      # features with more than x% missing
         fig.add_trace(go.Scatter(
             x=xs, y=100 * n_over / max(len(p), 1), mode="lines+markers", line_shape="hv",
-            name=((f"{unit.capitalize()} still included (n={len(p)})" if len(groups) == 1 else
-                   f"{g}, still included (n={len(p)})") if after_word else f"{g} (n={len(p)})"),
+            name=((f"{unit.capitalize()} still included (n={len(p)}; {_n_ex(g)} excluded)" if len(groups) == 1 else
+                   f"{g}, still included (n={len(p)}; {_n_ex(g)} excluded)") if after_word else f"{g} (n={len(p)})"),
             showlegend=not sep,
             line=dict(color=color, width=2.2),
             marker=dict(size=7, opacity=0),          # invisible points, so a click on the line selects one
@@ -1545,15 +1565,17 @@ def plot_present_missing_by_batch(batches: list, n: list, present: dict, missing
                 customdata=np.stack([cnt, 100 * miss / tot], axis=1),
                 text=[f"{v:.1f}% missing" for v in 100 * miss / tot] if lab == "Missing" else None,
                 textposition="outside" if lab == "Missing" else None, cliponaxis=False,
-                textfont=dict(size=11),
+                textangle=-90, textfont=dict(size=11),
                 hovertemplate="%{x}<br>" + lab + ": %{customdata[0]:,.0f} values (%{y:.1f}%)<extra></extra>"),
                 row=r, col=1)
-        fig.update_yaxes(title_text="Feature values (%)", range=[0, 112], tickvals=[0, 25, 50, 75, 100],
+        fig.update_yaxes(title_text="Feature values (%)", range=[0, 135], tickvals=[0, 25, 50, 75, 100],
                          showgrid=True, gridcolor="#EEEEEE", row=r, col=1)
     fig.update_layout(
         title=("Feature values present and missing per batch" if len(names) == 1
                else "Feature values present and missing per batch, by modality group"),
-        barmode="stack", **WHITE_BG, height=(470 if len(names) == 1 else 140 + 230 * len(names)),
+        # taller with the vertical batch labels, so the bars keep their height (Oni, 4 November 2026)
+        barmode="stack", **WHITE_BG, height=(470 if len(names) == 1 else 140 + 230 * len(names))
+        + 6 * max((len(str(b)) for b in batches), default=0),
         margin=dict(l=10, r=30, t=70, b=40), legend=dict(BOTTOM_LEGEND), bargap=0.35,
     )
     # batch labels vertical, so long scanner names never overlap (Oni, 4 November 2026)

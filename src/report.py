@@ -227,8 +227,9 @@ def _data_prep_tables(excl_feat_html, overview, excl_part_list):
         part_label = table("Participants excluded due to missingness.",
                            _df_table(pd.DataFrame(excl_part_list), float_fmt=1),
                            "Participants listed above were left out of harmonization because they missed "
-                           "more than the user-specified share of the selected features. Missing (%) is "
-                           "computed over the features selected at the time of exclusion.")
+                           "more than the user-specified share of the selected features. Features missing is "
+                           "given as a percentage and a count, overall and per modality group when groups were "
+                           "defined, over the features selected at the time of exclusion.")
     return "\n".join(parts), part_label, overview_label
 
 
@@ -416,12 +417,12 @@ TEMPLATE = """<!DOCTYPE html>
     {% if include_cohens_f %}{% set m.i = m.i + 1 %}
     ({{ m.i }}) analysis of covariance (ANCOVA, Type II sums of squares{% if ancova_cov_text %}; covariates: {{ ancova_cov_text }}{% endif %})
     with batch as the grouping factor, quantifying batch effect size as Cohen's <em>f</em> [4];
-    {% endif %}{% set m.i = m.i + 1 %}
+    {% endif %}{% if include_icc_by_site %}{% set m.i = m.i + 1 %}
     ({{ m.i }}) the within-batch consistency form of the intraclass correlation coefficient, ICC(3,1) [9, 10],
     computed between pre- and post-harmonization values within each batch for each feature and summarized
     across batches as the median with the interquartile range, the primary metric, interpreted with the
     thresholds of Koo and Li [5] as poor (&lt; 0.50), moderate (0.50&#8211;0.75), good (0.75&#8211;0.90),
-    excellent (&#8805; 0.90){% if include_age %}; and
+    excellent (&#8805; 0.90){% endif %}{% if include_age %}; and
     {% set m.i = m.i + 1 %}({{ m.i }}) Pearson correlation between {{ age_col }} and each imaging feature before and after
     harmonization, {% if fdr_note and fdr_note.startswith('No multiple') %}without correction for multiple
     comparisons{% else %}with false discovery rate correction (Benjamini&#8211;Hochberg) [6]{% endif %},
@@ -687,6 +688,8 @@ TEMPLATE = """<!DOCTYPE html>
   {% endif %}
 </p>
 
+{% set icc_d = 0 if include_icc_by_site else 1 %}
+{% if include_icc_by_site %}
 <h3>S3.2 Within-Batch Consistency</h3>
 <p>
   Within-batch consistency was evaluated as the degree to which the rank ordering
@@ -707,9 +710,10 @@ TEMPLATE = """<!DOCTYPE html>
   harmonization does not remove meaningful within-batch biological variability
   [<a href="#ref3">3</a>].
 </p>
+{% endif %}
 
 {% if include_age %}
-<h3>S3.3 Preservation of Age-Related Associations</h3>
+<h3>S3.{{ 3 - icc_d }} Preservation of Age-Related Associations</h3>
 <p>
   To evaluate whether ComBat harmonization preserves biologically meaningful
   variability, Pearson correlation coefficients were computed between
@@ -724,7 +728,7 @@ TEMPLATE = """<!DOCTYPE html>
 </p>
 {% endif %}
 {% if include_extra_assoc %}
-<h3>S3.{{ 4 if include_age else 3 }}. Preservation of Additional Variable Associations</h3>
+<h3>S3.{{ (4 if include_age else 3) - icc_d }}. Preservation of Additional Variable Associations</h3>
 <p>
   Associations between additional variables of interest
   ({% if assoc_cont_vars %}continuous: {{ assoc_cont_vars | join(", ") }}{% endif %}{% if assoc_cont_vars and assoc_cat_vars %}; {% endif %}{% if assoc_cat_vars %}categorical: {{ assoc_cat_vars | join(", ") }}{% endif %})
@@ -807,6 +811,7 @@ TEMPLATE = """<!DOCTYPE html>
 </p>
 {% endif %}
 
+{% if include_icc_by_site %}
 <h3>S4.2 Within-Batch Consistency</h3>
 <p>
   The within-batch ICC(3,1), summarized per feature as the across-batch median, was computed
@@ -861,12 +866,13 @@ TEMPLATE = """<!DOCTYPE html>
 </p>
 {% endif %}
 
+{% endif %}
 {% set fdr_on = not (fdr_note and fdr_note.startswith('No multiple')) %}
 {% set cls_sel = 'sig-fdr' if fdr_on else 'sig-unc' %}
 {% set cls_alt = 'sig-unc' if fdr_on else 'sig-fdr' %}
 {% if include_age %}
 {% set ns.fig = ns.fig + 1 %}
-<h3>S4.3 Preservation of Age-Related Associations</h3>
+<h3>S4.{{ 3 - icc_d }} Preservation of Age-Related Associations</h3>
 {% if fig_age_alt or extra_has_alt %}
 <div class="sig-switch">
   <b>Significance shown in the association figures:</b>
@@ -912,7 +918,7 @@ TEMPLATE = """<!DOCTYPE html>
 {% endif %}
 
 {% if include_extra_assoc and extra_assoc_figs %}
-{% set sec = 4 if include_age else 3 %}
+{% set sec = (4 if include_age else 3) - icc_d %}
 <h3>S4.{{ sec }}. Additional Variable Associations</h3>
 {% if not include_age %}{% if fig_age_alt or extra_has_alt %}
 <div class="sig-switch">
@@ -957,11 +963,11 @@ TEMPLATE = """<!DOCTYPE html>
 {{ table_ebt_c }}
 <p class="table-note">
   <em>Note.</em>
-  ICC(3,1) = the consistency form of the intraclass correlation coefficient (two-way mixed effects, single rating;
+  {% if include_icc_by_site %}ICC(3,1) = the consistency form of the intraclass correlation coefficient (two-way mixed effects, single rating;
   Shrout &amp; Fleiss, 1979 [<a href="#ref9">9</a>]; equivalently ICC(C,1), McGraw &amp; Wong, 1996 [<a href="#ref10">10</a>])
   between raw and harmonized values within each batch, summarized across batches as the median with the
   interquartile range (Q1 to Q3). Interpreted with Koo &amp; Li (2016) [<a href="#ref5">5</a>] thresholds,
-  &lt; 0.50 poor, 0.50&#8211;0.75 moderate, 0.75&#8211;0.90 good, &#8805; 0.90 excellent.
+  &lt; 0.50 poor, 0.50&#8211;0.75 moderate, 0.75&#8211;0.90 good, &#8805; 0.90 excellent.{% endif %}
   Cohen's <em>f</em> = batch effect size from ANCOVA ({% if ancova_cov_text %}{{ ancova_cov_text }} as covariates, {% endif %}Type II SS).
   Cohen's <em>f</em> before = pre-harmonization batch effect; Cohen's <em>f</em> after = post-harmonization batch effect.
 </p>
@@ -977,7 +983,7 @@ TEMPLATE = """<!DOCTYPE html>
 {{ table_compare_c }}
 <p class="table-note">
   <em>Note.</em> Each row is one feature. Paired columns allow direct comparison of the two ComBat configurations.
-  ICC(3,1) median = across-batch median of the within-batch consistency-form intraclass correlation coefficient (higher is better).
+  {% if include_icc_by_site %}ICC(3,1) median = across-batch median of the within-batch consistency-form intraclass correlation coefficient (higher is better).{% endif %}
   Cohen's <em>f</em> after = post-harmonization batch effect size (lower is better).
   Spearman <em>r</em> = rank correlation between raw and harmonized values (higher is better).
 </p>

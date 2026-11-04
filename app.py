@@ -533,7 +533,8 @@ def _by_batch_table(data, batch_col, variables, categorical=None, ids=None):
     columns = {("Batch", ""): labels, ("N", ""): [len(sub) for sub in subsets]}
     for k, lab in enumerate(labels):
         cells[(lab, ("Batch", ""))] = {"k": k}
-        cells[(lab, ("N", ""))] = {"k": len(subsets[k])}
+        # a click on N lists the batch's participants (Oni, 4 November 2026)
+        cells[(lab, ("N", ""))] = {"k": len(subsets[k]), "ids": ids.loc[subsets[k].index].tolist()}
     for var in variables:
         if var not in categorical and pd.api.types.is_numeric_dtype(data[var]):
             cm, cr, cx = (var, "Mean (SD)"), (var, "Range"), (var, "Missing, n (%)")
@@ -1517,7 +1518,13 @@ if _show_miss_tools:
                          "Participant": (str(df.at[r, _pid_c]) if _pid_c in df.columns
                                          else f"Row {df.index.get_loc(r) + 1}"),
                          "Batch": "—" if pd.isna(df.at[r, site_col]) else str(df.at[r, site_col]),
-                         "Features missing (%)": round(float(part_pct[r]), 1)}
+                         "Features missing (%)": round(float(part_pct[r]), 1),
+                         # the count, and per modality group, as the run is per group (Oni, 4 November 2026)
+                         "Features missing (n)": f"{int(feat_isna.loc[r, feats_l].sum())} of {len(feats_l)}",
+                         **({f"{g}: missing, n (%)": (lambda _c: f"{int(feat_isna.loc[r, _c].sum())} of {len(_c)} "
+                                                                 f"({100 * feat_isna.loc[r, _c].mean():.1f}%)")(
+                             [c for c in feats_l if measure_of.get(c) == g])
+                             for g in measures} if modality_groups and len(measures) > 1 else {})}
                         for r in rows if r not in _excl_rows_set]
 
             # after exclusions the curves show the participants and features still included (solid),
@@ -1530,18 +1537,24 @@ if _show_miss_tools:
             _p_before = 100 * df[_before_cols].isna().mean(axis=1) if _any_excl else None
             _measure_all = ({c: _col_group.get(c) or _excl_group_of.get(c) or "Not in a group" for c in _before_cols}
                             if modality_groups else None)
-            # suggested thresholds (the widest gap between the sorted missing percentages), from all participants
-            # and features before any exclusion, so they stay the same after an exclusion; the threshold boxes
-            # start at them (Oni, 4 November 2026)
+            # suggested thresholds (the widest gap between the sorted missing percentages). Features: from all
+            # participants and features before any exclusion, so it stays the same after an exclusion. Participants:
+            # over the features still included (it follows the feature exclusions), on all participants (it does
+            # not move after a participant exclusion). The threshold boxes start at them, and follow a new
+            # suggestion as long as the box still holds the previous one (Oni, 4 November 2026)
             _base_f = _f_before if _f_before is not None else feat_pct
-            _base_p = _p_before if _p_before is not None else 100 * df[feats_l].isna().mean(axis=1)
+            _base_p = 100 * df[feats_l].isna().mean(axis=1)
             _grp_map = _measure_all if (_f_before is not None and _measure_all) else measure_of
             _gap_f = largest_gap(_base_f)
             _gap_fg = ({g: largest_gap(_base_f[[c for c in _base_f.index if _grp_map.get(c) == g]]) for g in measures}
                        if modality_groups else {})
             _gap_p = largest_gap(_base_p)
             st.session_state.setdefault("miss_assess_thr", _gap_f["threshold"] if _gap_f else 10.0)
-            st.session_state.setdefault("miss_assess_part_thr", _gap_p["threshold"] if _gap_p else 10.0)
+            _sug_p = _gap_p["threshold"] if _gap_p else 10.0
+            if st.session_state.get("miss_assess_part_thr") == st.session_state.get("_sug_part_prev"):
+                st.session_state.pop("miss_assess_part_thr", None)   # the box still holds the old suggestion
+            st.session_state.setdefault("miss_assess_part_thr", _sug_p)
+            st.session_state["_sug_part_prev"] = _sug_p
             for _g, _d in _gap_fg.items():
                 if _d:
                     st.session_state.setdefault(f"miss_thr_g_{_g}", _d["threshold"])
@@ -2052,7 +2065,7 @@ st.caption(
 eval_c1, eval_c2 = st.columns(2)
 with eval_c1:
     include_icc_by_site = st.checkbox(
-        "Within-batch consistency by batch (ICC(3,1)), recommended",
+        "Within-batch consistency (ICC(3,1)), recommended",
         value=True, key="inc_icc_site",
         help=(
             "ICC(3,1), the consistency form of the intraclass correlation coefficient, between raw and "
@@ -2064,8 +2077,8 @@ with eval_c1:
             "required."
         ),
     )
-    st.caption("Adds computing time with many features and batches; untick it if you only need the "
-               "harmonized data.")
+    st.caption("Adds computing time with many features and batches. Unticked, no ICC is computed and the "
+               "report has none.")
     include_cohens_f = st.checkbox(
         "Batch effect size (ANOVA Cohen's f), recommended",
         value=True, key="inc_cohens_f",
@@ -2254,16 +2267,17 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True,
             return lambda done, total: progress.progress(
                 start + int(5 * done / max(total, 1)),
                 f"Computing within-batch ICC(3,1), {label}: batch {done} of {total}...")
+        # unticked, the ICC is not computed at all and is left out of the report (Oni, 4 November 2026)
         icc_site_ebt = (compute_icc_by_site(df_harm, harm_ebt, feature_cols, site_col,
                                             progress=_icc_progress("EB=TRUE", 55))
-                        if harm_ebt is not None else None)
+                        if harm_ebt is not None and include_icc_by_site else None)
         icc_site_ebf = (compute_icc_by_site(df_harm, harm_ebf, feature_cols, site_col,
                                             progress=_icc_progress("EB=FALSE", 60))
-                        if harm_ebf is not None else None)
+                        if harm_ebf is not None and include_icc_by_site else None)
         icc_ebt = (compute_icc_within_summary(df_harm, harm_ebt, feature_cols, site_col, by=icc_site_ebt)
-                   if harm_ebt is not None else None)
+                   if harm_ebt is not None and include_icc_by_site else None)
         icc_ebf = (compute_icc_within_summary(df_harm, harm_ebf, feature_cols, site_col, by=icc_site_ebf)
-                   if harm_ebf is not None else None)
+                   if harm_ebf is not None and include_icc_by_site else None)
         icc_all = pd.DataFrame()  # overall ICC removed; ICC is within-batch only
 
         # When multiple modalities are defined, FDR is applied within each modality.
@@ -2490,7 +2504,7 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True,
                 for g, gc in _groups_all.items() if gc
             ],
         }
-        excl_part_list = [{k: d[k] for k in ("Participant", "Batch", "Features missing (%)")}
+        excl_part_list = [{k: v for k, v in d.items() if k not in ("data_key", "row")}
                           for d in st.session_state.get("_excl_part_list", [])
                           if d.get("data_key") == data_key and d.get("row") in df.index]
         # missing-data documentation for the report
@@ -2638,6 +2652,7 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True,
         clean_csv = (df_harm.loc[harm_primary.index].drop(columns=_drop_out, errors="ignore")
                      .to_csv(index=False).encode() if harm_primary is not None else None)
 
+
         st.session_state.update(dict(
             results_ready=True,
             _scroll_to_results=True,
@@ -2673,6 +2688,23 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True,
 def _download_buttons(where):
     """The report and the harmonized tables. Shown at the top of the Results and again at the end,
     so they never depend on scrolling to the end of a long page (Oni, 29 October 2026)."""
+    if where == "top":
+        # one button that downloads every file separately, no ZIP: it clicks the download buttons below in turn;
+        # the browser asks once to allow several downloads (Oni, 4 November 2026)
+        import streamlit.components.v1 as _cmp
+        _cmp.html("""<button id="all" style="width:100%;padding:9px 0;border-radius:8px;border:0;cursor:pointer;
+background:#FF4B4B;color:#fff;font:600 15px 'Source Sans Pro',-apple-system,system-ui,sans-serif">
+⬇&nbsp; Download all (report, harmonized data, cleaned data)</button>
+<script>
+document.getElementById('all').onclick = function () {
+  var doc = window.parent.document, seen = {}, todo = [];
+  doc.querySelectorAll('[data-testid="stDownloadButton"] button').forEach(function (b) {
+    var t = b.innerText.trim();
+    if (!seen[t]) { seen[t] = 1; todo.push(b); }
+  });
+  todo.forEach(function (b, i) { setTimeout(function () { b.click(); }, 700 * i); });
+};
+</script>""", height=48)
     dl1, dl2, dl3, dl4 = st.columns(4)
     with dl1:
         st.download_button(
