@@ -23,3 +23,6 @@ Thumbs.db
 # Logs (run logs only, not requirements)
 run_*.txt
 *.log
+
+# result files of a run, served for Download all
+static/results/

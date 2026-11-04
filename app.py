@@ -2547,10 +2547,11 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True,
                           else float(st.session_state.get("miss_assess_thr", 10.0) or 10.0))
                 _thr_p = ((st.session_state.get("_excl_part_info") or {}).get("threshold")
                           or float(st.session_state.get("miss_assess_part_thr", 10.0) or 10.0))
+                # the feature curve only when features were excluded (Oni, 4 November 2026)
                 fig_clean_feat = plot_missing_curve(
                     100 * df.loc[_kept_r, _feats_now].isna().mean(), _grp_r or None, _thr_f,
                     before=100 * df[_before_cols_r].isna().mean() if _any_x else None,
-                    separate=bool(modality_groups))
+                    separate=bool(modality_groups)) if _excluded_before else None
                 fig_clean_part = plot_missing_curve(
                     100 * df.loc[_kept_r, _feats_now].isna().mean(axis=1), None, _thr_p, kind="participants",
                     before=100 * df[_before_cols_r].isna().mean(axis=1) if _any_x else None)
@@ -2653,8 +2654,32 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True,
                      .to_csv(index=False).encode() if harm_primary is not None else None)
 
 
+        # the files of this run also go to static/results/<token>/, served by Streamlit, so "Download all" can
+        # fetch them one after another without the page redrawing between them (a redraw drops the download
+        # buttons' files: Oni's browser got "file not found", 4 November 2026); older runs' files are removed
+        import secrets as _secrets, shutil as _shutil
+        from pathlib import Path
+        _res_root = Path(__file__).resolve().parent / "static" / "results"
+        try:
+            if _res_root.exists():
+                for _old in _res_root.iterdir():
+                    _shutil.rmtree(_old, ignore_errors=True)
+            _tok = _secrets.token_hex(16)
+            (_res_root / _tok).mkdir(parents=True, exist_ok=True)
+            _served = []
+            for _nm, _b in ((f"{data_stem}_harmonization_report.html", html_report.encode("utf-8")),
+                            (f"{data_stem}_harmonized_EBT.csv", harm_csv_ebt),
+                            (f"{data_stem}_harmonized_EBF.csv", harm_csv_ebf),
+                            (f"{data_stem}_cleaned.csv", clean_csv)):
+                if _b:
+                    (_res_root / _tok / _nm).write_bytes(_b)
+                    _served.append(f"app/static/results/{_tok}/{_nm}")
+        except OSError:
+            _served = []
+
         st.session_state.update(dict(
             results_ready=True,
+            served_files=_served,
             _scroll_to_results=True,
             methods_para=methods_para,
             fig_site=fig_site, fig_icc=fig_icc,
@@ -2688,21 +2713,25 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True,
 def _download_buttons(where):
     """The report and the harmonized tables. Shown at the top of the Results and again at the end,
     so they never depend on scrolling to the end of a long page (Oni, 29 October 2026)."""
-    if where == "top":
-        # one button that downloads every file separately, no ZIP: it clicks the download buttons below in turn;
-        # the browser asks once to allow several downloads (Oni, 4 November 2026)
+    if where == "top" and st.session_state.get("served_files"):
+        # one button that downloads every file separately, no ZIP (Oni, 4 November 2026): the files are fetched
+        # from static/results, so the page is not redrawn between them; the browser asks once to allow them
+        import json as _json
         import streamlit.components.v1 as _cmp
         _cmp.html("""<button id="all" style="width:100%;padding:9px 0;border-radius:8px;border:0;cursor:pointer;
 background:#FF4B4B;color:#fff;font:600 15px 'Source Sans Pro',-apple-system,system-ui,sans-serif">
 ⬇&nbsp; Download all (report, harmonized data, cleaned data)</button>
 <script>
+var files = """ + _json.dumps(st.session_state["served_files"]) + """;
 document.getElementById('all').onclick = function () {
-  var doc = window.parent.document, seen = {}, todo = [];
-  doc.querySelectorAll('[data-testid="stDownloadButton"] button').forEach(function (b) {
-    var t = b.innerText.trim();
-    if (!seen[t]) { seen[t] = 1; todo.push(b); }
+  var base = window.parent.location.origin + window.parent.location.pathname.replace(/[^/]*$/, '');
+  files.forEach(function (f, i) {
+    setTimeout(function () {
+      var a = window.parent.document.createElement('a');
+      a.href = base + f; a.download = f.split('/').pop();
+      window.parent.document.body.appendChild(a); a.click(); a.remove();
+    }, 800 * i);
   });
-  todo.forEach(function (b, i) { setTimeout(function () { b.click(); }, 700 * i); });
 };
 </script>""", height=48)
     dl1, dl2, dl3, dl4 = st.columns(4)

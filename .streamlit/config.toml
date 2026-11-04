@@ -1,5 +1,7 @@
 [server]
 fileWatcherType = "none"
+# the result files are also served from static/results, so "Download all" fetches them without redrawing the page
+enableStaticServing = true
 
 [client]
 toolbarMode = "minimal"

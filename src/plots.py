@@ -43,6 +43,13 @@ WHITE_BG = dict(
 # browser cannot draw (a user's report with 7200 features would not open, 2 November 2026). Above this number of
 # features per batch, the boxes are drawn from all features and the points from a random sample.
 MAX_POINTS_PER_BOX = 200
+# all points when a figure stays under this many in all its panels; above it, as many per batch as fit (at least
+# MAX_POINTS_PER_BOX), so smaller tables show every point (Oni, 4 November 2026: "all dots when possible")
+POINTS_PER_FIGURE = 30_000
+
+
+def _points_cap(n_batches, n_panels):
+    return max(MAX_POINTS_PER_BOX, POINTS_PER_FIGURE // max(n_batches * n_panels, 1))
 
 
 def _box_stats(y):
@@ -55,8 +62,8 @@ def _box_stats(y):
                 lowerfence=[y[y >= q1 - 1.5 * iqr].min()], upperfence=[y[y <= q3 + 1.5 * iqr].max()])
 
 
-def _sample_note(n_max):
-    return (f"<br><sup>Points: a random sample of {MAX_POINTS_PER_BOX} of the {n_max} features per batch; "
+def _sample_note(n_max, cap=MAX_POINTS_PER_BOX):
+    return (f"<br><sup>Points: a random sample of {cap} of the {n_max} features per batch; "
             "the boxes use all features</sup>")
 
 
@@ -95,13 +102,14 @@ def plot_site_deviation(
 
     _rng = np.random.default_rng(42)
     _n_max = 0
+    _cap = _points_cap(len(sites), len(datasets))
     for col_idx, (df_dev, label, color) in enumerate(datasets, start=1):
         for s in sites:
             sub = df_dev[df_dev["site"] == s]["site_mean_z"].values
             if len(sub) == 0:
                 continue
             xpos = site_pos[s]
-            if len(sub) <= MAX_POINTS_PER_BOX:
+            if len(sub) <= _cap:
                 fig.add_trace(go.Box(
                     x=[xpos] * len(sub), y=sub,
                     name=f"Batch {xpos + 1}", showlegend=False,
@@ -118,7 +126,7 @@ def plot_site_deviation(
                 line_color="black", fillcolor="rgba(255,255,255,0.5)", width=0.5, boxpoints=False,
                 hoverinfo="skip",
             ), row=1, col=col_idx)
-            pick = _rng.choice(len(sub), MAX_POINTS_PER_BOX, replace=False)
+            pick = _rng.choice(len(sub), _cap, replace=False)
             fig.add_trace(go.Scatter(
                 x=xpos + _rng.uniform(-0.2, 0.2, len(pick)), y=np.round(sub[pick], 4), mode="markers",
                 showlegend=False, marker=dict(size=5, opacity=0.55, color=color),
@@ -149,7 +157,7 @@ def plot_site_deviation(
 
     fig.update_yaxes(title_text="Batch mean z-score", row=1, col=1)
     fig.update_layout(
-        title="Batch mean deviation from grand mean (z-scored per feature)" + (_sample_note(_n_max) if _n_max else ""),
+        title="Batch mean deviation from grand mean (z-scored per feature)" + (_sample_note(_n_max, _cap) if _n_max else ""),
         height=(430 if use_numbers else 480) + (13 * n_key_lines if use_numbers else 0), **WHITE_BG,
         showlegend=False,
         margin=dict(b=(150 + 13 * n_key_lines) if use_numbers else 90),
@@ -572,6 +580,7 @@ def plot_icc_by_site(
     rng          = np.random.default_rng(42)
     legend_shown = set()
     _n_max       = 0
+    _cap         = _points_cap(len(sites), len(datasets))
 
     for col_i, (df_s, label, _) in enumerate(datasets, start=1):
         # Box traces (distribution shape only, no individual points)
@@ -580,7 +589,7 @@ def plot_icc_by_site(
             if len(sd) == 0:
                 continue
             xpos = site_pos[site]
-            _big = len(sd) > MAX_POINTS_PER_BOX       # many features: the box from precomputed values
+            _big = len(sd) > _cap                     # many features: the box from precomputed values
             fig.add_trace(go.Box(
                 **(dict(x=[xpos], **_box_stats(sd["icc3"].values)) if _big
                    else dict(x=[xpos] * len(sd), y=sd["icc3"].values)),
@@ -598,11 +607,11 @@ def plot_icc_by_site(
         _shown = {}
         for site in sites:
             sd = df_s[df_s["site"] == site][["icc3", "feature"]].dropna(subset=["icc3"])
-            if len(sd) > MAX_POINTS_PER_BOX:
+            if len(sd) > _cap:
                 _n_max = max(_n_max, len(sd))
                 low = sd[sd["icc3"] < 0.75]
                 rest = sd[sd["icc3"] >= 0.75]
-                k = max(0, MAX_POINTS_PER_BOX - len(low))
+                k = max(0, _cap - len(low))
                 sd = pd.concat([low, rest.iloc[rng.choice(len(rest), min(k, len(rest)), replace=False)]])
             _shown[site] = sd
         # Scatter traces: one per ICC category, colored by category
@@ -685,7 +694,7 @@ def plot_icc_by_site(
     fig.update_yaxes(title_text="ICC(3,1)", range=[0, 1.08], row=1, col=1)
     fig.update_layout(
         title="Within-batch consistency by batch, ICC(3,1) (Koo & Li 2016)"
-              + (_sample_note(_n_max).replace("the boxes use all features",
+              + (_sample_note(_n_max, _cap).replace("the boxes use all features",
                                               "every ICC below 0.75 is shown; the boxes use all features")
                  if _n_max else ""),
         height=520 + (18 * n_key_lines if use_numbers else max(0, bottom - 140)), **WHITE_BG,

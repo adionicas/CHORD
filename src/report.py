@@ -481,15 +481,17 @@ TEMPLATE = """<!DOCTYPE html>
 </p>
 
 {% if cleaning_table or fig_clean_feat or fig_map_before or data_prep_tables %}
+{% set cf_p = 2 if fig_clean_feat else 1 %}{% set cf_m = cf_p + (1 if fig_clean_part else 0) %}
 <h3>S1.2 Data cleaning</h3>
 <p>
   {% if cleaning_table %}Table C1 gives the number of features{% if modality_on %} (overall and by modality
   group){% endif %} and participants before data cleaning, the number excluded, and the number retained.{% endif %}
   {% if fig_clean_feat %}Figure C1 shows the percentage of features with missing data in more than <em>x</em>% of
-  participants{% if modality_on %}, separately for each modality group{% endif %}, and Figure C2 the percentage of
-  participants with missing data in more than <em>x</em>% of the selected features; dotted vertical lines mark the
+  participants{% if modality_on %}, separately for each modality group{% endif %}{% if fig_clean_part %}, and{% endif %}{% endif %}
+  {% if fig_clean_part %}{% if not fig_clean_feat %}No feature was excluded because of missing data. {% endif %}Figure C{{ cf_p }} shows the percentage of
+  participants with missing data in more than <em>x</em>% of the selected features{% endif %}{% if fig_clean_feat or fig_clean_part %}; dotted vertical lines mark the
   exclusion thresholds.{% endif %}
-  {% if fig_map_before %}Figure C3 shows the pattern of missing data before{% if fig_map_after %} and after{% endif %}
+  {% if fig_map_before %}Figure C{{ cf_m }} shows the pattern of missing data before{% if fig_map_after %} and after{% endif %}
   data cleaning.{% endif %}
   {% if data_prep_tables %}The excluded features and participants and the extent of missing data before
   harmonization are reported in the tables following the figures.{% endif %}
@@ -512,7 +514,7 @@ TEMPLATE = """<!DOCTYPE html>
 {% if fig_clean_part %}
 <div class="fig-wrap">{{ fig_clean_part }}</div>
 <p class="fig-caption">
-  <b>Figure C2.</b> Percentage of participants with missing data in more than <em>x</em>% of the selected features. The
+  <b>Figure C{{ cf_p }}.</b> Percentage of participants with missing data in more than <em>x</em>% of the selected features. The
   dotted vertical line marks the exclusion threshold. The solid line represents the retained participants; the dashed
   grey line represents all participants before exclusion.
 </p>
@@ -521,7 +523,7 @@ TEMPLATE = """<!DOCTYPE html>
 <div class="fig-wrap">{{ fig_map_before }}</div>
 {% if fig_map_after %}<div class="fig-wrap">{{ fig_map_after }}</div>{% endif %}
 <p class="fig-caption">
-  <b>Figure C3.</b> Pattern of missing data before{% if fig_map_after %} (top) and after (bottom){% endif %} data
+  <b>Figure C{{ cf_m }}.</b> Pattern of missing data before{% if fig_map_after %} (top) and after (bottom){% endif %} data
   cleaning. Rows represent participants, ordered by batch; columns represent features{% if modality_on %}, ordered by
   modality group, with the excluded features of each group placed after it{% endif %}. Black cells indicate missing
   values and grey cells observed values; where the display is reduced, the shade of a cell gives the proportion of
@@ -990,6 +992,33 @@ TEMPLATE = """<!DOCTYPE html>
 {% endif %}
 
 <!-- ─────────────────────────────────────── Refs ────────────────────────── -->
+<div id="ptsize" style="position:fixed;bottom:14px;right:14px;z-index:50;background:rgba(255,255,255,.95);
+border:1px solid #ccc;border-radius:8px;padding:6px 10px;font:13px Arial,sans-serif">
+  Point size <input type="range" id="ptsz" min="0.25" max="3" step="0.25" value="1" style="vertical-align:middle;width:110px">
+  <span id="ptszv">1&#215;</span>
+</div>
+<script>
+// one slider for the size of the points in every figure (Oni, 4 November 2026)
+(function () {
+  var s = document.getElementById('ptsz'), v = document.getElementById('ptszv');
+  function apply(f) {
+    v.textContent = f + '\u00d7';
+    document.querySelectorAll('.js-plotly-plot').forEach(function (gd) {
+      if (!gd.data) return;
+      gd.data.forEach(function (t, i) {
+        var m = t.marker; if (!m || m.size === undefined) return;
+        if (!(t.mode || '').includes('markers') && t.type !== 'box') return;
+        if (gd._sz0 === undefined) gd._sz0 = {};
+        if (gd._sz0[i] === undefined) gd._sz0[i] = m.size;
+        var o = gd._sz0[i];
+        var ns = Array.isArray(o) ? o.map(function (x) { return x * f; }) : o * f;
+        Plotly.restyle(gd, {'marker.size': [ns]}, [i]);
+      });
+    });
+  }
+  s.addEventListener('input', function () { apply(parseFloat(s.value)); });
+})();
+</script>
 <script>
 // uncorrected or FDR-corrected significance in the association figures (Oni, 29 October 2026)
 (function () {
