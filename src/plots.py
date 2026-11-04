@@ -1360,7 +1360,8 @@ def plot_data_matrix(
 
 def plot_missing_curve(feature_pct: pd.Series, measure_of: dict | None = None,
                        threshold: float | dict | None = None, kind: str = "features",
-                       before: pd.Series | None = None, separate: bool = False) -> go.Figure:
+                       before: pd.Series | None = None, separate: bool = False,
+                       stable: tuple | dict | None = None) -> go.Figure:
     """
     For every share x from 0 to 100%, the features with more than x% of the
     participants missing: one line per modality group as defined by the user,
@@ -1440,6 +1441,16 @@ def plot_missing_curve(feature_pct: pd.Series, measure_of: dict | None = None,
         fig.update_layout(yaxis2=dict(title=f"{unit.capitalize()} (n" + (" per group)" if len(groups) > 1 else ")"),
                                       overlaying="y", side="right", range=[0, n_all * 1.02], autorange=False,
                                       showgrid=False))
+    # the stable range of the largest gap (metrics.largest_gap): shaded, one per plot when given per group
+    if isinstance(stable, dict) and sep:
+        for i, g in enumerate(groups):
+            rng_g = stable.get(g)
+            if rng_g and rng_g[0] <= x_max:
+                fig.add_vrect(x0=rng_g[0], x1=min(rng_g[1], x_max), fillcolor="#2E8B57", opacity=0.10, line_width=0,
+                              layer="below", row=i // ncols + 1, col=i % ncols + 1)
+    elif isinstance(stable, tuple) and stable[0] <= x_max:
+        fig.add_vrect(x0=stable[0], x1=min(stable[1], x_max), fillcolor="#2E8B57", opacity=0.10, line_width=0,
+                      layer="below", **(dict(row="all", col="all") if sep else {}))
     if isinstance(threshold, dict):
         # a threshold per modality group: each group's line (in its own plot, or in its colour)
         for i, g in enumerate(groups):

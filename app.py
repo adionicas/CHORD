@@ -23,7 +23,7 @@ from src.metrics   import (site_mean_deviation, spearman_raw_vs_harm, _apply_sig
                             demographic_summary,
                             compute_icc_by_site, compute_icc_within_summary,
                             compute_spearman_by_site,
-                            compute_extra_associations)
+                            compute_extra_associations, largest_gap)
 from src.plots     import (plot_site_deviation, plot_spearman, plot_icc, plot_data_matrix,
                            plot_age_correlations, plot_cohens_f,
                            plot_icc_by_site, plot_spearman_by_site,
@@ -276,7 +276,8 @@ def _record_feature_exclusion(cols_to_drop, threshold, pcts, groups):
     drop = set(cols_to_drop)
     st.session_state["sel_features"] = [c for c in st.session_state.get("sel_features", []) if c not in drop]
     prev = st.session_state.get("_excl_info", {"n": 0, "threshold": None})
-    st.session_state["_excl_info"] = {"n": prev["n"] + len(drop), "threshold": threshold}
+    st.session_state["_excl_info"] = {"n": prev["n"] + len(drop), "threshold": threshold,
+                                      "gap": st.session_state.get("_gap_feat_now")}
     grp = {c: g for g, gcols in (groups or {}).items() for c in gcols}
     lst = st.session_state.get("_excl_feat_list", [])
     for f in cols_to_drop:
@@ -296,12 +297,19 @@ def _record_feature_exclusion_by_group(drop_by_group, thresholds, sizes, pcts, g
     info["threshold_text"] = "; ".join(f"{g}: more than {v['threshold']:g}% (n = {v['n']})" for g, v in prev_by.items())
 
 
+def _set_state(values):
+    """Set widget values before they are drawn (a button's on_click)."""
+    for k, v in values.items():
+        st.session_state[k] = v
+
+
 def _record_participant_exclusion(entries, threshold, key_of_data):
     """Record participants as excluded, with the threshold used."""
     prev = [d for d in st.session_state.get("_excl_part_list", []) if d.get("data_key") == key_of_data]
     prev += entries
     st.session_state["_excl_part_list"] = prev
-    st.session_state["_excl_part_info"] = {"n": len(prev), "threshold": threshold}
+    st.session_state["_excl_part_info"] = {"n": len(prev), "threshold": threshold,
+                                           "gap": st.session_state.get("_gap_part_now")}
 
 
 @st.experimental_dialog("Missing values above this percentage", width="large")
@@ -532,7 +540,9 @@ def _by_batch_table(data, batch_col, variables, categorical=None, ids=None):
             columns[cm], columns[cr], columns[cx] = [], [], []
             for lab, sub in zip(labels, subsets):
                 vals = sub[var].dropna()
-                columns[cm].append(f"{vals.mean():.2f} ({vals.std():.2f})" if len(vals) else "—")
+                # one value has no SD: shown as a dash, not nan (Oni, 4 November 2026)
+                columns[cm].append(f"{vals.mean():.2f} ({vals.std():.2f})" if len(vals) > 1
+                                   else f"{vals.mean():.2f} (—)" if len(vals) else "—")
                 columns[cr].append(f"{_fmt_num(vals.min())} to {_fmt_num(vals.max())}" if len(vals) else "—")
                 cells[(lab, cm)] = {"k": float(vals.mean()) if len(vals) else None}
                 cells[(lab, cr)] = {"k": float(vals.min()) if len(vals) else None}
@@ -1530,13 +1540,35 @@ if _show_miss_tools:
             _thr_by_g = bool(modality_groups) and bool(st.session_state.get("miss_thr_by_group"))
             _thr_plot = ({g: float(st.session_state.get(f"miss_thr_g_{g}", _f_thr_now) or 0.0) for g in measures}
                          if _thr_by_g else _f_thr_now)
+            # a suggested threshold: the widest gap between the sorted missing percentages; any threshold in it
+            # excludes the same features (Oni, 4 November 2026)
+            _gap_f = largest_gap(feat_pct)
+            _gap_fg = ({g: largest_gap(feat_pct[[c for c in feats_l if measure_of.get(c) == g]]) for g in measures}
+                       if modality_groups else {})
+            st.session_state["_gap_feat_now"] = (_gap_f["threshold"], _gap_f["upper"]) if _gap_f else None
+            _stable_f = ({g: (d["threshold"], d["upper"]) for g, d in _gap_fg.items() if d} if _thr_by_g and _sep
+                         else (_gap_f["threshold"], _gap_f["upper"]) if _gap_f else None)
             _ev_f = st.plotly_chart(plot_missing_curve(feat_pct, _measure_all or None, _thr_plot,
-                                                       before=_f_before, separate=_sep),
+                                                       before=_f_before, separate=_sep, stable=_stable_f),
                                     use_container_width=True, on_select="rerun", selection_mode="points",
                                     key=f"miss_curve_f_{_ck}")
             st.caption("How to read it: both axes count missing values. Pick a share x on the horizontal axis; "
                        "the curve gives the percentage of features that are missing in more than x% of the "
                        "participants.")
+            if _thr_by_g and any(_gap_fg.values()):
+                st.markdown("**Suggested thresholds** (the widest gap between the sorted missing percentages of each "
+                            "group; any threshold inside the shaded range excludes the same features): " + "; ".join(
+                                f"**{g}** {d['threshold']:.2f}% (stable up to {d['upper']:.2f}%, {d['n_above']} of "
+                                f"{d['n']} above)" for g, d in _gap_fg.items() if d) + ".")
+                st.button("Use the suggested thresholds", key="use_gap_feat_groups", on_click=_set_state,
+                          args=({f"miss_thr_g_{g}": d["threshold"] for g, d in _gap_fg.items() if d},))
+            elif _gap_f:
+                st.markdown(f"**Suggested threshold: {_gap_f['threshold']:.2f}%**, the start of the widest gap between "
+                            f"the features' sorted missing percentages. Any threshold from {_gap_f['threshold']:.2f}% "
+                            f"up to {_gap_f['upper']:.2f}% (shaded) excludes the same {_gap_f['n_above']} of "
+                            f"{_gap_f['n']} features.")
+                st.button("Use the suggested threshold", key="use_gap_feat", on_click=_set_state,
+                          args=({"miss_assess_thr": _gap_f["threshold"]},))
             _pts = (_ev_f or {}).get("selection", {}).get("points", []) if _ev_f else []
             if _pts:
                 _clicked = ("features", float(_pts[0]["x"]))
@@ -1585,13 +1617,23 @@ if _show_miss_tools:
                               on_click=_record_feature_exclusion,
                               args=(list(_f_over.index), a_thr, _f_over.to_dict(), modality_groups))
             # participants
+            _gap_p = largest_gap(part_pct.loc[_kept_rows])
+            st.session_state["_gap_part_now"] = (_gap_p["threshold"], _gap_p["upper"]) if _gap_p else None
             _ev_p = st.plotly_chart(plot_missing_curve(part_pct.loc[_kept_rows], None, _p_thr_now,
-                                                       kind="participants", before=_p_before),
+                                                       kind="participants", before=_p_before,
+                                                       stable=(_gap_p["threshold"], _gap_p["upper"]) if _gap_p else None),
                                     use_container_width=True, on_select="rerun", selection_mode="points",
                                     key=f"miss_curve_p_{_ck}")
             st.caption("How to read it: both axes count missing values. Pick a share x on the horizontal axis; "
                        "the curve gives the percentage of participants who are missing more than x% of the "
                        "selected features.")
+            if _gap_p:
+                st.markdown(f"**Suggested threshold: {_gap_p['threshold']:.2f}%**, the start of the widest gap between "
+                            f"the participants' sorted missing percentages. Any threshold from {_gap_p['threshold']:.2f}% "
+                            f"up to {_gap_p['upper']:.2f}% (shaded) excludes the same {_gap_p['n_above']} of "
+                            f"{_gap_p['n']} participants.")
+                st.button("Use the suggested threshold", key="use_gap_part", on_click=_set_state,
+                          args=({"miss_assess_part_thr": _gap_p["threshold"]},))
             _pts = (_ev_p or {}).get("selection", {}).get("points", []) if _ev_p else []
             if _pts:
                 _clicked = ("participants", float(_pts[0]["x"]))

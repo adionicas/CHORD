@@ -1071,9 +1071,17 @@ def data_prep_sentence(missing_overview=None, excl_info=None, excl_part_info=Non
     elif excl_info and excl_info.get("n") and excl_info.get("threshold") is not None:
         out.append(f"Features with missing data in more than {excl_info['threshold']:g}% of participants were "
                    f"excluded (n = {excl_info['n']} of {n_f}).")
+        _g = excl_info.get("gap")
+        if _g and _g[0] - 1e-9 <= excl_info["threshold"] < _g[1]:
+            out.append(f"This threshold lies within the widest gap between the sorted feature missing percentages "
+                       f"({_g[0]:.2f}% to {_g[1]:.2f}%), so any threshold in that range excludes the same features.")
     if excl_part_info and excl_part_info.get("n") and excl_part_info.get("threshold") is not None:
         out.append(f"Participants with missing data in more than {excl_part_info['threshold']:g}% of the "
                    f"selected features were excluded (n = {excl_part_info['n']} of {n_p}).")
+        _g = excl_part_info.get("gap")
+        if _g and _g[0] - 1e-9 <= excl_part_info["threshold"] < _g[1]:
+            out.append(f"This threshold lies within the widest gap between the sorted participant missing percentages "
+                       f"({_g[0]:.2f}% to {_g[1]:.2f}%), so any threshold in that range excludes the same participants.")
     if missing_overview.get("feat_any"):
         out.append({
             "complete": "Participants with any remaining missing feature value were left out of the "

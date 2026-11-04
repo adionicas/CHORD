@@ -46,7 +46,8 @@ def demographic_summary(
         av = grp[age_col].dropna()
         if len(av) == 0:
             return "N/A", "N/A"
-        return f"{av.mean():.2f} ({av.std():.2f})", f"{av.min():.1f}–{av.max():.1f}"
+        sd = f"{av.std():.2f}" if len(av) > 1 else "—"
+        return f"{av.mean():.2f} ({sd})", f"{av.min():.1f}–{av.max():.1f}"
 
     def _female_str(grp, n):
         if not sex_col or sex_col not in grp.columns or n == 0:
@@ -527,3 +528,20 @@ def compute_spearman_by_site(df_raw, df_harm, features, site_col):
             r, _ = spearmanr(rv[idx2].values, hv[idx2].values)
             rows.append({"site": site, "feature": f, "spearman_r": float(r), "n": len(idx2)})
     return pd.DataFrame(rows)
+
+
+def largest_gap(values):
+    """
+    A suggested exclusion threshold for missing values: sort the distinct missing percentages above 0 and take the
+    widest gap between neighbouring values (Oni, 4 November 2026). Excluding everything above the lower end of the
+    gap, or above any value inside it, removes exactly the same items, so the gap is a stable range for the
+    threshold. Returns {"threshold": lower end, "upper": upper end, "n_above": items above the threshold, "n": all
+    items} or None when there are fewer than two distinct values above 0.
+    """
+    v = pd.Series(values, dtype=float).dropna()
+    u = np.unique(np.round(v[v > 0].to_numpy(), 6))
+    if len(u) < 2:
+        return None
+    i = int(np.argmax(np.diff(u)))
+    lo, hi = float(u[i]), float(u[i + 1])
+    return {"threshold": lo, "upper": hi, "n_above": int((v > lo).sum()), "n": int(len(v))}
