@@ -1584,15 +1584,15 @@ if _show_miss_tools:
                        "participants.")
             if _thr_by_g and any(_gap_fg.values()):
                 st.markdown("**Suggested thresholds** (the widest gap between the sorted missing percentages of each "
-                            "group; any threshold inside the shaded range excludes the same features): " + "; ".join(
+                            "group; any threshold inside that gap excludes the same features): " + "; ".join(
                                 f"**{g}** {d['threshold']:.2f}% (gap from {d['lower']:.2f}% to {d['upper']:.2f}%; {d['n_above']} "
                                 f"of {d['n']} features excluded)" for g, d in _gap_fg.items() if d) + ".")
                 st.button("Use the suggested thresholds", key="use_gap_feat_groups", on_click=_set_state,
                           args=({f"miss_thr_g_{g}": d["threshold"] for g, d in _gap_fg.items() if d},))
             elif _gap_f:
                 st.markdown(f"**Suggested threshold: {_gap_f['threshold']:.2f}%**, the start of the widest gap between "
-                            f"the features' sorted missing percentages ({_gap_f['lower']:.2f}% to {_gap_f['upper']:.2f}%, "
-                            f"shaded). Any threshold in that gap excludes the same {_gap_f['n_above']} of "
+                            f"the features' sorted missing percentages ({_gap_f['lower']:.2f}% to {_gap_f['upper']:.2f}%). "
+                            f"Any threshold in that gap excludes the same {_gap_f['n_above']} of "
                             f"{_gap_f['n']} features: those with {_gap_f['upper']:.2f}% missing or more.")
                 st.button("Use the suggested threshold", key="use_gap_feat", on_click=_set_state,
                           args=({"miss_assess_thr": _gap_f["threshold"]},))
@@ -1655,8 +1655,8 @@ if _show_miss_tools:
                        "selected features.")
             if _gap_p:
                 st.markdown(f"**Suggested threshold: {_gap_p['threshold']:.2f}%**, the start of the widest gap between "
-                            f"the participants' sorted missing percentages ({_gap_p['lower']:.2f}% to {_gap_p['upper']:.2f}%, "
-                            f"shaded). Any threshold in that gap excludes the same {_gap_p['n_above']} of "
+                            f"the participants' sorted missing percentages ({_gap_p['lower']:.2f}% to {_gap_p['upper']:.2f}%). "
+                            f"Any threshold in that gap excludes the same {_gap_p['n_above']} of "
                             f"{_gap_p['n']} participants: those with {_gap_p['upper']:.2f}% missing or more.")
                 st.button("Use the suggested threshold", key="use_gap_part", on_click=_set_state,
                           args=({"miss_assess_part_thr": _gap_p["threshold"]},))

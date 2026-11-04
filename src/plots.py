@@ -1503,30 +1503,38 @@ def plot_missing_curve(feature_pct: pd.Series, measure_of: dict | None = None,
         fig.update_layout(yaxis2=dict(title=f"{unit.capitalize()} (n" + (" per group)" if len(groups) > 1 else ")"),
                                       overlaying="y", side="right", range=[0, n_all * 1.02], autorange=False,
                                       showgrid=False))
-    # the stable range of the largest gap (metrics.largest_gap): shaded, one per plot when given per group
-    if isinstance(stable, dict) and sep:
+    # the threshold: a dotted line with the exact number above it, and the part above it shaded, so the shade
+    # moves with the threshold (Oni, 4 November 2026: the shaded suggested range did not, and no count was shown).
+    # Counted on all features or participants before exclusions when given, so the count stays after excluding.
+    def _count(g, t):
+        src = before if (before is not None and len(before) and g in b_members) else feature_pct
+        mem = b_members.get(g) if (before is not None and g in b_members) else members[g]
+        v = src[mem].to_numpy(dtype=float)
+        return int((v > t).sum()), len(v)
+
+    def _mark(g, t, color, rc, label_all=None):
+        if t is None or t > x_max:
+            return
+        fig.add_vrect(x0=t, x1=x_max, fillcolor="#C62828", opacity=0.07, line_width=0, layer="below", **rc)
+        if label_all is None:
+            k, n = _count(g, t)
+            label_all = f"{t:g}%: {k} of {n} {unit} above"
+        fig.add_vline(x=t, line_dash="dot", line_width=1.5, line_color=color,
+                      annotation_text=label_all, annotation_position="top right", annotation_font_size=11, **rc)
+
+    if isinstance(threshold, dict) or (threshold is not None and sep):
         for i, g in enumerate(groups):
-            rng_g = stable.get(g)
-            if rng_g and rng_g[0] <= x_max:
-                fig.add_vrect(x0=rng_g[0], x1=min(rng_g[1], x_max), fillcolor="#2E8B57", opacity=0.10, line_width=0,
-                              layer="below", row=i // ncols + 1, col=i % ncols + 1)
-    elif isinstance(stable, tuple) and stable[0] <= x_max:
-        fig.add_vrect(x0=stable[0], x1=min(stable[1], x_max), fillcolor="#2E8B57", opacity=0.10, line_width=0,
-                      layer="below", **(dict(row="all", col="all") if sep else {}))
-    if isinstance(threshold, dict):
-        # a threshold per modality group: each group's line (in its own plot, or in its colour)
-        for i, g in enumerate(groups):
-            t = threshold.get(g)
-            if t is None or t > x_max:
-                continue
-            fig.add_vline(x=t, line_dash="dot", line_width=1.5,
-                          line_color=GREY if sep else palette[i % len(palette)],
-                          annotation_text=f"{t:g}%", annotation_position="top right",
-                          **(dict(row=i // ncols + 1, col=i % ncols + 1) if sep else {}))
-    elif threshold is not None and threshold <= x_max:
-        fig.add_vline(x=threshold, line_dash="dot", line_color=GREY, line_width=1.5,
-                      annotation_text=f"{threshold:g}%", annotation_position="top right",
-                      **(dict(row="all", col="all") if sep else {}))
+            t = threshold.get(g) if isinstance(threshold, dict) else threshold
+            _mark(g, t, GREY if sep else palette[i % len(palette)],
+                  dict(row=i // ncols + 1, col=i % ncols + 1) if sep else {},
+                  None if sep or len(groups) == 1 else f"{t:g}% ({g}): {_count(g, t)[0]} above")
+    elif threshold is not None:
+        if len(groups) == 1:
+            _mark(groups[0], threshold, GREY, {})
+        else:
+            _k = sum(_count(g, threshold)[0] for g in groups)
+            _n = sum(_count(g, threshold)[1] for g in groups)
+            _mark(None, threshold, GREY, {}, f"{threshold:g}%: {_k} of {_n} {unit} above")
     if kind == "features":
         # both axes count missing values (Oni, 29 October 2026: "missing or present?")
         title = "Features with more than x% of participants missing"
