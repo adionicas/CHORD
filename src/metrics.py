@@ -544,4 +544,10 @@ def largest_gap(values):
         return None
     i = int(np.argmax(np.diff(u)))
     lo, hi = float(u[i]), float(u[i + 1])
-    return {"threshold": lo, "upper": hi, "n_above": int((v > lo).sum()), "n": int(len(v))}
+    # the threshold is the first two-decimal value above the gap's lower end, so that the features at the lower end
+    # are kept also after the box rounds it (a feature with exactly lo% missing is not "more than" the threshold)
+    thr = np.floor(lo * 100) / 100 + 0.01
+    if thr >= hi:
+        thr = (lo + hi) / 2
+    return {"threshold": float(round(thr, 6)), "lower": lo, "upper": hi,
+            "n_above": int((v > thr).sum()), "n": int(len(v))}
