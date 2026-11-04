@@ -379,7 +379,7 @@ def plot_cohens_f(anc_before: pd.DataFrame, anc_ebt: pd.DataFrame,
             df_after[cols], on="feature", suffixes=("_before", "_after")
         )
 
-    def _add_condition(fig, merged, base_symbol, eb_label):
+    def _add_condition(fig, merged, base_symbol, eb_label, rc=None):
         sig_b = merged["p_value_before"] < P
         sig_a = merged["p_value_after"]  < P
         # (mask, after-colour, filled?)  -> 2 x 2 = 4 groups
@@ -404,51 +404,56 @@ def plot_cohens_f(anc_before: pd.DataFrame, anc_ebt: pd.DataFrame,
                     f"<b>%{{text}}</b> ({eb_label})<br>"
                     f"Before: f = %{{x:.3f}}<br>After: f = %{{y:.3f}}<extra></extra>"
                 ),
-            ))
+            ), **(rc or {}))
 
-    fig = go.Figure()
     conditions = []
     if anc_ebt is not None and len(anc_ebt) > 0:
         conditions.append((anc_ebt, "EB=TRUE"))
     if anc_ebf is not None and len(anc_ebf) > 0:
         conditions.append((anc_ebf, "EB=FALSE"))
+    # EB=TRUE and EB=FALSE side by side, one panel each, when both are compared (Oni, 4 November 2026:
+    # overlaid they were hard to tell apart)
+    split = len(conditions) > 1
+    fig = (make_subplots(rows=1, cols=2, subplot_titles=[c[1] for c in conditions], shared_yaxes=True,
+                         horizontal_spacing=0.06) if split else go.Figure())
 
     all_vals = anc_before["cohens_f"].to_numpy(dtype=float)
     for i, (anc_after, eb_label) in enumerate(conditions):
         merged   = _merge(anc_before, anc_after)
         all_vals = np.concatenate([all_vals,
                                    merged[["cohens_f_before", "cohens_f_after"]].values.ravel()])
-        base_symbol = "diamond" if (len(conditions) > 1 and i == 1) else "circle"
-        _add_condition(fig, merged, base_symbol, eb_label)
+        _add_condition(fig, merged, "circle", eb_label, dict(row=1, col=i + 1) if split else None)
 
-    has_ebf = len(conditions) > 1
     max_val = max(float(np.nanmax(all_vals)) * 1.05, 0.5)
 
-    fig.add_trace(go.Scatter(
-        x=[0, max_val], y=[0, max_val],
-        mode="lines", line=dict(color=GREY, dash="dash", width=1.2),
-        showlegend=False, hoverinfo="skip",
-    ))
+    for i in range(len(conditions) if split else 1):
+        fig.add_trace(go.Scatter(
+            x=[0, max_val], y=[0, max_val],
+            mode="lines", line=dict(color=GREY, dash="dash", width=1.2),
+            showlegend=False, hoverinfo="skip",
+        ), **(dict(row=1, col=i + 1) if split else {}))
 
-    for val, lbl in [(0.10, "small"), (0.25, "medium"), (0.40, "large")]:
-        for add_line in [fig.add_vline, fig.add_hline]:
-            add_line(val, line_dash="dot", line_color=GREY, opacity=0.45, line_width=1.1,
-                     annotation_text=lbl,
-                     annotation_position="top right" if add_line == fig.add_vline else "right",
-                     annotation_font_size=9, annotation_font_color=GREY)
+    for i in range(len(conditions) if split else 1):
+        rc = dict(row=1, col=i + 1) if split else {}
+        for val, lbl in [(0.10, "small"), (0.25, "medium"), (0.40, "large")]:
+            fig.add_vline(val, line_dash="dot", line_color=GREY, opacity=0.45, line_width=1.1,
+                          annotation_text=lbl, annotation_position="top right",
+                          annotation_font_size=9, annotation_font_color=GREY, **rc)
+            _lab = (dict(annotation_text=lbl, annotation_position="right", annotation_font_size=9,
+                         annotation_font_color=GREY) if (not split or i == len(conditions) - 1) else {})
+            fig.add_hline(val, line_dash="dot", line_color=GREY, opacity=0.45, line_width=1.1, **_lab, **rc)
 
-    _add_cohens_f_grid_legend(fig, RED, GREEN, has_ebf)
+    _add_cohens_f_grid_legend(fig, RED, GREEN, False)
 
     fig.update_layout(
         title="Batch effect size: Cohen's <i>f</i> before vs after harmonization",
-        xaxis_title="Cohen's <i>f</i> (before harmonization)",
-        yaxis_title="Cohen's <i>f</i> (after harmonization)",
         height=560, **WHITE_BG,
         showlegend=False,
-        xaxis_range=[0, max_val],
-        yaxis_range=[0, max_val],
         margin=dict(r=70, b=70),
     )
+    fig.update_xaxes(title_text="Cohen's <i>f</i> (before harmonization)", range=[0, max_val])
+    fig.update_yaxes(range=[0, max_val])
+    fig.update_yaxes(title_text="Cohen's <i>f</i> (after harmonization)", **({"row": 1, "col": 1} if split else {}))
     return fig
 
 
