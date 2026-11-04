@@ -1430,9 +1430,14 @@ if _show_miss_tools:
 
         # Which participants these are, on request, by the participant ID column chosen in Step 2.
         if st.toggle("Show participants with missing model variables/covariates", key="show_missing_ids"):
+            _inc = df[df[_model_vars].isna().any(axis=1)]
+            # how many in all, and per variable, above the list (Oni, 4 November 2026)
+            st.markdown(f"**{len(_inc)} of {len(df)} participants ({100 * len(_inc) / max(len(df), 1):.1f}%)** "
+                        "miss at least one model variable: "
+                        + "; ".join(f"{v}: {int(df[v].isna().sum())}" for v in _model_vars if df[v].isna().any())
+                        + ".")
             st.caption(f"Participants listed by {id_col} (the participant ID column chosen in Step 2)." if id_col
                        else "Participants listed by row number (no participant ID column chosen in Step 2).")
-            _inc = df[df[_model_vars].isna().any(axis=1)]
             _ids = pd.DataFrame({
                 "Participant": (_inc[id_col].astype(str).values if id_col
                                 else [f"Row {df.index.get_loc(r) + 1}" for r in _inc.index]),
