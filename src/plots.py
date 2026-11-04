@@ -1128,6 +1128,7 @@ def plot_data_matrix(
     max_cells: int = 250_000,
     max_rows: int = 600,
     order_by_missing: bool = False,
+    marked_rows=None,
 ):
     """
     Carpet plot of the data: one row per participant, sorted by batch, with a
@@ -1145,6 +1146,9 @@ def plot_data_matrix(
     labelled band (used to show the features excluded for missingness); with
     modality groups, each group's marked columns follow that group under a grey
     band "<group>: excluded (n)".
+
+    marked_rows: index labels of participants to mark (those excluded for missing values): they are placed
+    last within their batch and a red strip next to the batch strip shows them.
 
     order_by_missing: participants are ordered within each batch, and features
     within each group, so that similar missing-value patterns sit together
@@ -1185,6 +1189,7 @@ def plot_data_matrix(
     cols = cov + feats
 
     d = df[[site_col] + cols].copy()
+    d["__marked__"] = df.index.isin(list(marked_rows)) if marked_rows is not None and len(marked_rows) else False
     n_no_batch = int(d[site_col].isna().sum())
     d = d[d[site_col].notna()]
     for c in cols:  # categorical columns become numbers so they can be drawn
@@ -1198,6 +1203,10 @@ def plot_data_matrix(
         feats = [c for _, cols_g in groups for c in cols_g]
         cols = cov + feats
         d = _order_rows_by_missing(d, site_col, feats)
+    if d["__marked__"].any():   # excluded participants last within their batch
+        _so = d[site_col].astype(str).map(_order).to_numpy()
+        d = d.iloc[np.lexsort((d["__marked__"].to_numpy(), _so))].reset_index(drop=True)
+    row_marked = d["__marked__"].to_numpy(dtype=float)
     sites = d[site_col].astype(str).to_numpy()
     site_order = list(dict.fromkeys(sites))
     site_n = {s: int((sites == s).sum()) for s in site_order}
@@ -1231,10 +1240,12 @@ def plot_data_matrix(
             z=zz, x=x_labels, zmin=0, zmax=1,
             colorscale=[[0, "#DDDDDD"], [1, "black"]],
             showscale=reduced,
-            colorbar=dict(title="", thickness=12, x=1.01, tickvals=[0, 0.5, 1],
-                          ticktext=["present", "half missing", "missing"]),
-            hovertemplate=("Column: %{x}<br>" + ("missing: %{z:.2f} of the block" if reduced else "missing: %{z:.0f}")
-                           + "<extra></extra>"),
+            # a cell holds several participants and features when the table is large: its shade is the share of
+            # those values that is missing (Oni, 4 November 2026)
+            colorbar=dict(title=dict(text="Missing<br>in the cell", side="top"), thickness=12, x=1.01,
+                          tickvals=[0, 0.25, 0.5, 0.75, 1], ticktext=["0%", "25%", "50%", "75%", "100%"]),
+            hovertemplate=("Column: %{x}<br>" + ("missing: %{z:.0%} of the values in this cell" if reduced
+                                                 else "missing: %{z:.0f}") + "<extra></extra>"),
         )
     else:
         with warnings.catch_warnings(), np.errstate(all="ignore"):
@@ -1269,9 +1280,22 @@ def plot_data_matrix(
         hovertemplate="Batch: %{customdata}<extra></extra>",
     )
 
-    fig = make_subplots(rows=1, cols=2, column_widths=[0.025, 0.975],
+    has_marked = bool(row_marked.any())
+    fig = make_subplots(rows=1, cols=2, column_widths=[0.04, 0.96] if has_marked else [0.025, 0.975],
                         shared_yaxes=True, horizontal_spacing=0.003)
     fig.add_trace(strip, row=1, col=1)
+    if has_marked:
+        # excluded participants: a red strip next to the batch strip (share of the cell's participants excluded)
+        _rs = np.array([a for a, _ in row_blocks])
+        _share = np.add.reduceat(row_marked, _rs) / np.array([b - a for a, b in row_blocks])
+        _n_m = np.add.reduceat(row_marked, _rs).astype(int)
+        fig.add_trace(go.Heatmap(
+            x=[1], z=[[v if v > 0 else np.nan] for v in _share], zmin=0, zmax=1,
+            colorscale=[[0, "#F4B6B6"], [1, "#C62828"]], showscale=False, hoverongaps=False,
+            customdata=[[int(k)] for k in _n_m],
+            hovertemplate="Excluded participants in this row: %{customdata}<extra></extra>"), row=1, col=1)
+        fig.add_annotation(xref="x", yref="paper", x=1, y=1.0, text="excluded", showarrow=False, textangle=-90,
+                           xanchor="center", yanchor="bottom", font=dict(size=11, color="#C62828"))
     fig.add_trace(main, row=1, col=2)
     if not missing_only and np.isnan(miss_layer).sum() < miss_layer.size:
         fig.add_trace(go.Heatmap(
@@ -1304,7 +1328,7 @@ def plot_data_matrix(
             x1 = x0 + n_blk
             if g is not None:
                 if g in marked_labels:
-                    color = "#888888"
+                    color = "#C62828"   # excluded features in red (Oni, 4 November 2026)
                 else:
                     color = band_palette[gi_color % len(band_palette)]
                     gi_color += 1
@@ -1329,7 +1353,7 @@ def plot_data_matrix(
         title=dict(text=f"{title}: {len(d)} participants x {len(feats)} features"
                         f"{f' + {len(cov)} covariates' if cov else ''}",
                    y=0.995, yanchor="top"),
-        xaxis=dict(showticklabels=False, range=[-0.5, 0.5], **no_ticks),
+        xaxis=dict(showticklabels=False, range=[-0.5, 1.5 if has_marked else 0.5], **no_ticks),
         # fixed range: the group labels above the bands would otherwise widen the axis
         xaxis2=dict(showticklabels=len(col_blocks) <= 80, tickangle=45, tickfont=dict(size=10),
                     range=[-0.5, len(col_blocks) - 0.5], **no_ticks),
@@ -1347,10 +1371,14 @@ def plot_data_matrix(
              f"{'; participants and features grouped by similar missing values' if order_by_missing else ''}"
              f"; {what}."]
     if reduced:
-        how = ("each cell shows the fraction of its block that is missing"
+        how = ("each cell holds several participants and features, and its shade is the percentage of those "
+               "values that is missing"
                if missing_only else "each cell shows the middle participant and feature of its block")
         notes.append(f"Shown at reduced resolution ({len(d)} participants in {len(row_blocks)} rows, "
                      f"{len(cols)} columns in {len(col_blocks)}); {how}.")
+    if has_marked:
+        notes.append(f"{int(row_marked.sum())} participant(s) excluded for missing values are last within their "
+                     f"batch and marked by the red strip; features excluded are under the red bands.")
     if n_no_batch:
         notes.append(f"{n_no_batch} participant(s) with no batch value are not shown.")
     return fig, " ".join(notes)
@@ -1526,9 +1554,10 @@ def plot_present_missing_by_batch(batches: list, n: list, present: dict, missing
         title=("Feature values present and missing per batch" if len(names) == 1
                else "Feature values present and missing per batch, by modality group"),
         barmode="stack", **WHITE_BG, height=(470 if len(names) == 1 else 140 + 230 * len(names)),
-        margin=dict(l=10, r=30, t=70, b=120), legend=dict(BOTTOM_LEGEND), bargap=0.35,
+        margin=dict(l=10, r=30, t=70, b=40), legend=dict(BOTTOM_LEGEND), bargap=0.35,
     )
-    fig.update_xaxes(tickangle=0)
+    # batch labels vertical, so long scanner names never overlap (Oni, 4 November 2026)
+    fig.update_xaxes(tickangle=-90, automargin=True)
     return fig
 
 

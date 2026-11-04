@@ -1310,16 +1310,18 @@ st.caption("Overview of the selected features, one row per participant sorted by
 
 @st.cache_data(show_spinner=False, max_entries=8)
 def _matrix_figure(data_key, rows_key, site_col, covariate_cols, feats, groups, marked,
-                   missing_only, title, _rows_df, order_by_missing=False):
+                   missing_only, title, _rows_df, order_by_missing=False, marked_rows=()):
     """Cached data-matrix figure; the table itself (_rows_df) is identified by the keys."""
     return plot_data_matrix(
         _rows_df, site_col, list(covariate_cols), list(feats),
         modality_groups={g: list(c) for g, c in groups} if groups else None,
         marked_block=(marked[0], list(marked[1])) if marked else None,
-        missing_only=missing_only, title=title, order_by_missing=order_by_missing)
+        missing_only=missing_only, title=title, order_by_missing=order_by_missing,
+        marked_rows=list(marked_rows) or None)
 
 
-def _show_matrix_preview(rows_df, rows_key, feats, title, marked=None, missing_only=None, groups_override=None):
+def _show_matrix_preview(rows_df, rows_key, feats, title, marked=None, missing_only=None, groups_override=None,
+                         marked_rows=()):
     covs = [c for c in [age_col, sex_col] + extra_continuous + extra_categorical
             if c and c in rows_df.columns]
     _src_groups = groups_override or modality_groups
@@ -1330,7 +1332,7 @@ def _show_matrix_preview(rows_df, rows_key, feats, title, marked=None, missing_o
             (marked[0], tuple(marked[1])) if marked else None,
             bool(st.session_state.get("preview_missing_only", False)) if missing_only is None
             else missing_only, title, rows_df,
-            bool(st.session_state.get("preview_order_missing", False)))
+            bool(st.session_state.get("preview_order_missing", False)), tuple(marked_rows))
         st.plotly_chart(fig, use_container_width=True)
         if note:
             st.caption(note)
@@ -1506,8 +1508,6 @@ if _show_miss_tools:
                        "line shows the participants and features still included and the grey dashed line all of "
                        "them before the exclusions; the feature percentages are counted on the participants still "
                        "included.")
-            _f_thr_now = float(st.session_state.get("miss_assess_thr", 10.0) or 0.0)
-            _p_thr_now = float(st.session_state.get("miss_assess_part_thr", 10.0) or 0.0)
             _ck = st.session_state.get("_miss_curve_n", 0)
             _pid_c = id_col
             _excl_rows_set = set(_excl_part_rows)
@@ -1530,6 +1530,23 @@ if _show_miss_tools:
             _p_before = 100 * df[_before_cols].isna().mean(axis=1) if _any_excl else None
             _measure_all = ({c: _col_group.get(c) or _excl_group_of.get(c) or "Not in a group" for c in _before_cols}
                             if modality_groups else None)
+            # suggested thresholds (the widest gap between the sorted missing percentages), from all participants
+            # and features before any exclusion, so they stay the same after an exclusion; the threshold boxes
+            # start at them (Oni, 4 November 2026)
+            _base_f = _f_before if _f_before is not None else feat_pct
+            _base_p = _p_before if _p_before is not None else 100 * df[feats_l].isna().mean(axis=1)
+            _grp_map = _measure_all if (_f_before is not None and _measure_all) else measure_of
+            _gap_f = largest_gap(_base_f)
+            _gap_fg = ({g: largest_gap(_base_f[[c for c in _base_f.index if _grp_map.get(c) == g]]) for g in measures}
+                       if modality_groups else {})
+            _gap_p = largest_gap(_base_p)
+            st.session_state.setdefault("miss_assess_thr", _gap_f["threshold"] if _gap_f else 10.0)
+            st.session_state.setdefault("miss_assess_part_thr", _gap_p["threshold"] if _gap_p else 10.0)
+            for _g, _d in _gap_fg.items():
+                if _d:
+                    st.session_state.setdefault(f"miss_thr_g_{_g}", _d["threshold"])
+            _f_thr_now = float(st.session_state.get("miss_assess_thr", 10.0) or 0.0)
+            _p_thr_now = float(st.session_state.get("miss_assess_part_thr", 10.0) or 0.0)
             _sep = bool(modality_groups) and st.toggle(
                 "One plot per modality group", value=True, key="miss_curve_separate",
                 help="Each modality group in its own plot; off: all groups as lines in one plot.")
@@ -1542,9 +1559,6 @@ if _show_miss_tools:
                          if _thr_by_g else _f_thr_now)
             # a suggested threshold: the widest gap between the sorted missing percentages; any threshold in it
             # excludes the same features (Oni, 4 November 2026)
-            _gap_f = largest_gap(feat_pct)
-            _gap_fg = ({g: largest_gap(feat_pct[[c for c in feats_l if measure_of.get(c) == g]]) for g in measures}
-                       if modality_groups else {})
             st.session_state["_gap_feat_now"] = (_gap_f["lower"], _gap_f["upper"]) if _gap_f else None
             _stable_f = ({g: (d["lower"], d["upper"]) for g, d in _gap_fg.items() if d} if _thr_by_g and _sep
                          else (_gap_f["lower"], _gap_f["upper"]) if _gap_f else None)
@@ -1617,7 +1631,6 @@ if _show_miss_tools:
                               on_click=_record_feature_exclusion,
                               args=(list(_f_over.index), a_thr, _f_over.to_dict(), modality_groups))
             # participants
-            _gap_p = largest_gap(part_pct.loc[_kept_rows])
             st.session_state["_gap_part_now"] = (_gap_p["lower"], _gap_p["upper"]) if _gap_p else None
             _ev_p = st.plotly_chart(plot_missing_curve(part_pct.loc[_kept_rows], None, _p_thr_now,
                                                        kind="participants", before=_p_before,
@@ -1751,24 +1764,14 @@ if _show_miss_tools:
 
             # ── map ──
             st.markdown("**Map of missing values**")
-            # missing values at a glance, as vis_miss in the R package naniar; before or after the data
-            # cleaning in the same place, so the change is seen by switching (Oni, 29 October 2026)
-            _amap = (st.radio("Data shown", ["Before the data cleaning", "After the data cleaning"],
-                              horizontal=True, key="assess_map_stage",
-                              help="Before: every participant and every selected or excluded feature, the excluded "
-                                   "features after their group. After: the participants who enter the "
-                                   "harmonization and the features kept.")
-                     if (_preview_excluded or _excl_part_rows) else "Before the data cleaning")
-            if _amap.startswith("After"):
-                _show_matrix_preview(df.loc[final_rows], ("final", tuple(map(str, final_rows))), feature_cols,
-                                     "Missing values after the data cleaning", missing_only=True)
-            else:
-                _show_matrix_preview(
-                    df, "all", list(feature_cols) + [f for f in _preview_excluded if f not in feature_cols],
-                    "Missing values before the data cleaning" if (_preview_excluded or _excl_part_rows)
-                    else "Missing values", missing_only=True,
-                    marked=("Excluded for missingness", _preview_excluded) if _preview_excluded else None,
-                    groups_override=_preview_groups)
+            # missing values at a glance, as vis_miss in the R package naniar: every participant and feature, with
+            # the excluded features under red bands and the excluded participants marked by a red strip, so one map
+            # shows before and after (Oni, 4 November 2026: no Before/After switch)
+            _show_matrix_preview(
+                df, "all", list(feature_cols) + [f for f in _preview_excluded if f not in feature_cols],
+                "Missing values", missing_only=True,
+                marked=("Excluded for missingness", _preview_excluded) if _preview_excluded else None,
+                groups_override=_preview_groups, marked_rows=tuple(_excl_part_rows))
         except Exception as _miss_err:
             st.error(f"Missing-value assessment could not be generated: {_miss_err}")
 
