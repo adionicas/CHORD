@@ -2033,15 +2033,16 @@ _fin_sizes = _fin_sizes[~_fin_sizes.index.isin(excluded_sites)]
 _one = _fin_sizes[_fin_sizes < _harm_mod.MIN_BATCH_SIZE]
 if len(_one):
     st.warning(
-        (f"**{len(_one)} batches have a single participant in the final sample:** " if len(_one) > 1
-         else "**1 batch has a single participant in the final sample:** ")
+        # Oni's wording, 4 November 2026
+        (f"**{len(_one)} batches have a single participant:** " if len(_one) > 1
+         else "**1 batch has a single participant:** ")
         + ", ".join(f"**{b}**" for b in natural_sorted(_one.index.astype(str)))
-        + ". ComBat needs at least two participants per batch to estimate the batch's variance, so "
+        + ". ComBat needs at least two participants per batch, so "
         + ("these participants are" if len(_one) > 1 else "this participant is")
-        + " left out of the harmonization. This is also documented in the report and in the Methods paragraph. "
-        "Alternatively, exclude " + ("these batches" if len(_one) > 1 else "this batch") + " here, or merge "
-        + ("each" if len(_one) > 1 else "it") + " with a similar batch in your table, for example the same "
-        "scanner with a neighbouring software version."
+        + " not harmonized; this is also documented in the report and the Methods paragraph. You can exclude "
+        + ("these batches" if len(_one) > 1 else "this batch") + " here, or merge "
+        + ("each" if len(_one) > 1 else "it") + " with a similar batch in your table (for example, the same "
+        "scanner with a neighbouring software version)."
     )
 
 if _preview_excluded or excluded_sites or _excl_part_rows:
