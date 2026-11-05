@@ -207,7 +207,7 @@ CHORD requires at least:
 
 ---
 
-ComBat references to include:
+## References
 
 > Johnson WE, Li C, Rabinovic A. Adjusting batch effects in microarray expression data
 > using empirical Bayes methods. *Biostatistics*. 2007;8(1):118–127.
