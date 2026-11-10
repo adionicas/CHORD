@@ -72,6 +72,7 @@ def plot_site_deviation(
     dev_after_ebt: pd.DataFrame,
     dev_after_ebf: pd.DataFrame | None = None,
     site_n: dict | None = None,
+    batch_numbers: dict | None = None,
 ) -> go.Figure:
     """
     Box + jitter of site mean z-scores per site.
@@ -137,14 +138,16 @@ def plot_site_deviation(
                       opacity=0.4, row=1, col=col_idx)
         fig.update_xaxes(
             tickmode="array", tickvals=list(range(n_sites)),
-            ticktext=([f"Batch {i + 1}" for i in range(n_sites)] if use_numbers
+            # batch_numbers: one numbering for every figure, with the key shown once in the app and report
+            # instead of under each figure (Oni, 9 November 2026)
+            ticktext=([f"Batch {(batch_numbers or {}).get(s, i + 1)}" for i, s in enumerate(sites)] if use_numbers
                       else [_full_label(s) for s in sites]),
             tickangle=(-90 if use_numbers else 45),
             tickfont=dict(size=tick_size), row=1, col=col_idx,
         )
 
     n_key_lines = 0
-    if use_numbers:
+    if use_numbers and not batch_numbers:
         parts = [f"Batch {i + 1} = {s}" + (f" (n={site_n[s]})" if site_n and s in site_n else "")
                  for i, s in enumerate(sites)]
         key_lines = ["      ".join(parts[k:k + 2]) for k in range(0, len(parts), 2)]
@@ -160,7 +163,7 @@ def plot_site_deviation(
         title="Batch mean deviation from grand mean (z-scored per feature)" + (_sample_note(_n_max, _cap) if _n_max else ""),
         height=(430 if use_numbers else 480) + (13 * n_key_lines if use_numbers else 0), **WHITE_BG,
         showlegend=False,
-        margin=dict(b=(150 + 13 * n_key_lines) if use_numbers else 90),
+        margin=dict(b=(150 + 13 * n_key_lines) if use_numbers and n_key_lines else 100 if use_numbers else 90),
     )
     return fig
 
@@ -538,6 +541,7 @@ def plot_icc_by_site(
     icc_by_site_ebt: pd.DataFrame,
     icc_by_site_ebf: pd.DataFrame | None = None,
     site_n: dict | None = None,
+    batch_numbers: dict | None = None,
 ) -> go.Figure:
     """
     site_n: dict mapping site name -> participant count, used for x-axis labels.
@@ -665,7 +669,7 @@ def plot_icc_by_site(
         fig.update_xaxes(
             tickmode="array",
             tickvals=list(range(len(sites))),
-            ticktext=([str(i + 1) for i in range(n_sites)] if use_numbers
+            ticktext=([str((batch_numbers or {}).get(s, i + 1)) for i, s in enumerate(sites)] if use_numbers
                       else [_site_label(s) for s in sites]),
             tickangle=0 if use_numbers else -90,
             tickfont=dict(size=tick_size),
@@ -674,7 +678,7 @@ def plot_icc_by_site(
 
     # Site key when the sites are numbered
     n_key_lines = 0
-    if use_numbers:
+    if use_numbers and not batch_numbers:
         parts = [
             f"Batch {i + 1} = {s}" + (f" (n={site_n[s]})" if site_n and s in site_n else "")
             for i, s in enumerate(sites)
@@ -690,7 +694,7 @@ def plot_icc_by_site(
 
     # room below the plot for the turned labels, then the legend
     _label_px = int(0.62 * tick_size * max((len(str(_site_label(s_))) for s_ in sites), default=0))
-    bottom   = (150 + 22 * n_key_lines) if use_numbers else 80 + _label_px
+    bottom   = (150 + 22 * n_key_lines) if use_numbers and n_key_lines else 110 if use_numbers else 80 + _label_px
     fig.update_yaxes(title_text="ICC(3,1)", range=[0, 1.08], row=1, col=1)
     fig.update_layout(
         title="Within-batch consistency by batch, ICC(3,1) (Koo & Li 2016)"

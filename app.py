@@ -2125,6 +2125,30 @@ use_fdr = st.checkbox(
     ),
 )
 
+# Figures with one value per region when the features are many values of the same region, such as the 100
+# nodes of an AFQ tract profile (Oni, 9 November 2026). The harmonization, tables and numbers stay per feature.
+fig_regions = {}
+if st.checkbox("In the figures, show one value per region (for example each tract's mean over its nodes)",
+               key="fig_regions_on",
+               help="For tables with several values per region, such as tract profiles (100 nodes per tract). "
+                    "The figures are then computed on each region's mean over its features; the harmonization, "
+                    "the tables and the numbers in the text stay per feature."):
+    _pat = st.text_input("Part of each feature name to drop to get its region (regular expression)",
+                         value=r"_node\d+$", key="fig_regions_pattern",
+                         help=r"For example _node\d+$ turns AD_left_arcuate_node001 into AD_left_arcuate.")
+    try:
+        fig_regions = {f: re.sub(_pat, "", f) or f for f in feature_cols} if _pat else {}
+    except re.error as _e:
+        st.error(f"Not a valid regular expression: {_e}")
+        fig_regions = {}
+    _n_reg = len(set(fig_regions.values()))
+    if fig_regions and _n_reg < len(feature_cols):
+        _ex = next(iter(fig_regions.items()))
+        st.caption(f"{len(feature_cols)} features in {_n_reg} regions; for example {_ex[0]} belongs to {_ex[1]}.")
+    else:
+        st.caption("This pattern does not join any features into regions, so the figures stay per feature.")
+        fig_regions = {}
+
 assoc_cont_vars, assoc_cat_vars = [], []
 if include_extra_assoc:
     ea_c1, ea_c2 = st.columns(2)
@@ -2351,20 +2375,64 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True,
 
         # ── Figures ────────────────────────────────────────────────────────
         progress.progress(87, "Generating figures...")
+        # one value per region in the figures (each region's mean over its features), when asked; the tables and
+        # the numbers in the text keep the per-feature results (Oni, 9 November 2026)
+        F = dict(dev_before=dev_before, dev_ebt=dev_ebt, dev_ebf=dev_ebf, anc_before=anc_before,
+                 anc_ebt=anc_ebt, anc_ebf=anc_ebf, icc_site_ebt=icc_site_ebt, icc_site_ebf=icc_site_ebf,
+                 age_all=age_all, groups={g: [c for c in cols if c in set(feature_cols)]
+                                          for g, cols in (modality_groups or {}).items()})
+        fig_region_note = ""
+        if fig_regions:
+            progress.progress(87, "Computing the region means for the figures...")
+            _regs = list(dict.fromkeys(fig_regions[f] for f in feature_cols))
+            _members = {r: [f for f in feature_cols if fig_regions[f] == r] for r in _regs}
+
+            def _rmean(d):
+                if d is None:
+                    return None
+                return pd.concat([d.drop(columns=feature_cols, errors="ignore"),
+                                  pd.DataFrame({r: d[m].mean(axis=1) for r, m in _members.items()}, index=d.index)],
+                                 axis=1)
+            R0, R1, R2 = _rmean(df_harm), _rmean(harm_ebt), _rmean(harm_ebf)
+            _rgrp = ({r: _feature_group.get(m[0]) for r, m in _members.items()} if _feature_group else None)
+            F["dev_before"] = site_mean_deviation(R0, _regs, site_col)
+            F["dev_ebt"] = site_mean_deviation(R1, _regs, site_col) if R1 is not None else None
+            F["dev_ebf"] = site_mean_deviation(R2, _regs, site_col) if R2 is not None else None
+            if include_cohens_f:
+                F["anc_before"] = ancova_site_effect(R0, _regs, site_col, age_used, sex_used, "Before")
+                F["anc_ebt"] = ancova_site_effect(R1, _regs, site_col, age_used, sex_used, "EB=TRUE") if R1 is not None else None
+                F["anc_ebf"] = ancova_site_effect(R2, _regs, site_col, age_used, sex_used, "EB=FALSE") if R2 is not None else None
+            if include_icc_by_site:
+                F["icc_site_ebt"] = compute_icc_by_site(R0, R1, _regs, site_col) if R1 is not None else None
+                F["icc_site_ebf"] = compute_icc_by_site(R0, R2, _regs, site_col) if R2 is not None else None
+            if include_age_corr and age_col and len(age_all) > 0:
+                _ap = [age_correlations(R0, _regs, age_col, "Before harmonization", use_fdr=use_fdr, feature_group=_rgrp)]
+                if R1 is not None: _ap.append(age_correlations(R1, _regs, age_col, "After (EB=TRUE)", use_fdr=use_fdr, feature_group=_rgrp))
+                if R2 is not None: _ap.append(age_correlations(R2, _regs, age_col, "After (EB=FALSE)", use_fdr=use_fdr, feature_group=_rgrp))
+                F["age_all"] = pd.concat(_ap, ignore_index=True)
+            F["groups"] = {g: list(dict.fromkeys(fig_regions[c] for c in cols)) for g, cols in F["groups"].items() if cols}
+            fig_region_note = (f"In the figures, each point is a region: the mean over its features ({len(feature_cols)} "
+                               f"features in {len(_regs)} regions; region = feature name without the pattern "
+                               f"{st.session_state.get('fig_regions_pattern', '')}). The tables and the numbers in "
+                               f"the text are per feature.")
+        # one numbering of the batches for every figure; the key is shown once (Oni, 9 November 2026)
+        batch_numbers = {b: i + 1 for i, b in enumerate(natural_sorted(df_harm[site_col].dropna().astype(str).unique()))}
+        batch_key_df = pd.DataFrame({"Batch": list(batch_numbers.values()), "Name": list(batch_numbers.keys()),
+                                     "n": [int((df_harm[site_col].astype(str) == b).sum()) for b in batch_numbers]})
         site_n = df_harm[site_col].value_counts().to_dict()
         # per-site counts AFTER complete-case filtering (what ICC-by-site sees)
         site_n_complete = (harm_primary[site_col].astype(str).value_counts().to_dict()
                            if harm_primary is not None else {})
-        fig_site = plot_site_deviation(dev_before,
-                                       dev_ebt if dev_ebt is not None else pd.DataFrame(),
-                                       dev_ebf,
-                                       site_n=site_n)
+        fig_site = plot_site_deviation(F["dev_before"],
+                                       F["dev_ebt"] if F["dev_ebt"] is not None else pd.DataFrame(),
+                                       F["dev_ebf"],
+                                       site_n=site_n, batch_numbers=batch_numbers)
 
         fig_anc = None
         if include_cohens_f and anc_before is not None:
-            fig_anc = plot_cohens_f(anc_before,
-                                    anc_ebt if anc_ebt is not None else pd.DataFrame(),
-                                    anc_ebf)
+            fig_anc = plot_cohens_f(F["anc_before"],
+                                    F["anc_ebt"] if F["anc_ebt"] is not None else pd.DataFrame(),
+                                    F["anc_ebf"])
 
         fig_icc = None  # overall ICC bar chart removed; ICC is within-batch only
 
@@ -2372,7 +2440,7 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True,
 
         fig_age = None
         if include_age_corr and len(age_all) > 0:
-            fig_age = plot_age_correlations(age_all)
+            fig_age = plot_age_correlations(F["age_all"])
 
         site_n = df.groupby(site_col)[site_col].count().to_dict()
         site_n = {str(k): int(v) for k, v in site_n.items()}
@@ -2380,9 +2448,9 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True,
         _have_site_icc = ((icc_site_ebt is not None and len(icc_site_ebt) > 0)
                           or (icc_site_ebf is not None and len(icc_site_ebf) > 0))
         fig_icc_site = plot_icc_by_site(
-            icc_site_ebt if icc_site_ebt is not None else pd.DataFrame(),
-            icc_site_ebf,
-            site_n=site_n,
+            F["icc_site_ebt"] if F["icc_site_ebt"] is not None else pd.DataFrame(),
+            F["icc_site_ebf"],
+            site_n=site_n, batch_numbers=batch_numbers,
         ) if (_have_site_icc and include_icc_by_site) else None
 
         fig_extra_assoc = None
@@ -2402,7 +2470,7 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True,
                 return d
             return pd.concat([_apply_significance(sub, use_fdr=not use_fdr, feature_group=_feature_group)
                               for _, sub in d.groupby(by, sort=False)], ignore_index=True)
-        age_alt = _resig(age_all, ["harmonization"])
+        age_alt = _resig(F["age_all"], ["harmonization"])
         extra_alt = _resig(extra_assoc_df, ["harmonization", "variable"])
         fig_age_alt = plot_age_correlations(age_alt) if fig_age is not None else None
         for _it in extra_assoc_figs:
@@ -2411,8 +2479,7 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True,
         # With modality groups each group is harmonized on its own, so every figure is also drawn once per
         # group (Oni, 29 October 2026: "a separate plot for each modality"); the pooled figures stay for the app.
         group_figs = {}
-        result_groups = {g: [c for c in cols if c in set(feature_cols)] for g, cols in (modality_groups or {}).items()}
-        result_groups = {g: c for g, c in result_groups.items() if c}
+        result_groups = {g: c for g, c in F["groups"].items() if c}
         if len(result_groups) > 1:
             def _only(d, cols):
                 return (d[d["feature"].isin(cols)]
@@ -2427,19 +2494,19 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True,
             for _g, _cols in result_groups.items():
                 try:
                     group_figs.setdefault("fig_site_dev", []).append((_g, _titled(plot_site_deviation(
-                        _only(dev_before, _cols), _only(dev_ebt, _cols) if dev_ebt is not None else pd.DataFrame(),
-                        _only(dev_ebf, _cols), site_n=_site_n_dev), _g)))
+                        _only(F["dev_before"], _cols), _only(F["dev_ebt"], _cols) if F["dev_ebt"] is not None else pd.DataFrame(),
+                        _only(F["dev_ebf"], _cols), site_n=_site_n_dev, batch_numbers=batch_numbers), _g)))
                     if fig_anc is not None:
                         group_figs.setdefault("fig_cohens_f", []).append((_g, _titled(plot_cohens_f(
-                            _only(anc_before, _cols), _only(anc_ebt, _cols) if anc_ebt is not None else pd.DataFrame(),
-                            _only(anc_ebf, _cols)), _g)))
+                            _only(F["anc_before"], _cols), _only(F["anc_ebt"], _cols) if F["anc_ebt"] is not None else pd.DataFrame(),
+                            _only(F["anc_ebf"], _cols)), _g)))
                     if fig_icc_site is not None:
                         group_figs.setdefault("fig_icc_site", []).append((_g, _titled(plot_icc_by_site(
-                            _only(icc_site_ebt, _cols) if icc_site_ebt is not None else pd.DataFrame(),
-                            _only(icc_site_ebf, _cols), site_n=site_n), _g)))
+                            _only(F["icc_site_ebt"], _cols) if F["icc_site_ebt"] is not None else pd.DataFrame(),
+                            _only(F["icc_site_ebf"], _cols), site_n=site_n, batch_numbers=batch_numbers), _g)))
                     if fig_age is not None:
                         group_figs.setdefault("fig_age", []).append(
-                            (_g, _titled(plot_age_correlations(_only(age_all, _cols)), _g)))
+                            (_g, _titled(plot_age_correlations(_only(F["age_all"], _cols)), _g)))
                         group_figs.setdefault("fig_age_alt", []).append(
                             (_g, _titled(plot_age_correlations(_only(age_alt, _cols)), _g)))
                     for _it in extra_assoc_figs:
@@ -2575,6 +2642,7 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True,
         recoded_text = ("The following values were recoded as missing before harmonization: "
                         + "; ".join(f"{c} = {v} (n = {n})" for c, v, n in recoded) + ".") if recoded else ""
         html_report = generate_report(
+            batch_key_df=batch_key_df, fig_region_note=fig_region_note,
             cleaning_df=cleaning_summary, fig_clean_feat=fig_clean_feat, fig_clean_part=fig_clean_part,
             fig_map_before=fig_map_before, fig_map_after=fig_map_after,
             recoded_text=recoded_text, keep_imputed=(missing_mode == "impute" and keep_imputed),
@@ -2658,32 +2726,8 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True,
                      .to_csv(index=False).encode() if harm_primary is not None else None)
 
 
-        # the files of this run also go to static/results/<token>/, served by Streamlit, so "Download all" can
-        # fetch them one after another without the page redrawing between them (a redraw drops the download
-        # buttons' files: Oni's browser got "file not found", 4 November 2026); older runs' files are removed
-        import secrets as _secrets, shutil as _shutil
-        from pathlib import Path
-        _res_root = Path(__file__).resolve().parent / "static" / "results"
-        try:
-            if _res_root.exists():
-                for _old in _res_root.iterdir():
-                    _shutil.rmtree(_old, ignore_errors=True)
-            _tok = _secrets.token_hex(16)
-            (_res_root / _tok).mkdir(parents=True, exist_ok=True)
-            _served = []
-            for _nm, _b in ((f"{data_stem}_harmonization_report.html", html_report.encode("utf-8")),
-                            (f"{data_stem}_harmonized_EBT.csv", harm_csv_ebt),
-                            (f"{data_stem}_harmonized_EBF.csv", harm_csv_ebf),
-                            (f"{data_stem}_cleaned.csv", clean_csv)):
-                if _b:
-                    (_res_root / _tok / _nm).write_bytes(_b)
-                    _served.append(f"app/static/results/{_tok}/{_nm}")
-        except OSError:
-            _served = []
-
         st.session_state.update(dict(
             results_ready=True,
-            served_files=_served,
             _scroll_to_results=True,
             methods_para=methods_para,
             fig_site=fig_site, fig_icc=fig_icc,
@@ -2707,6 +2751,7 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True,
             no_eb_features=no_eb_features,
             blank_features=blank_features,
             small_batch_note=small_batch_note,
+            batch_key_df=batch_key_df, fig_region_note=fig_region_note,
         ))
 
     except Exception as e:
@@ -2717,27 +2762,7 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True,
 def _download_buttons(where):
     """The report and the harmonized tables. Shown at the top of the Results and again at the end,
     so they never depend on scrolling to the end of a long page (Oni, 29 October 2026)."""
-    if where == "top" and st.session_state.get("served_files"):
-        # one button that downloads every file separately, no ZIP (Oni, 4 November 2026): the files are fetched
-        # from static/results, so the page is not redrawn between them; the browser asks once to allow them
-        import json as _json
-        import streamlit.components.v1 as _cmp
-        _cmp.html("""<button id="all" style="width:100%;padding:9px 0;border-radius:8px;border:0;cursor:pointer;
-background:#FF4B4B;color:#fff;font:600 15px 'Source Sans Pro',-apple-system,system-ui,sans-serif">
-⬇&nbsp; Download all (report, harmonized data, cleaned data)</button>
-<script>
-var files = """ + _json.dumps(st.session_state["served_files"]) + """;
-document.getElementById('all').onclick = function () {
-  var base = window.parent.location.origin + window.parent.location.pathname.replace(/[^/]*$/, '');
-  files.forEach(function (f, i) {
-    setTimeout(function () {
-      var a = window.parent.document.createElement('a');
-      a.href = base + f; a.download = f.split('/').pop();
-      window.parent.document.body.appendChild(a); a.click(); a.remove();
-    }, 800 * i);
-  });
-};
-</script>""", height=48)
+    # "Download all" removed: browsers blocked or lost the second and later files (Oni, 9 November 2026)
     dl1, dl2, dl3, dl4 = st.columns(4)
     with dl1:
         st.download_button(
@@ -2794,6 +2819,13 @@ if st.session_state.get("results_ready"):
                "same buttons are also at the end of the page. Features excluded for missing values are not in "
                "these tables; the report lists them.")
     _download_buttons("top")
+    _bk = st.session_state.get("batch_key_df")
+    if isinstance(_bk, pd.DataFrame) and (len(_bk) > 12 or _bk["Name"].astype(str).str.len().max() > 16):
+        # the batch numbers used in every figure, shown once (Oni, 9 November 2026)
+        with st.expander(f"Batch key: the batch numbers used in the figures ({len(_bk)} batches)"):
+            st.dataframe(_bk, use_container_width=True, hide_index=True, height=min(38 + 35 * len(_bk), 400))
+    if st.session_state.get("fig_region_note"):
+        st.info(st.session_state["fig_region_note"])
     if st.session_state.pop("_scroll_to_results", False):
         # once, right after a run: bring the Results into view instead of leaving the page where the Run button was
         from streamlit.components.v1 import html as _html_component

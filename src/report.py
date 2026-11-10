@@ -103,8 +103,14 @@ def _format_feature_list(features):
 # Plotly → HTML snippet (interactive) or PNG img tag (for PDF)
 # ─────────────────────────────────────────────────────────────────────────────
 def _fig_html(fig):
-    return pio.to_html(fig, full_html=False, include_plotlyjs=False,
-                       config={"responsive": True})
+    """A figure drawn only when it is scrolled into view, so a long report opens and scrolls quickly
+    (Oni, 9 November 2026: the report was slow, most around the age associations)."""
+    import uuid
+    fid = "f" + uuid.uuid4().hex[:12]
+    height = int(fig.layout.height or 450)
+    data = fig.to_json().replace("</", "<\\/")
+    return (f'<div class="lazy-fig" id="{fid}" style="min-height:{height}px"></div>'
+            f'<script type="application/json" class="fig-data" data-for="{fid}">{data}</script>')
 
 
 def _figs_html(group_figs, key, pooled):
@@ -200,9 +206,12 @@ def _data_prep_tables(excl_feat_html, overview, excl_part_list):
 
         def excluded(n, t):
             return f"{n} (threshold {t:g}%)" if n and t is not None else str(n or 0)
+        # no feature excluded: no feature threshold was applied, so none is reported (Oni, 9 November 2026)
+        feat_used = bool(overview.get("feat_excl"))
         ov = pd.DataFrame([
             {"": "Features", "Total": overview["n_features"],
-             "Above threshold": f"{overview['feat_over']} (missing data in > {thr:g}% of participants)",
+             "Above threshold": (f"{overview['feat_over']} (missing data in > {thr:g}% of participants)"
+                                 if feat_used else "No feature threshold applied"),
              "Excluded": (f"{overview['feat_excl']} (threshold per modality group: {overview['feat_excl_text']})"
                                       if overview.get("feat_excl_text") and overview["feat_excl"]
                                       else excluded(overview["feat_excl"], overview["feat_excl_thr"]))},
@@ -212,20 +221,28 @@ def _data_prep_tables(excl_feat_html, overview, excl_part_list):
         ])
         overview_label = table(
             "Missing values before harmonization.", _df_table(ov),
-            f"Computed across all {overview['n_participants']} uploaded participants. For features, the "
-            f"{overview['n_features']} selected features, including those subsequently excluded, were considered; "
-            f"a feature exceeded the threshold when data were missing for more than {thr:g}% of participants. "
-            f"For participants, the {overview.get('n_features_kept', overview['n_features'])} features retained "
+            f"Computed across all {overview['n_participants']} uploaded participants. "
+            + (f"For features, the {overview['n_features']} selected features, including those subsequently "
+               f"excluded, were considered; a feature exceeded the threshold when data were missing for more than "
+               f"{thr:g}% of participants. " if feat_used else "No feature was excluded because of missing data. ")
+            + f"For participants, the {overview.get('n_features_kept', overview['n_features'])} features retained "
             f"after feature exclusion were considered, as in the participant exclusion; a participant exceeded "
             f"the threshold when data were missing for more than {pthr:g}% of these features.")
         if overview.get("by_group"):
+            _bg = pd.DataFrame(overview["by_group"])
+            if not feat_used:
+                _bg = _bg[[c for c in _bg.columns if not str(c).startswith("More than")]]
             table("Missing values per modality group before harmonization.",
-                  _df_table(pd.DataFrame(overview["by_group"]), float_fmt=1),
+                  _df_table(_bg, float_fmt=1),
                   "Modality groups as defined by the user, including the features subsequently excluded; "
                   "computed across all uploaded participants.")
     if excl_part_list:
+        # most missing first (Oni, 9 November 2026)
+        _pl = pd.DataFrame(excl_part_list)
+        if "Features missing (%)" in _pl.columns:
+            _pl = _pl.sort_values("Features missing (%)", ascending=False, kind="stable")
         part_label = table("Participants excluded due to missingness.",
-                           _df_table(pd.DataFrame(excl_part_list), float_fmt=1),
+                           _df_table(_pl, float_fmt=1),
                            "Participants listed above were left out of harmonization because they missed "
                            "more than the user-specified share of the selected features. Features missing is "
                            "given as a percentage and a count, overall and per modality group when groups were "
@@ -750,6 +767,13 @@ TEMPLATE = """<!DOCTYPE html>
 
 <!-- ─────────────────────────────────────── S4 ──────────────────────────── -->
 <h2>S4. Results</h2>
+{% if fig_region_note %}<p>{{ fig_region_note }}</p>{% endif %}
+{% if batch_key_table %}
+<p class="table-title">Batch key.</p>
+{{ batch_key_table }}
+<p class="table-note"><em>Note.</em> The figures number the batches as listed here; <em>n</em> = participants entering
+the harmonization.</p>
+{% endif %}
 {% if per_group_figs %}
 <p>
   Because each modality group was harmonized separately, each figure in this section shows one plot per modality
@@ -992,31 +1016,67 @@ TEMPLATE = """<!DOCTYPE html>
 {% endif %}
 
 <!-- ─────────────────────────────────────── Refs ────────────────────────── -->
-<div id="ptsize" style="position:fixed;bottom:14px;right:14px;z-index:50;background:rgba(255,255,255,.95);
-border:1px solid #ccc;border-radius:8px;padding:6px 10px;font:13px Arial,sans-serif">
-  Point size <input type="range" id="ptsz" min="0.25" max="3" step="0.25" value="1" style="vertical-align:middle;width:110px">
-  <span id="ptszv">1&#215;</span>
-</div>
+<style>
+.ptsz{font:12.5px Arial,sans-serif;color:#555;margin:4px 0 -4px;text-align:right}
+.ptsz input{vertical-align:middle;width:100px}
+table.data-table th{cursor:pointer}
+</style>
 <script>
-// one slider for the size of the points in every figure (Oni, 4 November 2026)
+// figures are drawn when they come into view, each with its own point-size slider (Oni, 9 November 2026)
 (function () {
-  var s = document.getElementById('ptsz'), v = document.getElementById('ptszv');
-  function apply(f) {
-    v.textContent = f + '\u00d7';
-    document.querySelectorAll('.js-plotly-plot').forEach(function (gd) {
-      if (!gd.data) return;
+  function addSize(gd) {
+    var pts = function (t) { return t.marker && t.marker.size !== undefined &&
+                                    ((t.mode || '').indexOf('markers') >= 0 || t.type === 'box'); };
+    if (!(gd.data || []).some(pts)) return;
+    var w = document.createElement('div'); w.className = 'ptsz';
+    w.innerHTML = 'Point size <input type="range" min="0.25" max="3" step="0.25" value="1"> <span>1&#215;</span>';
+    gd.parentNode.insertBefore(w, gd);
+    var inp = w.querySelector('input'), lab = w.querySelector('span'), orig = {};
+    inp.addEventListener('input', function () {
+      var f = parseFloat(inp.value); lab.textContent = f + '\u00d7';
       gd.data.forEach(function (t, i) {
-        var m = t.marker; if (!m || m.size === undefined) return;
-        if (!(t.mode || '').includes('markers') && t.type !== 'box') return;
-        if (gd._sz0 === undefined) gd._sz0 = {};
-        if (gd._sz0[i] === undefined) gd._sz0[i] = m.size;
-        var o = gd._sz0[i];
-        var ns = Array.isArray(o) ? o.map(function (x) { return x * f; }) : o * f;
-        Plotly.restyle(gd, {'marker.size': [ns]}, [i]);
+        if (!pts(t)) return;
+        if (orig[i] === undefined) orig[i] = t.marker.size;
+        var o = orig[i];
+        Plotly.restyle(gd, {'marker.size': [Array.isArray(o) ? o.map(function (x) { return x * f; }) : o * f]}, [i]);
       });
     });
   }
-  s.addEventListener('input', function () { apply(parseFloat(s.value)); });
+  function draw(div) {
+    if (div.dataset.drawn) return; div.dataset.drawn = '1';
+    var s = document.querySelector('script.fig-data[data-for="' + div.id + '"]');
+    if (!s) return;
+    var f = JSON.parse(s.textContent);
+    Plotly.newPlot(div, f.data, f.layout, {responsive: true}).then(function (gd) { div.style.minHeight = ''; addSize(gd); });
+  }
+  var figs = document.querySelectorAll('.lazy-fig');
+  if (!('IntersectionObserver' in window)) { figs.forEach(draw); return; }
+  var io = new IntersectionObserver(function (es) {
+    es.forEach(function (e) { if (e.isIntersecting) { io.unobserve(e.target); draw(e.target); } });
+  }, {rootMargin: '400px'});
+  figs.forEach(function (d) { io.observe(d); });
+})();
+// every table sorts by a click on a column header (Oni, 9 November 2026)
+(function () {
+  document.querySelectorAll('table.data-table').forEach(function (t) {
+    var head = t.tHead; if (!head || !t.tBodies.length) return;
+    var ths = head.rows[head.rows.length - 1].cells;
+    [].forEach.call(ths, function (th, ci) {
+      th.title = 'Click to sort';
+      th.addEventListener('click', function () {
+        var tb = t.tBodies[0], rows = [].slice.call(tb.rows), asc = th.dataset.asc !== '1';
+        th.dataset.asc = asc ? '1' : '0';
+        rows.sort(function (a, b) {
+          var x = (a.cells[ci] || {}).textContent || '', y = (b.cells[ci] || {}).textContent || '';
+          var nx = parseFloat(x), ny = parseFloat(y);
+          var c = (!isNaN(nx) && !isNaN(ny)) ? nx - ny : x.trim().localeCompare(y.trim(), undefined, {numeric: true});
+          return asc ? c : -c;
+        });
+        var last = rows.filter(function (r) { return /^(Total|Overall)$/.test((r.cells[0] || {}).textContent.trim()); });
+        rows.filter(function (r) { return last.indexOf(r) < 0; }).concat(last).forEach(function (r) { tb.appendChild(r); });
+      });
+    });
+  });
 })();
 </script>
 <script>
@@ -1280,6 +1340,8 @@ def generate_report(
     keep_imputed=False,
     cleaning_df=None,
     fig_clean_feat=None,
+    batch_key_df=None,
+    fig_region_note="",
     fig_clean_part=None,
     fig_map_before=None,
     fig_map_after=None,
@@ -1346,6 +1408,11 @@ def generate_report(
                                                                  "Kept, n (%)": "Retained, n (%)"}))
                                 if cleaning_df is not None and len(cleaning_df) else None),
         fig_clean_feat       = _fig_html(fig_clean_feat) if fig_clean_feat is not None else None,
+        batch_key_table      = (_collapsed(_df_table(batch_key_df, max_rows=10_000),
+                                           f"Show the batch key ({len(batch_key_df)} batches)")
+                                if batch_key_df is not None and (len(batch_key_df) > 12 or
+                                    batch_key_df["Name"].astype(str).str.len().max() > 16) else ""),
+        fig_region_note      = fig_region_note,
         fig_clean_part       = _fig_html(fig_clean_part) if fig_clean_part is not None else None,
         fig_map_before       = _fig_html(fig_map_before) if fig_map_before is not None else None,
         fig_map_after        = _fig_html(fig_map_after) if fig_map_after is not None else None,
