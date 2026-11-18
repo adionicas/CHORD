@@ -1471,7 +1471,22 @@ if _show_miss_tools:
                "them; nothing is changed or excluded.")
     if st.button("Assess missing values"):
         st.session_state["_miss_assess_on"] = True   # stays open until hidden
-    if st.session_state.get("_miss_assess_on"):
+        st.session_state["_miss_assess_anyway"] = False
+    # With no missing value in the selected features, ask first instead of drawing empty curves and maps
+    # (Oni, 18 November 2026)
+    _feat_none_missing = bool(len(feature_cols)) and not df[list(feature_cols)].isna().any().any()
+    if (st.session_state.get("_miss_assess_on") and _feat_none_missing
+            and not st.session_state.get("_miss_assess_anyway")):
+        st.info("The selected features do not have missing values. "
+                "Are you sure you still want to run the assessment?")
+        _ma1, _ma2 = st.columns(2)
+        with _ma1:
+            st.button("Run the assessment anyway", key="miss_assess_anyway",
+                      on_click=lambda: st.session_state.update(_miss_assess_anyway=True))
+        with _ma2:
+            st.button("Hide the missing-value assessment", key="miss_assess_hide_ask",
+                      on_click=lambda: st.session_state.update(_miss_assess_on=False))
+    elif st.session_state.get("_miss_assess_on"):
         st.button("Hide the missing-value assessment",
                   on_click=lambda: st.session_state.update(_miss_assess_on=False))
         try:
@@ -2726,8 +2741,20 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True,
                         if harm_ebt is not None else None)
         harm_csv_ebf = (harm_ebf.drop(columns=_drop_out, errors="ignore").to_csv(index=False).encode()
                         if harm_ebf is not None else None)
+        # The cleaned table is offered only when cleaning changed it from the uploaded table (Oni, 18 November
+        # 2026: "downloading clean data should not be an option if data cleaning has not been run"): batches,
+        # participants or features excluded, participants left out of the harmonization (missing batch or
+        # covariates, complete case, a batch of one), or values set to missing. Median imputation is not
+        # counted: it happens inside the harmonization only, so it never changes this table.
+        _rows_left_out = (len(df_harm) - len(harm_primary.index)) if harm_primary is not None else 0
+        clean_steps = [s for s, on in (
+            (f"{len(excluded_sites)} batch(es) excluded", bool(excluded_sites)),
+            (f"{len(_excl_part_rows)} participant(s) excluded for missing values", bool(_excl_part_rows)),
+            (f"{len(_drop_out)} feature(s) excluded for missing values", bool(_drop_out)),
+            (f"{_rows_left_out} participant(s) left out of the harmonization", _rows_left_out > 0),
+            ("values set to missing", bool(recoded))) if on]
         clean_csv = (df_harm.loc[harm_primary.index].drop(columns=_drop_out, errors="ignore")
-                     .to_csv(index=False).encode() if harm_primary is not None else None)
+                     .to_csv(index=False).encode() if harm_primary is not None and clean_steps else None)
 
 
         st.session_state.update(dict(
@@ -2745,7 +2772,7 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True,
             run_ebt=run_ebt, run_ebf=run_ebf,
             harm_csv_ebt=harm_csv_ebt,
             harm_csv_ebf=harm_csv_ebf,
-            clean_csv=clean_csv,
+            clean_csv=clean_csv, clean_steps=clean_steps,
             include_cohens_f=include_cohens_f,
             include_icc_by_site=include_icc_by_site,
             include_age_corr=include_age_corr,
@@ -2810,7 +2837,8 @@ def _download_buttons(where):
                 use_container_width=True,
                 key=f"dl_clean_{where}",
             )
-            st.caption("The same participants and features as the harmonized data, before harmonization")
+            st.caption("The same participants and features as the harmonized data, before harmonization ("
+                       + "; ".join(st.session_state.get("clean_steps") or []) + ")")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2820,9 +2848,12 @@ if st.session_state.get("results_ready"):
 
     st.divider()
     st.subheader("Results")
-    st.caption("Download the report, the harmonized data and the cleaned data before harmonization here; the "
-               "same buttons are also at the end of the page. Features excluded for missing values are not in "
-               "these tables; the report lists them.")
+    st.caption(("Download the report, the harmonized data and the cleaned data before harmonization here; the "
+                if st.session_state.get("clean_csv") else
+                "Download the report and the harmonized data here (no cleaned table: nothing was excluded or set "
+                "to missing in this run); the ")
+               + "same buttons are also at the end of the page. Features excluded for missing values are not in "
+                 "these tables; the report lists them.")
     _download_buttons("top")
     _bk = st.session_state.get("batch_key_df")
     if isinstance(_bk, pd.DataFrame) and (len(_bk) > 12 or _bk["Name"].astype(str).str.len().max() > 16):
