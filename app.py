@@ -30,7 +30,7 @@ from src.plots     import (plot_site_deviation, plot_spearman, plot_icc, plot_da
                            plot_extra_associations, plot_single_association,
                            plot_icc_ci_compare, plot_missing_curve,
                            plot_present_missing_by_batch)
-from src.report    import generate_report, build_methods_paragraph, data_prep_sentence
+from src.report    import generate_report, build_methods_paragraph, data_prep_sentence, methods_texts, methods_plain
 
 # ── Update this URL once the repo is live ─────────────────────────────────
 GITHUB_URL = "https://github.com/adionicas/CHORD"
@@ -2641,7 +2641,35 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True,
             st.warning(f"The data cleaning figures could not be added to the report: {_clean_err}")
         recoded_text = ("The following values were recoded as missing before harmonization: "
                         + "; ".join(f"{c} = {v} (n = {n})" for c, v, n in recoded) + ".") if recoded else ""
+        _methods_kwargs = dict(
+            site_col=site_col, age_col=age_col, sex_col=sex_col,
+            run_ebf=(run_ebf and harm_ebf is not None),
+            github_url=GITHUB_URL,
+            extra_continuous=extra_continuous,
+            extra_categorical=extra_categorical,
+            covariates_cont=continuous_covariates,
+            covariates_cat=categorical_covariates,
+            ancova_covars=[c for c in (age_used, sex_used) if c],
+            include_age=(include_age_corr and bool(age_col)),
+            include_cohens_f=include_cohens_f,
+            include_icc_by_site=include_icc_by_site,
+            include_extra_assoc=(include_extra_assoc and len(extra_assoc_df) > 0),
+            assoc_cont_vars=assoc_cont_vars,
+            assoc_cat_vars=assoc_cat_vars,
+            data_prep_text=" ".join(x for x in (recoded_text, (
+                f"Batches with a single participant ({', '.join(_small_labels)}) were excluded "
+                f"(n = {len(_small_rows)}), because ComBat requires at least two participants per batch."
+                if len(_small_rows) else ""), data_prep_sentence(
+                missing_overview, st.session_state.get("_excl_info"),
+                st.session_state.get("_excl_part_info") if _excl_part_rows else None, missing_mode,
+                keep_imputed=(missing_mode == "impute" and keep_imputed))) if x),
+        )
+
+        methods_para = build_methods_paragraph(**_methods_kwargs)
+        methods_styles = methods_texts(**_methods_kwargs)
+
         html_report = generate_report(
+            methods_styles=methods_styles,
             batch_key_df=batch_key_df, fig_region_note=fig_region_note,
             cleaning_df=cleaning_summary, fig_clean_feat=fig_clean_feat, fig_clean_part=fig_clean_part,
             fig_map_before=fig_map_before, fig_map_after=fig_map_after,
@@ -2687,30 +2715,6 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True,
             fdr_note=fdr_note,
         )
 
-        methods_para = build_methods_paragraph(
-            site_col=site_col, age_col=age_col, sex_col=sex_col,
-            run_ebf=(run_ebf and harm_ebf is not None),
-            github_url=GITHUB_URL,
-            extra_continuous=extra_continuous,
-            extra_categorical=extra_categorical,
-            covariates_cont=continuous_covariates,
-            covariates_cat=categorical_covariates,
-            ancova_covars=[c for c in (age_used, sex_used) if c],
-            include_age=(include_age_corr and bool(age_col)),
-            include_cohens_f=include_cohens_f,
-            include_icc_by_site=include_icc_by_site,
-            include_extra_assoc=(include_extra_assoc and len(extra_assoc_df) > 0),
-            assoc_cont_vars=assoc_cont_vars,
-            assoc_cat_vars=assoc_cat_vars,
-            data_prep_text=" ".join(x for x in (recoded_text, (
-                f"Batches with a single participant ({', '.join(_small_labels)}) were excluded "
-                f"(n = {len(_small_rows)}), because ComBat requires at least two participants per batch."
-                if len(_small_rows) else ""), data_prep_sentence(
-                missing_overview, st.session_state.get("_excl_info"),
-                st.session_state.get("_excl_part_info") if _excl_part_rows else None, missing_mode,
-                keep_imputed=(missing_mode == "impute" and keep_imputed))) if x),
-        )
-
         progress.progress(100, "Done.")
 
         # build the CSVs for download. Features excluded for missing values are left out of every table,
@@ -2730,6 +2734,7 @@ if st.button("▶  Run Harmonization", type="primary", use_container_width=True,
             results_ready=True,
             _scroll_to_results=True,
             methods_para=methods_para,
+            methods_styles=methods_styles,
             fig_site=fig_site, fig_icc=fig_icc,
             fig_age=fig_age,   fig_anc=fig_anc,
             fig_icc_site=fig_icc_site,
@@ -2985,13 +2990,19 @@ if st.session_state.get("results_ready"):
 
     with tabs[tab_idx]:
         st.markdown("#### Methods paragraph for main manuscript")
-        st.caption("Copy the text below and paste it directly into your manuscript Methods section. Adapt bracketed placeholders and citation numbers to match your reference style.")
-        para = st.session_state.get("methods_para", "")
+        st.caption("Copy the text below into your manuscript's Methods section; the references it cites follow it. "
+                   "Replace [GitHub URL] with the repository address.")
+        # references right under the paragraph, in APA (author-year) or numbered style (Oni, 18 November 2026)
+        _sty = st.radio("Reference style", ["APA (author-year)", "Numbered"], horizontal=True, key="methods_ref_style")
+        _ms = st.session_state.get("methods_styles") or {}
+        _pair = _ms.get("numbered" if _sty == "Numbered" else "apa")
+        para = methods_plain(*_pair) if _pair else st.session_state.get("methods_para", "")
         st.text_area(
             label="Methods paragraph",
             value=para,
-            height=260,
+            height=360,
             label_visibility="collapsed",
+            key=f"methods_text_{'num' if _sty == 'Numbered' else 'apa'}",
         )
         st.caption("This paragraph is also included at the end of the downloaded HTML report.")
 

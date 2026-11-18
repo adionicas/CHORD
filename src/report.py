@@ -405,55 +405,32 @@ TEMPLATE = """<!DOCTYPE html>
 <!-- ── Methods paragraph for main manuscript ── -->
 <h2>Methods Paragraph for Main Manuscript</h2>
 <p style="font-size:9pt;font-family:Arial,sans-serif;color:#666;margin-bottom:10px;">
-  The paragraph below can be copied directly into the Methods section of your manuscript.
-  Adapt bracketed placeholders and reference numbers to match your citation style.
+  The paragraph below can be copied directly into the Methods section of your manuscript; the references it cites
+  follow it, in APA (author-year) or numbered style. Replace [GitHub URL] with the repository address.
 </p>
-<div style="background:#f0f4f8;border-left:4px solid #2A6EBB;border-radius:4px;
-            padding:18px 22px;margin:0 0 30px 0;">
-  <p style="font-size:11pt;font-family:'Times New Roman',serif;line-height:1.75;
-            margin:0;text-align:justify;color:#111;">
-    Scanner-related batch effects were corrected and evaluated using CHORD
-    (Comprehensive Harmonization Open-platform with Reporting and Diagnostics; version {{ chord_version_short }};
-    [GitHub URL]).
-    ComBat harmonization [1, 2] was applied using the <em>neuroCombat</em> Python package
-    (v0.2.12), with {{ site_col }} as the batch variable{% if covariate_text %} and {{ covariate_text }}
-    included as biological covariates to preserve their associated variability{% else %}, without
-    biological covariates{% endif %}.
-    {% if run_ebf %}
-    Two ComBat configurations were compared: with Empirical Bayes (EB) estimation,
-    which pools information across features to stabilize batch effect parameter estimates [1],
-    and without (EB=FALSE), which applies independent feature-wise location and scale adjustments [3, <a href="#ref8">8</a>].
-    {% else %}
-    ComBat was applied with Empirical Bayes estimation, which pools information
-    across features to stabilize batch effect parameter estimates [1].
-    {% endif %}
-    {% set m = namespace(i=1) %}
-    Harmonization effectiveness was evaluated using the following metrics:
-    (1) batch mean <em>z</em>-score deviation from the grand mean before and after harmonization,
-    assessing residual batch-related variability;
-    {% if include_cohens_f %}{% set m.i = m.i + 1 %}
-    ({{ m.i }}) analysis of covariance (ANCOVA, Type II sums of squares{% if ancova_cov_text %}; covariates: {{ ancova_cov_text }}{% endif %})
-    with batch as the grouping factor, quantifying batch effect size as Cohen's <em>f</em> [4];
-    {% endif %}{% if include_icc_by_site %}{% set m.i = m.i + 1 %}
-    ({{ m.i }}) the within-batch consistency form of the intraclass correlation coefficient, ICC(3,1) [9, 10],
-    computed between pre- and post-harmonization values within each batch for each feature and summarized
-    across batches as the median with the interquartile range, the primary metric, interpreted with the
-    thresholds of Koo and Li [5] as poor (&lt; 0.50), moderate (0.50&#8211;0.75), good (0.75&#8211;0.90),
-    excellent (&#8805; 0.90){% endif %}{% if include_age %}; and
-    {% set m.i = m.i + 1 %}({{ m.i }}) Pearson correlation between {{ age_col }} and each imaging feature before and after
-    harmonization, {% if fdr_note and fdr_note.startswith('No multiple') %}without correction for multiple
-    comparisons{% else %}with false discovery rate correction (Benjamini&#8211;Hochberg) [6]{% endif %},
-    to assess preservation of biologically relevant age-related variability{% endif %}.
-    All metrics are reported in the Supplementary Material.
-    [1] Johnson et al., <em>Biostatistics</em>, 2007.
-    [2] Fortin et al., <em>NeuroImage</em>, 2017.
-    [3] Onicas et al., <em>Frontiers in Neurology</em>, 2022. [8] Onicas et al., <em>ResearchSquare</em> [Preprint], 2026.
-    [4] Cohen, 1988.
-    [5] Koo &amp; Li, <em>J Chiropr Med</em>, 2016.
-    [6] Benjamini &amp; Hochberg, <em>J R Stat Soc B</em>, 1995.
-    [9] Shrout &amp; Fleiss, <em>Psychol Bull</em>, 1979. [10] McGraw &amp; Wong, <em>Psychol Methods</em>, 1996.
-  </p>
+<p style="font-size:9.5pt;font-family:Arial,sans-serif;margin:0 0 8px">Reference style:
+  <label><input type="radio" name="refstyle" value="apa" checked> APA (author-year)</label>
+  <label><input type="radio" name="refstyle" value="numbered"> Numbered</label></p>
+{% for key, pair in methods_styles.items() %}
+<div class="ms-{{ key }}" style="background:#f0f4f8;border-left:4px solid #2A6EBB;border-radius:4px;
+            padding:18px 22px;margin:0 0 30px 0;{% if key != 'apa' %}display:none;{% endif %}">
+  <p style="font-size:11pt;font-family:'Times New Roman',serif;line-height:1.75;margin:0;text-align:justify;color:#111;">
+    {{ pair[0] }}</p>
+  <p style="font-size:10.5pt;font-family:'Times New Roman',serif;font-weight:bold;margin:14px 0 4px;color:#111;">References</p>
+  {% for r in pair[1] %}<p style="font-size:10pt;font-family:'Times New Roman',serif;line-height:1.5;margin:0 0 4px;
+     {% if key == 'apa' %}padding-left:2em;text-indent:-2em;{% endif %}color:#111;">{{ r }}</p>{% endfor %}
 </div>
+{% endfor %}
+<script>
+// APA or numbered references for the Methods paragraph (Oni, 18 November 2026)
+document.querySelectorAll('input[name=refstyle]').forEach(function (r) {
+  r.addEventListener('change', function () {
+    ['apa', 'numbered'].forEach(function (k) {
+      document.querySelectorAll('.ms-' + k).forEach(function (e) { e.style.display = r.value === k ? '' : 'none'; });
+    });
+  });
+});
+</script>
 
 <!-- ─────────────────────────────────────── S1 ──────────────────────────── -->
 <h2>S1. Dataset Overview</h2>
@@ -1134,15 +1111,15 @@ def _join_and(items):
 def _covariate_texts(age_col, sex_col, extra_continuous, extra_categorical,
                      covariates_cont, covariates_cat, ancova_covars):
     """
-    The ComBat covariates as text, for example "Age (continuous) and Sex
-    (categorical)", their number, and the ANCOVA covariates as text. When the
+    The ComBat covariates as text, for example "Age and Sex", their number, and the ANCOVA covariates as text. When the
     lists actually used are not given, age and sex plus the extras are assumed.
     """
     cont = (list(covariates_cont) if covariates_cont is not None
             else [age_col] + list(extra_continuous or []))
     cat  = (list(covariates_cat) if covariates_cat is not None
             else [sex_col] + list(extra_categorical or []))
-    parts = [f"{c} (continuous)" for c in cont if c] + [f"{c} (categorical)" for c in cat if c]
+    # named without "(continuous)" / "(categorical)" (Oni, 18 November 2026)
+    parts = [c for c in cont if c] + [c for c in cat if c]
     anc = [c for c in (ancova_covars if ancova_covars is not None else [age_col, sex_col]) if c]
     return _join_and(parts), len(parts), _join_and(anc)
 
@@ -1193,7 +1170,130 @@ def data_prep_sentence(missing_overview=None, excl_info=None, excl_part_info=Non
     return " ".join(x for x in out if x)
 
 
-def build_methods_paragraph(
+# The references of the Methods paragraph, in APA (7th edition) and in the numbered style of the report's reference
+# list; author lists and details from Crossref (read 18 November 2026), the preprint as in the report's list.
+METHODS_REFS = {
+    "johnson2007": dict(
+        cite="Johnson et al., 2007", narr="Johnson et al. (2007)", name="Johnson et al.",
+        apa="Johnson, W. E., Li, C., & Rabinovic, A. (2007). Adjusting batch effects in microarray expression data using "
+            "empirical Bayes methods. <em>Biostatistics, 8</em>(1), 118–127. https://doi.org/10.1093/biostatistics/kxj037",
+        num="Johnson WE, Li C, Rabinovic A. Adjusting batch effects in microarray expression data using empirical Bayes "
+            "methods. <em>Biostatistics</em>. 2007;8(1):118–127. doi:10.1093/biostatistics/kxj037"),
+    "fortin2017": dict(
+        cite="Fortin et al., 2017", narr="Fortin et al. (2017)", name="Fortin et al.",
+        apa="Fortin, J.-P., Parker, D., Tunç, B., Watanabe, T., Elliott, M. A., Ruparel, K., Roalf, D. R., "
+            "Satterthwaite, T. D., Gur, R. C., Gur, R. E., Schultz, R. T., Verma, R., & Shinohara, R. T. (2017). "
+            "Harmonization of multi-site diffusion tensor imaging data. <em>NeuroImage, 161</em>, 149–170. "
+            "https://doi.org/10.1016/j.neuroimage.2017.08.047",
+        num="Fortin J-P, Parker D, Tunç B, et al. Harmonization of multi-site diffusion tensor imaging data. "
+            "<em>NeuroImage</em>. 2017;161:149–170. doi:10.1016/j.neuroimage.2017.08.047"),
+    "onicas2022": dict(
+        cite="Onicas et al., 2022", narr="Onicas et al. (2022)", name="Onicas et al.",
+        apa="Onicas, A. I., Ware, A. L., Harris, A. D., Beauchamp, M. H., Beaulieu, C., Craig, W., Doan, Q., "
+            "Freedman, S. B., Goodyear, B. G., Zemek, R., Yeates, K. O., & Lebel, C. (2022). Multisite harmonization "
+            "of structural DTI networks in children: An A-CAP study. <em>Frontiers in Neurology, 13</em>, 850642. "
+            "https://doi.org/10.3389/fneur.2022.850642",
+        num="Onicas AI, Ware AL, Harris AD, et al. Multisite harmonization of structural DTI networks in children: an "
+            "A-CAP study. <em>Front Neurol</em>. 2022;13:850642. doi:10.3389/fneur.2022.850642"),
+    "onicas2026": dict(
+        cite="Onicas et al., 2026", narr="Onicas et al. (2026)", name="Onicas et al.",
+        apa="Onicas, A. I., Keleher, F., Bickart, K. C., MacDonald, C. L., Brown, A., Cook, L., Rivara, F. P., "
+            "Gioia, G. A., Giza, C. C., & Dennis, E. L. (2026). <em>ComBat harmonization with and without empirical "
+            "Bayes estimation for resting-state functional connectivity in pediatric mild traumatic brain injury: A "
+            "CARE4Kids study</em> [Preprint]. Research Square. https://doi.org/10.21203/rs.3.rs-9418750",
+        num="Onicas AI, Keleher F, Bickart KC, et al. ComBat harmonization with and without empirical Bayes estimation "
+            "for resting-state functional connectivity in pediatric mild traumatic brain injury: a CARE4Kids study. "
+            "<em>Research Square</em> [Preprint]. 2026. doi:10.21203/rs.3.rs-9418750"),
+    "shrout1979": dict(
+        cite="Shrout & Fleiss, 1979", narr="Shrout and Fleiss (1979)", name="Shrout and Fleiss",
+        apa="Shrout, P. E., & Fleiss, J. L. (1979). Intraclass correlations: Uses in assessing rater reliability. "
+            "<em>Psychological Bulletin, 86</em>(2), 420–428. https://doi.org/10.1037/0033-2909.86.2.420",
+        num="Shrout PE, Fleiss JL. Intraclass correlations: uses in assessing rater reliability. <em>Psychol Bull</em>. "
+            "1979;86(2):420–428. doi:10.1037/0033-2909.86.2.420"),
+    "mcgraw1996": dict(
+        cite="McGraw & Wong, 1996", narr="McGraw and Wong (1996)", name="McGraw and Wong",
+        apa="McGraw, K. O., & Wong, S. P. (1996). Forming inferences about some intraclass correlation coefficients. "
+            "<em>Psychological Methods, 1</em>(1), 30–46. https://doi.org/10.1037/1082-989X.1.1.30",
+        num="McGraw KO, Wong SP. Forming inferences about some intraclass correlation coefficients. <em>Psychol "
+            "Methods</em>. 1996;1(1):30–46. doi:10.1037/1082-989X.1.1.30"),
+    "koo2016": dict(
+        cite="Koo & Li, 2016", narr="Koo and Li (2016)", name="Koo and Li",
+        apa="Koo, T. K., & Li, M. Y. (2016). A guideline of selecting and reporting intraclass correlation coefficients "
+            "for reliability research. <em>Journal of Chiropractic Medicine, 15</em>(2), 155–163. "
+            "https://doi.org/10.1016/j.jcm.2016.02.012",
+        num="Koo TK, Li MY. A guideline of selecting and reporting intraclass correlation coefficients for reliability "
+            "research. <em>J Chiropr Med</em>. 2016;15(2):155–163. doi:10.1016/j.jcm.2016.02.012"),
+    "cohen1988": dict(
+        cite="Cohen, 1988", narr="Cohen (1988)", name="Cohen",
+        apa="Cohen, J. (1988). <em>Statistical power analysis for the behavioral sciences</em> (2nd ed.). Lawrence "
+            "Erlbaum Associates.",
+        num="Cohen J. <em>Statistical Power Analysis for the Behavioral Sciences</em>. 2nd ed. Lawrence Erlbaum "
+            "Associates; 1988."),
+    "bh1995": dict(
+        cite="Benjamini & Hochberg, 1995", narr="Benjamini and Hochberg (1995)", name="Benjamini and Hochberg",
+        apa="Benjamini, Y., & Hochberg, Y. (1995). Controlling the false discovery rate: A practical and powerful approach "
+            "to multiple testing. <em>Journal of the Royal Statistical Society: Series B (Methodological), 57</em>(1), "
+            "289–300. https://doi.org/10.1111/j.2517-6161.1995.tb02031.x",
+        num="Benjamini Y, Hochberg Y. Controlling the false discovery rate: a practical and powerful approach to multiple "
+            "testing. <em>J R Stat Soc Series B Stat Methodol</em>. 1995;57(1):289–300. "
+            "doi:10.1111/j.2517-6161.1995.tb02031.x"),
+}
+
+
+def render_methods(text: str, style: str = "apa"):
+    """
+    The Methods paragraph with its citations in APA (author-year) or numbered style, and the reference list that
+    goes right under it: (paragraph, [reference, ...]). Markers in the text: {c:a,b} a parenthetical citation,
+    {p:a} a citation already inside parentheses, {n:a} a narrative citation (Oni, 18 November 2026).
+    """
+    import re as _re
+    order = []
+
+    def num(k):
+        if k not in order:
+            order.append(k)
+        return order.index(k) + 1
+
+    def sub(m):
+        kind, keys = m.group(1), m.group(2).split(",")
+        if style == "numbered":
+            ns = [num(k) for k in keys]
+            if kind == "n":
+                return f"{METHODS_REFS[keys[0]]['name']} [{ns[0]}]"
+            return "[" + ", ".join(str(n) for n in ns) + "]"
+        for k in keys:
+            num(k)
+        if kind == "n":
+            return METHODS_REFS[keys[0]]["narr"]
+        inner = "; ".join(METHODS_REFS[k]["cite"] for k in keys)
+        return inner if kind == "p" else f"({inner})"
+    para = _re.sub(r"\{([cpn]):([a-z0-9,]+)\}", sub, text)
+    if style == "numbered":
+        refs = [f"[{i + 1}] " + METHODS_REFS[k]["num"] for i, k in enumerate(order)]
+    else:
+        refs = sorted((METHODS_REFS[k]["apa"] for k in order), key=lambda r: r.lower())
+    return para, refs
+
+
+def methods_texts(**kwargs):
+    """The Methods paragraph in both styles, each with its reference list: {"apa": (...), "numbered": (...)}."""
+    tokens = _methods_tokens(**kwargs)
+    return {st: render_methods(tokens, st) for st in ("apa", "numbered")}
+
+
+def methods_plain(paragraph, refs):
+    """Paragraph and references as plain text for copying (no HTML tags)."""
+    import re as _re
+    strip = lambda t: _re.sub(r"<[^>]+>", "", t)
+    return strip(paragraph) + "\n\nReferences\n" + "\n".join(strip(r) for r in refs)
+
+
+def build_methods_paragraph(**kwargs) -> str:
+    """The Methods paragraph in APA style (author-year), without the reference list."""
+    return render_methods(_methods_tokens(**kwargs), "apa")[0]
+
+
+def _methods_tokens(
     site_col: str,
     age_col: str,
     sex_col: str,
@@ -1212,20 +1312,20 @@ def build_methods_paragraph(
     ancova_covars: list | None = None,
     data_prep_text: str | None = None,
 ) -> str:
-    """Return a plain-text methods paragraph for copy-paste into a manuscript."""
+    """The Methods paragraph with citation markers ({c:..}, {p:..}, {n:..}); see render_methods."""
     cov_text, _, anc_text = _covariate_texts(
         age_col, sex_col, extra_continuous, extra_categorical,
         covariates_cont, covariates_cat, ancova_covars)
     if run_ebf:
         eb_sentence = (
             f"Two ComBat configurations were compared: with Empirical Bayes (EB) estimation, "
-            f"which pools information across features to stabilize batch effect parameter estimates (Johnson et al., 2007), "
-            f"and without (EB=FALSE), which applies independent feature-wise location and scale adjustments (Onicas et al., 2022; Onicas et al., 2026 [Preprint])."
+            f"which pools information across features to stabilize batch effect parameter estimates {{c:johnson2007}}, "
+            f"and without (EB=FALSE), which applies independent feature-wise location and scale adjustments {{c:onicas2022,onicas2026}}."
         )
     else:
         eb_sentence = (
             "ComBat was applied with Empirical Bayes estimation, which pools information "
-            "across features to stabilize batch effect parameter estimates (Johnson et al., 2007)."
+            "across features to stabilize batch effect parameter estimates {c:johnson2007}."
         )
 
     metrics = [
@@ -1237,10 +1337,10 @@ def build_methods_paragraph(
     if include_icc_by_site:
         metrics.append(
             f"({metric_idx}) the consistency form of the intraclass correlation coefficient, ICC(3,1) "
-            f"(two-way mixed effects, single rating; Shrout and Fleiss, 1979; equivalently ICC(C,1), "
-            f"McGraw and Wong, 1996), computed within each batch between pre- and post-harmonization "
+            f"(two-way mixed effects, single rating, {{p:shrout1979}}; equivalently ICC(C,1), "
+            f"{{p:mcgraw1996}}), computed within each batch between pre- and post-harmonization "
             f"values for each feature and summarized across batches as the median with the interquartile range, "
-            f"interpreted with the thresholds of Koo and Li (2016) as "
+            f"interpreted with the thresholds of {{n:koo2016}} as "
             f"poor (< 0.50), moderate (0.50-0.75), good (0.75-0.90), excellent (>= 0.90); "
             f"this is the primary recommended metric as it directly assesses whether harmonization "
             f"preserved within-batch biological variability. The consistency form is used because "
@@ -1254,14 +1354,14 @@ def build_methods_paragraph(
             f"({metric_idx}) analysis of covariance (ANCOVA, Type II sums of squares"
             + (f"; covariates: {anc_text}" if anc_text else "")
             + f") with batch as the grouping factor, "
-            f"quantifying batch effect size as Cohen's f (Cohen, 1988)"
+            f"quantifying batch effect size as Cohen's f {{c:cohen1988}}"
         )
         metric_idx += 1
 
     if include_age:
         metrics.append(
             f"({metric_idx}) Pearson correlation between {age_col} and each imaging feature "
-            f"before and after harmonization, with false discovery rate correction (Benjamini & Hochberg, 1995), "
+            f"before and after harmonization, with false discovery rate correction {{c:bh1995}}, "
             f"to assess preservation of biologically relevant age-related variability"
         )
         metric_idx += 1
@@ -1272,7 +1372,7 @@ def build_methods_paragraph(
             f"({metric_idx}) associations between additional variables of interest ({var_list}) "
             f"and each imaging feature before and after harmonization, evaluated using OLS regression "
             f"(Pearson r for continuous variables; Cohen's f from partial eta-squared for categorical variables), "
-            f"with FDR correction (Benjamini & Hochberg, 1995)"
+            f"with FDR correction {{c:bh1995}}"
         )
 
     return (
@@ -1280,7 +1380,7 @@ def build_methods_paragraph(
         f"(Comprehensive Harmonization Open-platform with Reporting and Diagnostics; version "
         f"{version_text().replace('CHORD ', '', 1)}; {github_url}). "
         + (f"{data_prep_text} " if data_prep_text else "")
-        + f"ComBat harmonization (Johnson et al., 2007; Fortin et al., 2017) was applied using the "
+        + f"ComBat harmonization {{c:johnson2007,fortin2017}} was applied using the "
         f"neuroCombat Python package (v0.2.12), with {site_col} as the batch variable"
         + (f" and {cov_text} included as biological covariates to preserve their associated variability. "
            if cov_text else ", without biological covariates. ")
@@ -1340,6 +1440,7 @@ def generate_report(
     keep_imputed=False,
     cleaning_df=None,
     fig_clean_feat=None,
+    methods_styles=None,
     batch_key_df=None,
     fig_region_note="",
     fig_clean_part=None,
@@ -1408,6 +1509,7 @@ def generate_report(
                                                                  "Kept, n (%)": "Retained, n (%)"}))
                                 if cleaning_df is not None and len(cleaning_df) else None),
         fig_clean_feat       = _fig_html(fig_clean_feat) if fig_clean_feat is not None else None,
+        methods_styles       = methods_styles or {},
         batch_key_table      = (_collapsed(_df_table(batch_key_df, max_rows=10_000),
                                            f"Show the batch key ({len(batch_key_df)} batches)")
                                 if batch_key_df is not None and (len(batch_key_df) > 12 or
